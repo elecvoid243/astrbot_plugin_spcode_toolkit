@@ -1,0 +1,151 @@
+{
+  "enabled_tools": {
+    "description": "要注入到 LLM 的工具（多选）",
+    "type": "list",
+    "default": [],
+    "options": [
+      "code_check",
+      "es_search",
+      "astrbot_file_remove",
+      "astrbot_file_compare",
+      "todo_list",
+      "inta_shell"
+    ],
+    "hint": "默认全部禁用。inta_shell 勾选后自动启用全部 5 个 shell 工具。codegraph 和 agentsmd 由下方独立开关控制。"
+  },
+  "allowed_ids": {
+    "description": "额外允许使用本插件的用户 ID",
+    "hint": "逗号分隔,与 AstrBot 全局管理员并集生效",
+    "type": "string",
+    "default": ""
+  },
+  "es_search": {
+    "description": "es_search — Everything 极速文件名搜索",
+    "hint": "Windows 用 Everything (es.exe),Linux/macOS 三层 fallback。",
+    "type": "object",
+    "items": {
+      "es_path": {
+        "description": "Everything CLI (es.exe) 路径",
+        "hint": "留空时自动从 PATH 查找",
+        "type": "string",
+        "default": ""
+      }
+    }
+  },
+  "code_check": {
+    "description": "code_check — Python/C/C++ 语法+风格合并检查",
+    "hint": "Python 用 ruff,C/C++ 用 cppcheck+cpplint。",
+    "type": "object",
+    "items": {
+      "cppcheck_path": {
+        "description": "cppcheck.exe 路径",
+        "hint": "C/C++ 文件优先调 cppcheck。留空自动查找。",
+        "type": "string",
+        "default": ""
+      },
+      "cppcheck_shortcircuit": {
+        "description": "cppcheck 短路策略",
+        "hint": "error=有 error 时短路(默认)/warning=有 error/warning 时短路/never=不短路",
+        "type": "string",
+        "options": ["error", "warning", "never"],
+        "default": "error"
+      }
+    }
+  },
+  "file_remove": {
+    "description": "file_remove — 沙箱化文件/目录删除",
+    "hint": "路径黑名单 + 批量确认机制。",
+    "type": "object",
+    "items": {
+      "file_remove_blacklist": {
+        "description": "用户自定义黑名单",
+        "hint": "每行一个绝对路径前缀,与内置系统目录黑名单叠加生效。空 = 不加额外限制。",
+        "type": "list",
+        "item": {
+          "type": "string",
+          "hint": "例如：C:/important 或 /home/me/secret"
+        },
+        "default": []
+      }
+    }
+  },
+  "codegraph": {
+    "description": "codegraph MCP — 官方 MCP server 集成(8 个 codegraph_* 工具)",
+    "hint": "需先 npm install -g @colbymchenry/codegraph,然后在此配置 install_dir。",
+    "type": "object",
+    "items": {
+      "codegraph_enabled": {
+        "description": "启用 codegraph MCP 集成",
+        "hint": "总开关。需同时配置 install_dir 才会启动 MCP server。",
+        "type": "bool",
+        "default": true
+      },
+      "codegraph_install_dir": {
+        "description": "安装目录(含 node.exe)",
+        "hint": "Windows: npm 全局包根目录(如 F:\\github\\tools\\codegraph-win32-x64),须含 node.exe + lib\\dist\\bin\\codegraph.js。留空则不启动 MCP。",
+        "type": "string",
+        "default": ""
+      },
+      "codegraph_project": {
+        "description": "默认工程根目录(可选)",
+        "hint": "LLM 调用 codegraph_* 工具省略 projectPath 时使用。",
+        "type": "string",
+        "default": ""
+      }
+    }
+  },
+  "inta_shell": {
+    "description": "inta_shell — 交互式 Shell 会话管理(5 个工具)",
+    "hint": "支持多轮双向通信的 Shell 进程管理(npm init、python REPL、git add -p 等)。",
+    "type": "object",
+    "items": {
+      "inta_shell_max_sessions": {
+        "description": "最大并发会话数",
+        "hint": "超过此数量的新会话请求会被拒绝。",
+        "type": "int",
+        "default": 10,
+        "min": 1,
+        "max": 100
+      },
+      "inta_shell_session_timeout": {
+        "description": "会话空闲超时(秒)",
+        "hint": "该时长内无 send/read 操作将被强制终止。默认 30 分钟。",
+        "type": "int",
+        "default": 1800,
+        "min": 60,
+        "max": 86400
+      },
+      "inta_shell_block_unsafe": {
+        "description": "阻止危险命令",
+        "hint": "阻止 rm -rf、shutdown、mkfs、sudo、fork 炸弹、kill -9 等。",
+        "type": "bool",
+        "default": true
+      },
+      "inta_shell_default_cwd": {
+        "description": "默认工作目录(绝对路径)",
+        "hint": "留空则用 AstrBot workspace。",
+        "type": "string",
+        "default": ""
+      }
+    }
+  },
+  "agentsmd": {
+    "description": "AGENTS.md — 项目级 LLM 指令文件管理(/agentsmd 命令组)",
+    "hint": "动态注入 AGENTS.md 到 LLM 系统提示词,支持自动生成/加载/卸载/更新。",
+    "type": "object",
+    "items": {
+      "agentsmd_enabled": {
+        "description": "启用 AGENTS.md 管理",
+        "hint": "设为 false 则 /agentsmd 命令和 LLM 注入均不生效。",
+        "type": "bool",
+        "default": true
+      },
+      "init_template": {
+        "description": "AGENTS.md 初始生成模板",
+        "hint": "用于 /agentsmd init 时调 LLM 的 prompt。留空用默认模板。",
+        "type": "text",
+        "default": ""
+      }
+    }
+  }
+}
