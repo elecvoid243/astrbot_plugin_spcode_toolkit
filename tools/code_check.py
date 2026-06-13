@@ -26,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ._helpers import proposal_reply
+from ._helpers import detect_console_encoding, proposal_reply
 
 # 扩展名 → linter 映射
 _PY_SUFFIXES = {".py"}
@@ -251,8 +251,11 @@ def _run_cppcheck(p: Path) -> dict | None:
             ],
             capture_output=True,
             text=True,
-            encoding="utf-8",
-            errors="replace",  # 中文路径下 cppcheck 可能输出 GBK
+            # WHY: cppcheck.exe 是 Windows 原生 C++ 程序，stderr/stdout 遵循系统 ANSI
+            # 代码页。中文 Windows 是 cp936 (GBK)；之前硬编码 utf-8 在中文环境下
+            # 产生  乱码。改用 detect_console_encoding() 自动适配。
+            encoding=detect_console_encoding(),
+            errors="replace",
             timeout=30,
         )
         # cppcheck 2.21+ 总是返回 0，所以**只**依赖输出内容判断
@@ -374,6 +377,11 @@ def _run_cpplint_only(p: Path) -> dict:
             cpplint_cmd + [str(p)],
             capture_output=True,
             text=True,
+            # WHY: cpplint 是 Python 写的，stdout/stderr 默认 utf-8；但用户的
+            # 中文源码/注释、文件路径被 cpplint 印出时，Windows 下走控制台编码。
+            # 用 detect_console_encoding() 自动适配，与 cppcheck 保持一致。
+            encoding=detect_console_encoding(),
+            errors="replace",
             timeout=30,
         )
         # cpplint 把 issues 写到 STDERR，把 "Done processing" + "Total errors" 写到 STDOUT。

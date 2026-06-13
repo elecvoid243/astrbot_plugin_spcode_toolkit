@@ -13,7 +13,7 @@ import os
 import shutil
 from pathlib import Path
 
-from ._helpers import proposal_reply, run_cmd
+from ._helpers import detect_console_encoding, proposal_reply, run_cmd
 
 # Linux/macOS 跳过目录
 _POSIX_SKIP_DIRS = {
@@ -222,7 +222,11 @@ def _windows_search(
         ]
     )
 
-    proc = run_cmd(args, timeout=15)
+    # WHY: es.exe 是 Windows 原生 CLI，stdout 遵循系统 ANSI 代码页。
+    # 中文 Windows 是 cp936 (GBK)，用 utf-8 解码会产生  之类乱码。
+    # 探测得到正确编码后，run_cmd 内部用 errors="replace" 也只是把无法解码字节换 U+FFFD，
+    # **无法**恢复原字符——所以必须在解码前就用正确编码。
+    proc = run_cmd(args, timeout=15, encoding=detect_console_encoding())
     if not proc["ok"]:
         err_msg = proc.get("error", "")
         if "超时" in err_msg:

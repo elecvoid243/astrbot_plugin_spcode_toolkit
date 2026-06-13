@@ -1,13 +1,15 @@
 """
 spcode_toolkit 共享辅助函数。
-提供 subprocess 封装、JSON 错误包装、提案协议响应、异步桥接。
+提供 subprocess 封装、JSON 错误包装、提案协议响应、异步桥接、编码探测。
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import locale
 import subprocess
+import sys
 from typing import Any
 
 
@@ -75,6 +77,74 @@ async def run_sync(func, *args, **kwargs):
     """在默认线程池中运行同步函数，避免阻塞 AstrBot 事件循环。"""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
+
+
+def detect_console_encoding() -> str:
+    """探测控制台/子进程输出编码。
+
+    WHY: Windows 原生 CLI 工具（Everything/es.exe、cppcheck.exe 等）的 stdout
+    遵循**系统 ANSI 代码页**，中文 Windows 通常是 cp936 (GBK)。Python 用 utf-8
+    解码 GBK 字节流会产生  之类乱码；errors="replace" 也无法恢复原字符。
+    必须用与外部进程输出**一致**的编码去解码。
+
+    探测策略：
+      1. locale.getpreferredencoding(False) —— 中文 Windows → cp936
+      2. sys.getfilesystemencoding() —— 通常与 1 一致；某些容器返回 ascii
+      3. ascii/us-ascii/ansi_x3.4-1968 → 强制 fallback 到 utf-8（避免真出现时解码失败）
+
+    Returns:
+        编码名称字符串，永远不会是 ascii/us-ascii（已 fallback）。
+    """
+    enc = ""
+    try:
+        enc = locale.getpreferredencoding(False) or ""
+    except Exception:
+        enc = ""
+    if not enc or enc.lower() in ("ascii", "us-ascii", "ansi_x3.4-1968"):
+        enc = sys.getfilesystemencoding() or "utf-8"
+    if enc.lower() in ("ascii", "us-ascii", "ansi_x3.4-1968"):
+        enc = "utf-8"
+    return enc
+
+
+def safe_decode_bytes(
+    data: bytes | str,
+    preferred: str | None = None,
+    fallback: tuple[str, ...] = ("cp936", "gbk", "utf-8", "latin-1"),
+) -> str:
+    """安全解码字节/字符串，多次兜底。
+
+    WHY: 即使 detect_console_encoding 返回正确编码，子进程的 stderr 中也可能混入
+    其它编码（例如 UTF-8 BOM、GBK escape 序列）。先尝试 preferred，再用 fallback
+    链逐个尝试；仍失败则用 errors="replace" 兜底，保证**永不解码崩溃**。
+
+    Args:
+        data: 字节或字符串（已是 str 时直接返回）。
+        preferred: 首选编码；None 时用 detect_console_encoding()。
+        fallback: 兜底编码链（按顺序尝试）。
+
+    Returns:
+        字符串。
+    """
+    if isinstance(data, str):
+        return data
+    if not isinstance(data, (bytes, bytearray)):
+        return str(data)
+    if preferred is None:
+        preferred = detect_console_encoding()
+    candidates: list[str] = []
+    if preferred:
+        candidates.append(preferred)
+    for enc in fallback:
+        if enc.lower() != (preferred or "").lower() and enc not in candidates:
+            candidates.append(enc)
+    for enc in candidates:
+        try:
+            return bytes(data).decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    # 全部失败：errors="replace" 兜底
+    return bytes(data).decode(preferred or "utf-8", errors="replace")
 
 
 def proposal_reply(
