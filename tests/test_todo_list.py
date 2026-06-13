@@ -1168,7 +1168,9 @@ def test_modify_update_mode_modifies_items(tmp_path: Path):
 def test_modify_delete_mode_removes_items(tmp_path: Path):
     """modify(mode='delete') 等价于 delete(item_ids=...)。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "a"}, {"title": "b"}, {"title": "c"}])
+    store.create(
+        SENDER, title="t", items=[{"title": "a"}, {"title": "b"}, {"title": "c"}]
+    )
     r = store.modify(SENDER, mode="delete", item_ids=[1, 3])
     assert r["ok"] is True
     assert r["deleted"] == 2

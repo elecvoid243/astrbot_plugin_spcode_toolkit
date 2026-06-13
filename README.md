@@ -240,6 +240,24 @@ todo_clear()
 
 **迁移说明：** v2.6 之前的单工具 `todo_list(action=...)` 已废弃，转为 stub 工具（保留一个版本周期）。新代码应使用上述 4 个工具之一。
 
+### /project load & /project unload — 项目一键加载/卸载（v2.7+）
+
+把"加载项目"从 4 步压缩为 1 步。需在配置中**同时**启用 agentsmd 和 codegraph。
+
+```text
+# 一键加载：自动执行 agentsmd init+load、codegraph init+set、注入 codegraph 优先使用指引
+/project load C:/Users/me/projects/myapp
+
+# 卸载：清掉 AGENTS.md 注入，把 codegraph 默认项目指回配置中的 codegraph_project
+/project unload
+```
+
+**前置条件**：`agentsmd_enabled = true` **AND** `codegraph_enabled = true`。任一关闭时命令会拒绝执行并提示。
+
+**重复 load 防护**：当前会话已加载项目时再次 `/project load` 会被拒绝（需先 `/project unload`），避免半残状态。
+
+**注入行为**：加载成功后，system_prompt 末尾会追加"优先使用 codegraph 工具组"指引，引导 LLM 在该项目中调用 `codegraph_search` / `codegraph_explore` / `codegraph_callers` 等高级语义搜索，而不是退而使用低效的 `astrbot_file_grep_tool`。
+
 ### astrbot_inta_shell_* — 交互式 Shell
 
 支持多轮双向通信的持久子进程管理：

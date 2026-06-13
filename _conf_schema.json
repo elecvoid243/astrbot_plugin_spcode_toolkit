@@ -11,7 +11,7 @@
       "todo_list",
       "inta_shell"
     ],
-    "hint": "默认全部禁用。todo_list 勾选后自动启用 todo_create / todo_query / todo_modify / todo_clear 四个工具(整组强相关,缺一不可),无需逐个勾选。inta_shell 勾选后自动启用全部 5 个 shell 工具。codegraph 和 agentsmd 由下方独立开关控制。"
+    "hint": "默认全部禁用。todo_list 勾选后自动启用四个相关工具。inta_shell 勾选后自动启用全部 5 个 shell 工具。codegraph 和 agentsmd 由下方独立开关控制。"
   },
   "allowed_ids": {
     "description": "额外允许使用本插件的用户 ID",

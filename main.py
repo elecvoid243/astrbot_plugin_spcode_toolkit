@@ -104,6 +104,22 @@ _DEFAULT_CONFIG = {
 # 方便单元测试直接 import（避免 main.py 顶层依赖 astrbot.api）
 
 
+# ── /project 命令注入文本常量(v2.7) ─────────────────────
+# 注入到 system_prompt 的防重复 marker。
+# 与 _agentsmd_mod.INJECTION_MARKER 同等用途——同一请求多次走钩子时不重复追加。
+_PROJECT_GUIDANCE_MARKER = "# Use Codegraph"
+
+# /project load 后注入到 system_prompt 末尾的指引。
+# 设计目标:让 LLM 优先使用 codegraph 工具组而非 astrbot_file_grep_tool,
+# 提升代码搜索/分析的效率与准确性(已建好语义索引,无需 grep 全文本)。
+_PROJECT_CODEGRAPH_GUIDANCE = f"""
+{_PROJECT_GUIDANCE_MARKER}
+A codegraph project is loaded. When dealing with the code for this project:
+- Priority use codegraph_* tool (e.g. codegraph_explore) for code lookup, call chain analysis, and symbol localization.
+- When the codegraph_* tool is unavailable or when viewing non code index files (e.g. configurations, logs), return to a generic lookup tool like `astrbot_file_grep_tool`
+"""
+
+
 # ── Tool 类定义 ──────────────────────────────────────
 
 
@@ -167,10 +183,8 @@ class EsSearchTool(FunctionTool):
     name: str = "es_search"
     description: str = (
         "Fast FILENAME search (does not search file contents). "
-        "Windows uses Everything CLI (es.exe) for millisecond results; "
-        "Linux/macOS auto-falls back through locate → fd → Python os.walk. "
         "Prefer this over reading whole directory trees to locate a file. "
-        "Supports wildcards, regex, extension and path filters, case/whole-word "
+        "Supports wildcards, regex, extension and path filters, case/whole-word"
         "toggles, and size/date sorting."
     )
     parameters: dict = field(
@@ -284,8 +298,8 @@ class EsSearchTool(FunctionTool):
 class FileRemoveTool(FunctionTool):
     name: str = "astrbot_file_remove"
     description: str = (
-        "Delete an entire file or directory. Before deleting, it is necessary to ask the user."
-        "If delete fragments instead of the entire file, use `astrbot_file_edit_tool` instead."
+        "Delete an entire file or directory. Before deleting, it is necessary to ask the user. "
+        "If delete fragments instead of the entire file, use `astrbot_file_edit_tool`. "
         "Deleting a DIRECTORY requires parameter 'confirm=true'. "
         "If a directory contains more than max_items files, the call returns a "
         "proposal asking for batch confirmation INSTEAD of deleting — read the "
@@ -357,8 +371,7 @@ class FileDiffTool(FunctionTool):
     name: str = "astrbot_file_compare"
     description: str = (
         "Compares two text files and returns a structured diff: counts of added and "
-        "removed lines, plus a unified diff (up to 100 lines shown, flagged as "
-        "truncated if longer). Files larger than 50MB are rejected. "
+        "removed lines, plus a unified diff. Files larger than 50MB are rejected. "
         "Reads as UTF-8 with a GBK fallback for Windows-encoded Chinese text. "
         "Use this to review the impact of an edit or to compare candidate alternatives."
     )
@@ -412,6 +425,7 @@ class _TodoToolBase(FunctionTool):
         永远返回 JSON 字符串(与 unwrap() 风格一致),保证 call() 协议统一。
         """
         import json as _json
+
         payload: dict = {"ok": False, "error": error}
         if proposal:
             payload["proposal"] = proposal
@@ -502,7 +516,7 @@ class TodoCreateTool(_TodoToolBase):
         if not items:
             return self._err(
                 "items 不能为空",
-                proposal="至少提供一个 item: {\"title\": \"...\"}",
+                proposal='至少提供一个 item: {"title": "..."}',
             )
         return await self._dispatch(
             context, lambda s, k: s.create(k, title=title, items=items)
@@ -520,7 +534,9 @@ class TodoQueryTool(_TodoToolBase):
         "(stuck/blocked items needing attention). "
         "If no list exists, returns proposal to call todo_create."
     )
-    parameters: dict = field(default_factory=lambda: {"type": "object", "properties": {}})
+    parameters: dict = field(
+        default_factory=lambda: {"type": "object", "properties": {}}
+    )
 
     async def call(self, context, **kwargs) -> ToolExecResult:
         return await self._dispatch(context, lambda s, k: s.query(k))
@@ -609,8 +625,12 @@ class TodoModifyTool(_TodoToolBase):
         return await self._dispatch(
             context,
             lambda s, k: s.modify(
-                k, mode=mode, items=items, item_ids=item_ids,
-                status=status, notes=notes,
+                k,
+                mode=mode,
+                items=items,
+                item_ids=item_ids,
+                status=status,
+                notes=notes,
             ),
         )
 
@@ -625,10 +645,13 @@ class TodoClearTool(_TodoToolBase):
         "Use this to start fresh. "
         "For removing individual items, use todo_modify(mode='delete', item_ids=...)."
     )
-    parameters: dict = field(default_factory=lambda: {"type": "object", "properties": {}})
+    parameters: dict = field(
+        default_factory=lambda: {"type": "object", "properties": {}}
+    )
 
     async def call(self, context, **kwargs) -> ToolExecResult:
         return await self._dispatch(context, lambda s, k: s.clear(k))
+
 
 # ── inta_shell 工具(v2.5 从 interactive_shell 插件集成) ─
 
@@ -762,16 +785,13 @@ class IntaShellReadTool(FunctionTool):
                 "timeout": {
                     "type": "number",
                     "description": (
-                        "Max seconds to wait for output. Increase for slow "
-                        "programs."
+                        "Max seconds to wait for output. Increase for slow programs."
                     ),
                     "default": 5.0,
                 },
                 "max_chars": {
                     "type": "number",
-                    "description": (
-                        "Max characters to read. Caps large outputs."
-                    ),
+                    "description": ("Max characters to read. Caps large outputs."),
                     "default": 4096,
                 },
             },
@@ -958,6 +978,11 @@ class SPCodeToolkit(star.Star):
         # 每会话独立管理加载状态(v2.4 合并自 agentsmd 插件)
         self._loaded_agents: dict[str, dict] = {}
 
+        # 已加载项目(per-umo)。/project load 时填充,/project unload 时清空。
+        # 与 _loaded_agents 平行——一个跟踪 AGENTS.md,一个跟踪整个项目组合状态。
+        # 格式: {umo: {"directory": str, "loaded_at": float}}
+        self._loaded_projects: dict[str, dict] = {}
+
         # 根据 enabled_tools 配置过滤实际注册的工具
         enabled_names, unknown = filter_enabled_tools(
             ALL_TOOL_NAMES,
@@ -1042,6 +1067,144 @@ class SPCodeToolkit(star.Star):
         """codegraph 项目管理指令组。"""
         pass
 
+    # ── /project 命令组(v2.7 组合 agentsmd + codegraph) ───────────
+
+    @filter.command_group("project")
+    def project(self):
+        """项目管理指令组(组合 agentsmd + codegraph 一键加载/卸载)。
+
+        仅在 agentsmd_enabled 和 codegraph_enabled 都为 true 时可用。
+        handler 入口会做 feature flag 校验,关闭时返回明确错误。
+        """
+        pass
+
+    @project.command("load")
+    async def project_load(self, event, directory: str):
+        """/project load <directory>
+
+        一键加载项目到当前会话:同时执行 agentsmd init+load 和 codegraph init+set,
+        并在 system_prompt 注入 codegraph 优先使用指引。
+
+        前置条件:
+        - agentsmd_enabled = true
+        - codegraph_enabled = true
+        - 当前会话未加载其他项目(Q2=B 决策:重复 load 直接拒绝,需先 unload)
+        """
+        # 1. Feature flag 校验
+        agentsmd_on = self._config.get("agentsmd_enabled", True)
+        codegraph_on = self._config.get("codegraph_enabled", True)
+        if not (agentsmd_on and codegraph_on):
+            yield event.plain_result(
+                "❌ /project 命令要求 agentsmd_enabled 和 codegraph_enabled 都为 true。\n"
+                "请在插件配置中启用这两项后重启 AstrBot。"
+            )
+            return
+
+        # 2. 重复 load 拦截(Q2=B 决策)
+        umo = event.unified_msg_origin
+        if umo in self._loaded_projects:
+            loaded = self._loaded_projects[umo]
+            yield event.plain_result(
+                f"❌ 当前会话已加载项目: {loaded['directory']}\n"
+                f"请先执行 /project unload,再 load 新项目。"
+            )
+            return
+
+        # 3. 路径解析与安全校验
+        directory = _agentsmd_mod.strip_surrounding_quotes(directory)
+        target = Path(directory).resolve()
+        ok, reason = _is_path_safe(
+            target, user_blacklist=self._config.get("file_remove_blacklist")
+        )
+        if not ok:
+            yield event.plain_result(f"❌ 路径不允许: {reason}")
+            return
+
+        # 4. 步骤 1/3: agentsmd(init 条件性 + load)
+        agents_md_path = target / "AGENTS.md"
+        if not agents_md_path.exists():
+            yield event.plain_result(f"⏳ [1/3] AGENTS.md 不存在,正在 init: {target}")
+            async for msg in self._agentsmd_init(event, str(target)):
+                yield msg
+        else:
+            yield event.plain_result(
+                f"ℹ️ [1/3] AGENTS.md 已存在,跳过 init: {agents_md_path}"
+            )
+        yield event.plain_result(f"⏳ [1/3] 正在 load AGENTS.md: {target}")
+        async for msg in self._agentsmd_load(event, str(target)):
+            yield msg
+
+        # 5. 步骤 2/3: codegraph init + set
+        yield event.plain_result(f"⏳ [2/3] codegraph init: {target}")
+        async for msg in self._codegraph_init_or_uninit(event, str(target), init=True):
+            yield msg
+
+        yield event.plain_result(f"⏳ [2/3] codegraph set: {target}")
+        async for msg in self._codegraph_set_project(event, str(target)):
+            yield msg
+
+        # 6. 记录状态(必须最后,即使前面步骤失败也记录以便 unload 清理)
+        self._loaded_projects[umo] = {
+            "directory": str(target),
+            "loaded_at": _time.time(),
+        }
+
+        # 7. 步骤 3/3 汇总
+        yield event.plain_result(
+            f"✅ 项目已加载: {target}\n"
+            f"已激活:\n"
+            f"  - AGENTS.md 注入到 system_prompt\n"
+            f"  - codegraph 索引 + 默认项目\n"
+            f"  - 代码搜索指引(优先 codegraph 工具组)\n"
+            f"卸载: /project unload"
+        )
+
+    @project.command("unload")
+    async def project_unload(self, event):
+        """/project unload
+
+        卸载当前会话已加载的项目:
+        1. /agentsmd unload(清掉 AGENTS.md 注入)
+        2. /codegraph set <codegraph_project>(配置中的默认项目;若未配置则跳过)
+        3. 清空 self._loaded_projects[umo] 状态
+        """
+        # 1. Feature flag 校验
+        agentsmd_on = self._config.get("agentsmd_enabled", True)
+        codegraph_on = self._config.get("codegraph_enabled", True)
+        if not (agentsmd_on and codegraph_on):
+            yield event.plain_result(
+                "❌ /project 命令要求 agentsmd_enabled 和 codegraph_enabled 都为 true。"
+            )
+            return
+
+        umo = event.unified_msg_origin
+        if umo not in self._loaded_projects:
+            yield event.plain_result("ℹ️ 当前会话未加载项目,无需 unload。")
+            return
+
+        # 2. agentsmd unload(同步返回单条消息)
+        yield self._agentsmd_unload(event)
+
+        # 3. codegraph set 回默认项目
+        default_project = (self._config.get("codegraph_project") or "").strip()
+        if default_project:
+            yield event.plain_result(f"⏳ codegraph set 回默认项目: {default_project}")
+            async for msg in self._codegraph_set_project(event, default_project):
+                yield msg
+        else:
+            yield event.plain_result(
+                "ℹ️ codegraph_project 未配置,跳过 codegraph set。"
+                "MCP 当前默认项目维持原状。"
+            )
+
+        # 4. 清理状态(必须在最末,即便 set 失败也清,避免用户无法重试)
+        info = self._loaded_projects.pop(umo)
+        yield event.plain_result(
+            f"✅ 项目已卸载: {info['directory']}\n"
+            f"  - AGENTS.md 注入已移除\n"
+            f"  - codegraph 默认项目已重置"
+        )
+
     @codegraph.command("init")
     async def codegraph_init(self, event, directory: str):
         """/codegraph init <directory>
@@ -1081,7 +1244,9 @@ class SPCodeToolkit(star.Star):
     async def agentsmd_init(self, event, directory: str):
         """/agentsmd init <directory>"""
         if not self._config.get("agentsmd_enabled", True):
-            yield event.plain_result("AGENTS.md 管理功能已被禁用(agentsmd_enabled=false)。")
+            yield event.plain_result(
+                "AGENTS.md 管理功能已被禁用(agentsmd_enabled=false)。"
+            )
             return
         async for msg in self._agentsmd_init(event, directory):
             yield msg
@@ -1090,7 +1255,9 @@ class SPCodeToolkit(star.Star):
     async def agentsmd_load(self, event, directory: str):
         """/agentsmd load <directory>"""
         if not self._config.get("agentsmd_enabled", True):
-            yield event.plain_result("AGENTS.md 管理功能已被禁用(agentsmd_enabled=false)。")
+            yield event.plain_result(
+                "AGENTS.md 管理功能已被禁用(agentsmd_enabled=false)。"
+            )
             return
         async for msg in self._agentsmd_load(event, directory):
             yield msg
@@ -1099,7 +1266,9 @@ class SPCodeToolkit(star.Star):
     async def agentsmd_unload(self, event):
         """/agentsmd unload"""
         if not self._config.get("agentsmd_enabled", True):
-            yield event.plain_result("AGENTS.md 管理功能已被禁用(agentsmd_enabled=false)。")
+            yield event.plain_result(
+                "AGENTS.md 管理功能已被禁用(agentsmd_enabled=false)。"
+            )
             return
         yield self._agentsmd_unload(event)
 
@@ -1107,7 +1276,9 @@ class SPCodeToolkit(star.Star):
     async def agentsmd_update(self, event):
         """/agentsmd update"""
         if not self._config.get("agentsmd_enabled", True):
-            yield event.plain_result("AGENTS.md 管理功能已被禁用(agentsmd_enabled=false)。")
+            yield event.plain_result(
+                "AGENTS.md 管理功能已被禁用(agentsmd_enabled=false)。"
+            )
             return
         async for msg in self._agentsmd_update(event):
             yield msg
@@ -1329,7 +1500,7 @@ class SPCodeToolkit(star.Star):
             action = "初始化" if init else "反初始化"
             yield event.plain_result(
                 f"⏳ 正在 {action} codegraph 项目 {target_str}...\n"
-                f"   (大型项目可能耗时 30-120s,期间请勿重复执行)"
+                f"   (大型项目可能耗时数分钟,期间请勿重复执行)"
             )
 
             # 5. 异步执行
@@ -1350,14 +1521,14 @@ class SPCodeToolkit(star.Star):
                 return
 
             try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
             except asyncio.TimeoutError:
                 proc.kill()
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=5)
                 except asyncio.TimeoutError:
                     pass
-                yield event.plain_result(f"❌ codegraph {sub} 超时(180s),已终止")
+                yield event.plain_result(f"❌ codegraph {sub} 超时(300s),已终止")
                 return
 
             if proc.returncode == 0:
@@ -1666,6 +1837,36 @@ class SPCodeToolkit(star.Star):
             f"[agentsmd] 已向会话 {umo} 的 system_prompt 注入 AGENTS.md "
             f"({len(content)} 字符)"
         )
+
+    @filter.on_llm_request()
+    async def _project_inject_codegraph_guidance(
+        self, event: AstrMessageEvent, req: ProviderRequest
+    ):
+        """/project load 后,把 codegraph 优先使用指引注入到 system_prompt 末尾。
+
+        与 _agentsmd_inject_to_llm_request 平行,但走独立 marker 防重复。
+        只在以下条件同时满足时注入:
+        - codegraph_enabled = true
+        - 当前 umo 已在 self._loaded_projects 中
+
+        实现要点:
+        - marker (`_PROJECT_GUIDANCE_MARKER`) 检测防重复
+        - system_prompt = None 时用 lstrip("\n") 避免前置空行
+        - 已存在 system_prompt 时追加在末尾
+        """
+        if not self._config.get("codegraph_enabled", True):
+            return
+        umo = event.unified_msg_origin
+        if umo not in self._loaded_projects:
+            return
+        # 防重复(同一请求多次走钩子)
+        if _PROJECT_GUIDANCE_MARKER in (req.system_prompt or ""):
+            return
+        if req.system_prompt is None or req.system_prompt == "":
+            req.system_prompt = _PROJECT_CODEGRAPH_GUIDANCE.lstrip("\n")
+        else:
+            req.system_prompt = req.system_prompt + _PROJECT_CODEGRAPH_GUIDANCE
+        logger.debug(f"[project] 已向会话 {umo} 的 system_prompt 注入 codegraph 指引")
 
     @filter.on_llm_request()
     async def _auth_guard(self, event, req: ProviderRequest):

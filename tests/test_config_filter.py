@@ -140,9 +140,7 @@ def test_todo_list_group_size_is_4():
 
 def test_todo_list_group_mixed_with_explicit_tools():
     """todo_list 组别名 + 显式工具名可同时启用。"""
-    enabled, unknown = filter_enabled_tools(
-        ALL_TOOL_NAMES, ["todo_list", "code_check"]
-    )
+    enabled, unknown = filter_enabled_tools(ALL_TOOL_NAMES, ["todo_list", "code_check"])
     assert "code_check" in enabled
     assert "todo_create" in enabled
     assert "todo_query" in enabled
@@ -157,9 +155,7 @@ def test_todo_list_group_mixed_with_explicit_tools():
 
 def test_both_groups_expand_together():
     """inta_shell + todo_list 一起勾选 → 展开为 9 个工具。"""
-    enabled, unknown = filter_enabled_tools(
-        ALL_TOOL_NAMES, ["inta_shell", "todo_list"]
-    )
+    enabled, unknown = filter_enabled_tools(ALL_TOOL_NAMES, ["inta_shell", "todo_list"])
     # 5 shell + 4 todo = 9
     assert len(enabled) == 9
     assert "astrbot_inta_shell_start" in enabled
@@ -207,9 +203,7 @@ def test_legacy_todo_list_entry_expands_correctly():
     assert "todo_modify" in enabled
     assert "todo_clear" in enabled
     # 不会因为 "todo_list" 而报告 unknown
-    assert unknown == set(), (
-        f"组别名 todo_list 不应被当作 unknown,但报告了: {unknown}"
-    )
+    assert unknown == set(), f"组别名 todo_list 不应被当作 unknown,但报告了: {unknown}"
 
 
 # ── 6. ALL_TOOL_NAMES 完整性约束 ────────────────────

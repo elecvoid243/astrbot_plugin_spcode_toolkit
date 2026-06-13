@@ -17,10 +17,14 @@ def test_full_lifecycle_v2_6(tmp_path: Path):
     sender = "test:smoke"
 
     # 1. create
-    r1 = store.create(sender, title="重构计划", items=[
-        {"title": "分析", "status": "pending"},
-        {"title": "实现", "status": "pending"},
-    ])
+    r1 = store.create(
+        sender,
+        title="重构计划",
+        items=[
+            {"title": "分析", "status": "pending"},
+            {"title": "实现", "status": "pending"},
+        ],
+    )
     assert r1["ok"] is True
     assert r1["item_count"] == 2
     assert "list" in r1
@@ -58,7 +62,9 @@ def test_full_lifecycle_v2_6(tmp_path: Path):
 
     # 7. modify(update) — notes=None 保留旧值
     # 先设置一个 notes
-    store.modify(sender, mode="update", item_ids=3, status="in_progress", notes="阻塞中")
+    store.modify(
+        sender, mode="update", item_ids=3, status="in_progress", notes="阻塞中"
+    )
     # 然后只改 status,notes 不传(None = 保留)
     r7 = store.modify(sender, mode="update", item_ids=3, status="pending")
     assert r7["ok"] is True
@@ -84,6 +90,7 @@ def test_full_lifecycle_v2_6(tmp_path: Path):
 def test_query_returns_proposal_when_no_list(tmp_path: Path):
     """query 在 list 不存在时返回 proposal。"""
     from tools import todo_list
+
     store = todo_list.TodoStore(tmp_path)
     r = store.query("test:noone")
     assert r["ok"] is False
@@ -94,6 +101,7 @@ def test_query_returns_proposal_when_no_list(tmp_path: Path):
 def test_clear_returns_proposal_when_no_list(tmp_path: Path):
     """clear 在 list 不存在时返回 proposal。"""
     from tools import todo_list
+
     store = todo_list.TodoStore(tmp_path)
     r = store.clear("test:noone")
     assert r["ok"] is False

@@ -341,9 +341,7 @@ def _normalize_item_ids(
                     f"{context} entries must be int, got {type(v).__name__}"
                 )
             if v == 0:
-                raise ValueError(
-                    f"{context}=0 is not valid; IDs start at 1"
-                )
+                raise ValueError(f"{context}=0 is not valid; IDs start at 1")
             if v < 0:
                 raise ValueError(f"{context} entries must be positive, got {v}")
             if v not in out:
@@ -530,8 +528,7 @@ class TodoStore:
             return {
                 "ok": False,
                 "proposal": (
-                    "当前无 todo list，请先调用 "
-                    "todo_create(items=[...]) 创建"
+                    "当前无 todo list，请先调用 todo_create(items=[...]) 创建"
                 ),
             }
         result = {"ok": True, "file": str(path)}
@@ -819,7 +816,8 @@ class TodoStore:
                 actual_notes = notes
                 actual_clear = False
             return self.update(
-                sender_key, item_ids,
+                sender_key,
+                item_ids,
                 status=status,
                 notes=actual_notes,
                 clear_notes=actual_clear,

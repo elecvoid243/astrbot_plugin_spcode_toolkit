@@ -21,7 +21,6 @@ from pathlib import Path
 
 # 默认的 AGENTS.md 生成 prompt 模板
 DEFAULT_INIT_TEMPLATE = """请分析此代码库并创建一个 AGENTS.md 文件,包含:
-- 该项目的绝对路径
 - 构建/lint/测试命令——特别是运行单个测试的命令。如果使用msbuild进行构建,只输出错误信息和警告信息
 - 代码风格指南,包括导入、格式化、类型、命名约定、错误处理等
 - 代码目录结构和架构说明,如果有多级子目录,请列举
