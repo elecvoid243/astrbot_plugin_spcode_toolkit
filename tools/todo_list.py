@@ -31,6 +31,15 @@ STATUS_MARK = {
 MARK_STATUS = {v: k for k, v in STATUS_MARK.items()}
 
 
+# ── 缺失值标记 ──────────────────────────────────────
+# 用于 todo_modify 工具区分"未传 notes"与"传了空字符串"。
+# 使用 None(JSON 安全)作为缺失值标记。
+# - None = 未传 → 保留旧值
+# - ""   = 传了空串 → 清空 notes
+# - "x"  = 传了内容 → 覆盖 notes
+UNSET_NOTES: None = None
+
+
 # ── sender_key & filename ───────────────────────────
 
 
