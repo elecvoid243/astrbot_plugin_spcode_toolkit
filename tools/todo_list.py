@@ -778,6 +778,59 @@ class TodoStore:
         result.update(self._build_list_state(data, path))
         return result
 
+    def modify(
+        self,
+        sender_key: str,
+        mode: str,
+        items: list[dict] | None = None,
+        item_ids: int | list[int] | None = None,
+        status: str = "",
+        notes: str | None = UNSET_NOTES,
+    ) -> dict:
+        """统一 add / update / delete 的分发入口。
+
+        - mode='add':    调用 self.add(items=items)
+        - mode='update': 调用 self.update(item_ids=item_ids, status=status, notes=notes)
+        - mode='delete': 调用 self.delete(item_ids=item_ids)
+        - 其他 mode:     返回 {"ok": False, "error": "未知 mode: {mode}"}
+
+        notes 三态 (None = 未传, 保留旧值):
+        - None  → 保留旧 notes
+        - ""    → 清空 notes
+        - "xxx" → 覆盖 notes
+        """
+        if mode == "add":
+            return self.add(sender_key, items)
+        if mode == "update":
+            # notes 三态桥接到 update() 的 (notes, clear_notes) 二元:
+            #   None (未传)  →  保留旧值   → clear_notes=False, notes=""
+            #   ""   (传空)  →  清空 notes → clear_notes=True,  notes=""
+            #   "x"  (传值)  →  覆盖       → clear_notes=False, notes="x"
+            # 注意: update() 内部 if clear_notes: target["notes"] = "" 无条件清空,
+            # 所以"覆盖"分支必须 clear_notes=False,否则新值会被清空逻辑覆盖掉。
+            if notes is None:
+                actual_notes = ""
+                actual_clear = False
+            elif notes == "":
+                actual_notes = ""
+                actual_clear = True
+            else:
+                actual_notes = notes
+                actual_clear = False
+            return self.update(
+                sender_key, item_ids,
+                status=status,
+                notes=actual_notes,
+                clear_notes=actual_clear,
+            )
+        if mode == "delete":
+            return self.delete(sender_key, item_ids)
+        return {
+            "ok": False,
+            "error": f"未知 mode: {mode}",
+            "proposal": "可选: add/update/delete",
+        }
+
     def clear(self, sender_key: str) -> dict:
         """删整个 todo list(文件 unlink)。
 

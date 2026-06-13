@@ -295,10 +295,7 @@ def test_delete_in_progress_with_notes_refreshes_attention(tmp_path: Path):
 
 
 def test_clear_does_not_include_list(tmp_path: Path):
-    """clear() 直接 unlink 整个 list 文件,无 list 可回传。
-
-    v2.2.0: clear 不再是 delete(0) 的别名,而是独立实现。
-    """
+    """clear() = delete(item_id=0)，整个列表被删，无 list 可回传。"""
     store = _new_store(tmp_path)
     store.create(SENDER, items=[{"title": "a"}, {"title": "b"}])
 
@@ -346,11 +343,7 @@ def test_normalize_single_int():
 
 
 def test_normalize_single_zero_with_allow_zero_returns_sentinel():
-    """allow_zero=True 时,0 返回 [0](helper 自身能力,目前无活跃调用方)。
-
-    v2.2.0: delete/update 都用 allow_zero=False,所以此分支不再被业务使用;
-    但 helper 仍保留 allow_zero 参数以备未来 todo_clear 工具复用。
-    """
+    """allow_zero=True 时,0 返回 [0] 供 delete 判定 clear-list。"""
     assert todo_list._normalize_item_ids(0, allow_zero=True) == [0]
 
 
@@ -368,10 +361,10 @@ def test_normalize_list_dedupes_preserving_order():
 
 
 def test_normalize_list_with_zero_raises():
-    """v2.2.0: list 中含 0 必须报错(0 永远不是合法 ID,不能用于 clear-list)。"""
+    """list 中含 0 必须报错:用单项 0 触发 clear-list,不要混在批量里。"""
     import pytest
 
-    with pytest.raises(ValueError, match="0 is not valid"):
+    with pytest.raises(ValueError, match="cannot appear inside a list"):
         todo_list._normalize_item_ids([1, 0, 2])
 
 
@@ -1148,3 +1141,80 @@ def test_update_result_has_no_legacy_item_id_field(tmp_path: Path):
     assert "items" in r
     assert r["item_ids"] == [1]
     assert r["items"][0]["status"] == "done"
+
+
+# ── v2.2.0 Task 2.2: TodoStore.modify() 三 mode 分发 ──
+
+
+def test_modify_add_mode_appends_items(tmp_path: Path):
+    """modify(mode='add') 等价于 add(items=...)。"""
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "existing"}])
+    r = store.modify(SENDER, mode="add", items=[{"title": "new1"}, {"title": "new2"}])
+    assert r["ok"] is True
+    assert r["item_count"] == 3
+    assert r["item_ids"] == [2, 3]
+
+
+def test_modify_update_mode_modifies_items(tmp_path: Path):
+    """modify(mode='update') 等价于 update(item_ids=..., status=..., notes=...)。"""
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "a"}, {"title": "b"}])
+    r = store.modify(SENDER, mode="update", item_ids=[1, 2], status="done")
+    assert r["ok"] is True
+    assert r["item_ids"] == [1, 2]
+
+
+def test_modify_delete_mode_removes_items(tmp_path: Path):
+    """modify(mode='delete') 等价于 delete(item_ids=...)。"""
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "a"}, {"title": "b"}, {"title": "c"}])
+    r = store.modify(SENDER, mode="delete", item_ids=[1, 3])
+    assert r["ok"] is True
+    assert r["deleted"] == 2
+    assert r["item_count"] == 1
+
+
+def test_modify_unknown_mode_returns_error(tmp_path: Path):
+    """modify 收到未知 mode 返回错误而非崩溃。"""
+    store = _new_store(tmp_path)
+    r = store.modify(SENDER, mode="bogus")
+    assert r["ok"] is False
+    assert "bogus" in r["error"]
+    assert "add/update/delete" in r["proposal"]
+
+
+# impl_t2_2 标记: 4 个 modify 测试在 tests/test_todo_list.py 末尾追加, 时间 2026-06-13 12:42 (CST)
+
+
+# ── v2.2.0 Task 2.3: modify() notes 三态 None 桥接 ──
+
+
+def test_modify_update_with_none_notes_keeps_existing(tmp_path: Path):
+    """modify update 模式 notes=None → 保留旧值。"""
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "a", "notes": "原始备注"}])
+    r = store.modify(SENDER, mode="update", item_ids=1, status="done", notes=None)
+    assert r["ok"] is True
+    q = store.query(SENDER)
+    assert q["list"]["items"][0]["notes"] == "原始备注"
+
+
+def test_modify_update_with_empty_string_notes_clears(tmp_path: Path):
+    """modify update 模式 notes='' → 清空 notes。"""
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "a", "notes": "原始"}])
+    r = store.modify(SENDER, mode="update", item_ids=1, notes="")
+    assert r["ok"] is True
+    q = store.query(SENDER)
+    assert q["list"]["items"][0]["notes"] == ""
+
+
+def test_modify_update_with_new_notes_overwrites(tmp_path: Path):
+    """modify update 模式 notes='xxx' → 覆盖。"""
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "a", "notes": "原始"}])
+    r = store.modify(SENDER, mode="update", item_ids=1, notes="新内容")
+    assert r["ok"] is True
+    q = store.query(SENDER)
+    assert q["list"]["items"][0]["notes"] == "新内容"
