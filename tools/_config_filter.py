@@ -13,7 +13,11 @@ ALL_TOOL_NAMES: list[str] = [
     "es_search",
     "astrbot_file_remove",
     "astrbot_file_compare",
-    "todo_list",
+    "todo_create",
+    "todo_query",
+    "todo_modify",
+    "todo_clear",
+    "todo_list",  # legacy deprecation stub (v2.2.0)
     # inta_shell 工具(v2.5)
     "astrbot_inta_shell_start",
     "astrbot_inta_shell_send",
