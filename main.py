@@ -400,8 +400,7 @@ class TodoListTool(FunctionTool):
 
     name: str = "todo_list"
     description: str = (
-        "Self-managed task list, scoped per user (sender_id — shared across groups, "
-        "private chats, and platforms for the same user). Use to plan and track "
+        "Self-managed task list. Use to plan and track "
         "multi-step work. "
         "6 actions: create / query / add / update / delete / clear. "
         "create() overwrites any existing list for the current user — query() first "
