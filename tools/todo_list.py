@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 """
@@ -439,24 +439,21 @@ class TodoStore:
         sender_key: str,
         title: str = "",
         items: list[dict] | None = None,
-        from_file: str = "",
     ) -> dict:
-        """Create a new todo list. Three modes:
+        """Create a new todo list.
 
-        - **Fresh**: `items` is non-empty → fresh list of those items.
-          Overwrites any file at the current minute for this sender.
-        - **From file**: `from_file` is a non-empty path → snapshot of a
-          persisted .md file. The source file is preserved.
-        - **Auto-discover**: both empty → snapshot of the most recent
-          .md file for this sender. The source file is preserved.
+        v2.2.0: only the **Fresh** mode remains. `items` must be a non-empty
+        list of dicts. Passing `items=None` or `items=[]` returns an error.
 
-        `from_file` and `items` are mutually exclusive.
+        Fresh mode overwrites any file at the current minute for this sender.
+        The previous file (if any) is unlinked and `previous_item_count`
+        reflects how many items it held.
         """
         items = items or []
-        if from_file and items:
+        if not items:
             return {
                 "ok": False,
-                "error": "from_file and items are mutually exclusive",
+                "error": "items 不能为空,请提供至少一个 item",
             }
         if len(items) > MAX_ITEMS:
             return {
@@ -464,56 +461,20 @@ class TodoStore:
                 "error": f"items count {len(items)} exceeds limit {MAX_ITEMS}",
             }
 
-        # --- Resolve source for snapshot modes ---
-        source_path: Path | None = None
-        source_data: dict | None = None
-        loaded_from: str | None = None
-
-        if from_file:
-            validated = self._validate_source_path(sender_key, from_file)
-            if isinstance(validated, dict):
-                return validated  # validation error
-            source_path = validated
-        elif not items:
-            # Auto-discover: pick the most recent file for this sender
-            source_path = self._existing_path(sender_key)
-            if not source_path:
-                return {
-                    "ok": False,
-                    "proposal": (
-                        "No existing todo list found. "
-                        "Call create(items=[...]) to start a new one."
-                    ),
-                }
-            loaded_from = "auto"
-
+        # --- Compute previous_item_count from any existing same-minute file ---
         previous_count = 0
-
-        if source_path:
-            # Snapshot mode: load source data, do NOT delete the source file
+        old_path, _ = self._load(sender_key)
+        if old_path:
             try:
-                source_data = parse_md(source_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError) as e:
-                return {"ok": False, "error": f"Failed to read source file: {e}"}
-            items = source_data["items"]
-            # previous_count stays 0: nothing was overwritten
-        else:
-            # Fresh mode: compute previous_count from any existing same-minute file
-            old_path, _ = self._load(sender_key)
-            if old_path:
-                try:
-                    old_data = parse_md(old_path.read_text(encoding="utf-8"))
-                    previous_count = len(old_data.get("items", []))
-                except Exception:
-                    pass
-                old_path.unlink()
+                old_data = parse_md(old_path.read_text(encoding="utf-8"))
+                previous_count = len(old_data.get("items", []))
+            except Exception:
+                pass
+            old_path.unlink()
 
         # --- Title resolution ---
         if not title:
-            if source_data and source_data.get("title"):
-                title = source_data["title"]
-            else:
-                title = sender_key
+            title = sender_key
 
         # --- Build new data ---
         platform, _, sid = sender_key.partition(":")
@@ -538,25 +499,6 @@ class TodoStore:
             ],
         }
         new_path = self._path_for(sender_key)
-        # Snapshot mode is additive: the new file must not clobber ANY
-        # existing file (not the source, not a prior snapshot from the
-        # same minute). Bump forward minute-by-minute until we find a
-        # free path.
-        if source_path:
-            candidate_dt = datetime.now()
-            for _ in range(60 * 24 * 7):  # safety bound: 1 week
-                candidate_path = self._path_for(sender_key, when=candidate_dt)
-                if not candidate_path.exists():
-                    new_path = candidate_path
-                    break
-                candidate_dt = candidate_dt.replace(
-                    second=0, microsecond=0
-                ) + timedelta(minutes=1)
-            else:
-                return {
-                    "ok": False,
-                    "error": "Could not find a free minute for new file",
-                }
         try:
             self._atomic_write(new_path, render_md(data))
         except OSError as e:
@@ -568,54 +510,9 @@ class TodoStore:
             "previous_item_count": previous_count,
             "file": str(new_path),
         }
-        if source_path:
-            result["source_file"] = str(source_path)
-        if loaded_from:
-            result["loaded_from"] = loaded_from
         # Include full list state for downstream display
         result.update(self._build_list_state(data, new_path))
         return result
-
-    def _validate_source_path(self, sender_key: str, file_path: str) -> Path | dict:
-        """Validate that `file_path` is a safe .md source for `sender_key`.
-
-        Checks:
-        1. Path resolves to a file inside the todos directory.
-        2. Suffix is `.md`.
-        3. Filename matches `sender_key`'s prefix (plaintext or sha256 form).
-
-        Returns the resolved Path on success, or an error dict on failure.
-        """
-        if not file_path:
-            return {"ok": False, "error": "file_path is empty"}
-        try:
-            candidate = Path(file_path).resolve()
-        except (OSError, ValueError) as e:
-            return {"ok": False, "error": f"Invalid path: {e}"}
-        # Must live inside the todos directory
-        try:
-            candidate.relative_to(self._dir.resolve())
-        except ValueError:
-            return {"ok": False, "error": "file_path is outside the todos directory"}
-        if candidate.suffix.lower() != ".md":
-            return {"ok": False, "error": "only .md files are supported"}
-        if not candidate.is_file():
-            return {"ok": False, "error": "file does not exist"}
-        # Filename prefix must match this sender_key
-        if ":" in sender_key:
-            platform, _, sid = sender_key.partition(":")
-            prefix = f"{platform}_{sid}_"
-        else:
-            prefix = f"{sender_key}_"
-        h = hashlib.sha256(sender_key.encode("utf-8")).hexdigest()[:16]
-        if not (
-            candidate.name.startswith(prefix) or candidate.name.startswith(f"{h}_")
-        ):
-            return {
-                "ok": False,
-                "error": "file does not belong to the current user",
-            }
-        return candidate
 
     def query(self, sender_key: str) -> dict:
         """读取 list，返回结构化数据。"""

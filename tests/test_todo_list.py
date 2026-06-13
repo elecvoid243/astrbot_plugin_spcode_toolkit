@@ -8,7 +8,6 @@ attention_items，以便前端 TodoListResult.vue 在这些 action 成功后展�
 from __future__ import annotations
 
 import sys
-from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -79,6 +78,49 @@ def test_create_overwrite_previous_count(tmp_path: Path):
     # 仍然包含完整 list
     assert len(r["list"]["items"]) == 1
     assert r["stats"]["total"] == 1
+
+
+# ── 2.5 v2.2.0: 移除 from_file / source_file / loaded_from ──
+
+
+def test_create_no_longer_accepts_from_file(tmp_path: Path):
+    """v2.2.0: create 签名已移除 from_file。"""
+    import inspect
+
+    store = _new_store(tmp_path)
+    sig = inspect.signature(store.create)
+    assert "from_file" not in sig.parameters, (
+        f"create() should not have from_file param, got {list(sig.parameters.keys())}"
+    )
+
+
+def test_create_result_has_no_source_file_field(tmp_path: Path):
+    """v2.2.0: 移除 from_file 后,创建结果不应含 source_file / loaded_from 字段。"""
+    store = _new_store(tmp_path)
+    r = store.create(SENDER, title="t", items=[{"title": "a"}])
+    assert r["ok"] is True
+    assert "source_file" not in r
+    assert "loaded_from" not in r
+
+
+def test_create_empty_items_returns_error(tmp_path: Path):
+    """v2.2.0: items 为空(None / []) 时 create 应返回 error,不再 auto-discover。"""
+    store = _new_store(tmp_path)
+    # 先 seed 一个文件证明它不该被 auto-discover 加载
+    seed = store.create(SENDER, title="old", items=[{"title": "x"}])
+
+    r_none = store.create(SENDER)
+    assert r_none["ok"] is False
+    assert "error" in r_none
+    assert "list" not in r_none
+
+    r_empty = store.create(SENDER, items=[])
+    assert r_empty["ok"] is False
+    assert "error" in r_empty
+    assert "list" not in r_empty
+
+    # 旧的 seed 文件不应被改动(说明没有走 auto-discover 路径)
+    assert Path(seed["file"]).is_file()
 
 
 # ── 3. add 返回完整 list + stats ─────────────────────
@@ -290,222 +332,6 @@ def test_delete_no_list_returns_proposal(tmp_path: Path):
     assert r["ok"] is False
     assert "proposal" in r
     assert "list" not in r
-
-
-# ══════════════════════════════════════════════════════════════════════
-# Phase 2: create from persisted file + minute-precision filenames
-# ══════════════════════════════════════════════════════════════════════
-
-
-def test_create_from_explicit_file_loads_content(tmp_path: Path):
-    """from_file points to an existing .md → new list mirrors its content."""
-    store = _new_store(tmp_path)
-    # Seed a persisted file first
-    seed = store.create(
-        SENDER,
-        title="Yesterday",
-        items=[
-            {"title": "a", "status": "done"},
-            {"title": "b", "status": "pending"},
-        ],
-    )
-    source_path = seed["file"]
-    assert Path(source_path).is_file()
-
-    # Now create a new list loaded from that file
-    r = store.create(SENDER, from_file=source_path)
-    assert r["ok"] is True
-    # Title falls back to source file's title
-    assert r["list_title"] == "Yesterday"
-    # item_count and list items match source
-    assert r["item_count"] == 2
-    assert len(r["list"]["items"]) == 2
-    assert r["list"]["items"][0]["title"] == "a"
-    assert r["list"]["items"][0]["status"] == "done"
-    # No overwrite → previous_item_count is 0 (snapshot semantic)
-    assert r["previous_item_count"] == 0
-    # Result includes source_file pointer
-    assert r["source_file"] == source_path
-    # New file is a different file from the source
-    assert r["file"] != source_path
-    # Full list state is included
-    assert "list" in r
-    assert "stats" in r
-    assert "attention_items" in r
-
-
-def test_create_from_explicit_file_preserves_source(tmp_path: Path):
-    """Loading from a file does NOT delete the source (snapshot semantic)."""
-    store = _new_store(tmp_path)
-    seed = store.create(SENDER, title="Keep me", items=[{"title": "x"}])
-    source_path = Path(seed["file"])
-    assert source_path.is_file()
-
-    r = store.create(SENDER, from_file=str(source_path))
-    assert r["ok"] is True
-    # Source file must still exist after the new create
-    assert source_path.is_file(), "from_file mode must not delete the source"
-    # And its content is unchanged
-    src_items = todo_list.parse_md(source_path.read_text(encoding="utf-8"))["items"]
-    assert len(src_items) == 1
-    assert src_items[0]["title"] == "x"
-
-
-def test_create_from_explicit_file_with_title_override(tmp_path: Path):
-    """Non-empty title overrides the source file's title."""
-    store = _new_store(tmp_path)
-    seed = store.create(SENDER, title="Old title", items=[{"title": "a"}])
-    r = store.create(SENDER, from_file=seed["file"], title="New title")
-    assert r["ok"] is True
-    assert r["list_title"] == "New title"
-    # But items still come from the source file
-    assert len(r["list"]["items"]) == 1
-    assert r["list"]["items"][0]["title"] == "a"
-
-
-def test_create_from_explicit_file_invalid_path(tmp_path: Path):
-    """Non-existent file path → error with proposal."""
-    store = _new_store(tmp_path)
-    fake = tmp_path / "does_not_exist.md"
-    r = store.create(SENDER, from_file=str(fake))
-    assert r["ok"] is False
-    assert "error" in r
-    assert "list" not in r
-
-
-def test_create_from_explicit_file_outside_todos_dir(tmp_path: Path):
-    """A path outside the todos directory is rejected (security)."""
-    store = _new_store(tmp_path)
-    # Create a file *outside* the todos dir
-    outside = tmp_path.parent / f"outside_{SENDER.replace(':', '_')}.md"
-    outside.write_text("---\nsender_key: x\n---\n", encoding="utf-8")
-    try:
-        r = store.create(SENDER, from_file=str(outside))
-        assert r["ok"] is False
-        assert "error" in r
-        assert "list" not in r
-        # Error message should not leak absolute path info
-        assert "list" not in r
-    finally:
-        outside.unlink(missing_ok=True)
-
-
-def test_create_from_explicit_file_wrong_owner(tmp_path: Path):
-    """A .md file that belongs to a different sender_key is rejected."""
-    store = _new_store(tmp_path)
-    # Create a file for a *different* user
-    other = store.create("other:user", title="Other", items=[{"title": "x"}])
-    other_path = other["file"]
-
-    # SENDER tries to load that file
-    r = store.create(SENDER, from_file=other_path)
-    assert r["ok"] is False
-    assert "error" in r
-    assert "list" not in r
-
-
-def test_create_from_explicit_file_and_items_conflict(tmp_path: Path):
-    """from_file + items together → error (mutually exclusive)."""
-    store = _new_store(tmp_path)
-    seed = store.create(SENDER, items=[{"title": "src"}])
-    r = store.create(
-        SENDER,
-        from_file=seed["file"],
-        items=[{"title": "new"}],
-    )
-    assert r["ok"] is False
-    assert "error" in r
-    assert "list" not in r
-
-
-def test_create_auto_discovers_recent_file(tmp_path: Path):
-    """Empty from_file + empty items → auto-load most recent file for this user."""
-    store = _new_store(tmp_path)
-    seed = store.create(SENDER, title="Auto source", items=[{"title": "a"}])
-    source_path = seed["file"]
-
-    # No from_file, no items → should auto-discover the seed file
-    r = store.create(SENDER)
-    assert r["ok"] is True
-    assert r["list_title"] == "Auto source"
-    assert r["item_count"] == 1
-    assert r["source_file"] == source_path
-    assert r.get("loaded_from") == "auto"
-    # Source is still preserved
-    assert Path(source_path).is_file()
-
-
-def test_create_auto_discovers_no_file_returns_proposal(tmp_path: Path):
-    """Auto-discover with no existing file → proposal error."""
-    store = _new_store(tmp_path)
-    r = store.create(SENDER)
-    assert r["ok"] is False
-    assert "proposal" in r
-    assert "list" not in r
-    # Proposal should suggest the user create one
-    assert "create" in r["proposal"].lower()
-
-
-def test_create_auto_discover_picks_most_recent(tmp_path: Path):
-    """Auto-discover picks the most recently created file (not the oldest)."""
-    store = _new_store(tmp_path)
-    # Create two files for the same user; the second is more recent
-    first = store.create(SENDER, title="Old", items=[{"title": "a"}])
-    second = store.create(
-        SENDER, title="Recent", items=[{"title": "b"}, {"title": "c"}]
-    )
-    # Both files exist
-    assert Path(first["file"]).is_file()
-    assert Path(second["file"]).is_file()
-
-    # Auto-discover should pick the most recent one (by name sort, since both
-    # have the same minute-precision timestamp created in the same instant,
-    # we fall back to "more items" to be deterministic — but the contract is
-    # "most recent", so the test asserts the higher of the two titles)
-    r = store.create(SENDER)
-    assert r["ok"] is True
-    # Whichever was sorted last (reverse=True) is what's returned
-    assert r["list_title"] in ("Old", "Recent")
-    # Most importantly, source_file should be a real file in the todos dir
-    assert Path(r["source_file"]).is_file()
-
-
-def test_filename_uses_minute_precision(tmp_path: Path):
-    """Filenames use %Y%m%d%H%M (12-digit timestamp), not %Y%m%d (8-digit)."""
-    fixed_dt = datetime(2026, 6, 7, 15, 45, 30)
-    fname = todo_list.build_filename("webchat:astrbot", when=fixed_dt)
-    # Expect pattern: webchat_astrbot_202606071545.md
-    assert fname == "webchat_astrbot_202606071545.md", (
-        f"Expected minute-precision filename, got {fname!r}"
-    )
-    # The timestamp portion is 12 digits (YYYYMMDDhhmm)
-    ts_part = fname.split("_")[-1].removesuffix(".md")
-    assert len(ts_part) == 12, f"Expected 12-digit timestamp, got {ts_part!r}"
-    assert ts_part == "202606071545"
-
-
-def test_create_snapshot_does_not_clobber_other_snapshot(tmp_path: Path):
-    """Two snapshot calls in the same minute must not overwrite each other.
-
-    Snapshot mode is additive: every new file gets a unique minute so prior
-    snapshots (and the source) remain on disk.
-    """
-    store = _new_store(tmp_path)
-    # Fresh seed at minute M
-    seed = store.create(SENDER, items=[{"title": "src"}])
-    # First snapshot — bumps forward to M+1 because new_path == source_path
-    snap1 = store.create(SENDER, from_file=seed["file"])
-    # Second snapshot in the same wall-clock minute — should bump again to M+2
-    # (NOT overwrite snap1 at M+1, NOT overwrite the source at M)
-    snap2 = store.create(SENDER, from_file=seed["file"])
-
-    # All three files must exist (additive, never destructive)
-    assert Path(seed["file"]).is_file(), "Source must still exist"
-    assert Path(snap1["file"]).is_file(), "snap1 must still exist"
-    assert Path(snap2["file"]).is_file(), "snap2 must still exist"
-    # All three filenames are distinct
-    paths = {seed["file"], snap1["file"], snap2["file"]}
-    assert len(paths) == 3, f"Expected 3 distinct files, got {paths}"
 
 
 # ══════════════════════════════════════════════════════════════════════
