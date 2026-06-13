@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 """
@@ -29,6 +29,15 @@ STATUS_MARK = {
     "cancelled": "[-]",
 }
 MARK_STATUS = {v: k for k, v in STATUS_MARK.items()}
+
+
+# ── 缺失值标记 ──────────────────────────────────────
+# 用于 todo_modify 工具区分"未传 notes"与"传了空字符串"。
+# 使用 None(JSON 安全)作为缺失值标记。
+# - None = 未传 → 保留旧值
+# - ""   = 传了空串 → 清空 notes
+# - "x"  = 传了内容 → 覆盖 notes
+UNSET_NOTES: None = None
 
 
 # ── sender_key & filename ───────────────────────────
@@ -290,7 +299,8 @@ def _normalize_item_ids(
 
     接受:
     - int > 0  →  [int]
-    - int == 0  →  [0]  (仅当 allow_zero=True,代表"清空整个 list" 的哨兵)
+    - int == 0  →  [0]  (仅当 allow_zero=True;v2.2.0 后 delete/update 都用 False,
+                          此分支目前无活跃调用方,保留为 helper 的可选能力)
     - list[int] →  list[int](去重,保留首次出现的顺序)
 
     拒绝(抛 ValueError,让上层转 ok=False 错误响应):
@@ -332,8 +342,7 @@ def _normalize_item_ids(
                 )
             if v == 0:
                 raise ValueError(
-                    f"{context}=0 cannot appear inside a list; "
-                    f"use {context}=0 (single value) to clear the whole list"
+                    f"{context}=0 is not valid; IDs start at 1"
                 )
             if v < 0:
                 raise ValueError(f"{context} entries must be positive, got {v}")
@@ -439,24 +448,21 @@ class TodoStore:
         sender_key: str,
         title: str = "",
         items: list[dict] | None = None,
-        from_file: str = "",
     ) -> dict:
-        """Create a new todo list. Three modes:
+        """Create a new todo list.
 
-        - **Fresh**: `items` is non-empty → fresh list of those items.
-          Overwrites any file at the current minute for this sender.
-        - **From file**: `from_file` is a non-empty path → snapshot of a
-          persisted .md file. The source file is preserved.
-        - **Auto-discover**: both empty → snapshot of the most recent
-          .md file for this sender. The source file is preserved.
+        v2.2.0: only the **Fresh** mode remains. `items` must be a non-empty
+        list of dicts. Passing `items=None` or `items=[]` returns an error.
 
-        `from_file` and `items` are mutually exclusive.
+        Fresh mode overwrites any file at the current minute for this sender.
+        The previous file (if any) is unlinked and `previous_item_count`
+        reflects how many items it held.
         """
         items = items or []
-        if from_file and items:
+        if not items:
             return {
                 "ok": False,
-                "error": "from_file and items are mutually exclusive",
+                "error": "items 不能为空,请提供至少一个 item",
             }
         if len(items) > MAX_ITEMS:
             return {
@@ -464,56 +470,20 @@ class TodoStore:
                 "error": f"items count {len(items)} exceeds limit {MAX_ITEMS}",
             }
 
-        # --- Resolve source for snapshot modes ---
-        source_path: Path | None = None
-        source_data: dict | None = None
-        loaded_from: str | None = None
-
-        if from_file:
-            validated = self._validate_source_path(sender_key, from_file)
-            if isinstance(validated, dict):
-                return validated  # validation error
-            source_path = validated
-        elif not items:
-            # Auto-discover: pick the most recent file for this sender
-            source_path = self._existing_path(sender_key)
-            if not source_path:
-                return {
-                    "ok": False,
-                    "proposal": (
-                        "No existing todo list found. "
-                        "Call create(items=[...]) to start a new one."
-                    ),
-                }
-            loaded_from = "auto"
-
+        # --- Compute previous_item_count from any existing same-minute file ---
         previous_count = 0
-
-        if source_path:
-            # Snapshot mode: load source data, do NOT delete the source file
+        old_path, _ = self._load(sender_key)
+        if old_path:
             try:
-                source_data = parse_md(source_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError) as e:
-                return {"ok": False, "error": f"Failed to read source file: {e}"}
-            items = source_data["items"]
-            # previous_count stays 0: nothing was overwritten
-        else:
-            # Fresh mode: compute previous_count from any existing same-minute file
-            old_path, _ = self._load(sender_key)
-            if old_path:
-                try:
-                    old_data = parse_md(old_path.read_text(encoding="utf-8"))
-                    previous_count = len(old_data.get("items", []))
-                except Exception:
-                    pass
-                old_path.unlink()
+                old_data = parse_md(old_path.read_text(encoding="utf-8"))
+                previous_count = len(old_data.get("items", []))
+            except Exception:
+                pass
+            old_path.unlink()
 
         # --- Title resolution ---
         if not title:
-            if source_data and source_data.get("title"):
-                title = source_data["title"]
-            else:
-                title = sender_key
+            title = sender_key
 
         # --- Build new data ---
         platform, _, sid = sender_key.partition(":")
@@ -538,25 +508,6 @@ class TodoStore:
             ],
         }
         new_path = self._path_for(sender_key)
-        # Snapshot mode is additive: the new file must not clobber ANY
-        # existing file (not the source, not a prior snapshot from the
-        # same minute). Bump forward minute-by-minute until we find a
-        # free path.
-        if source_path:
-            candidate_dt = datetime.now()
-            for _ in range(60 * 24 * 7):  # safety bound: 1 week
-                candidate_path = self._path_for(sender_key, when=candidate_dt)
-                if not candidate_path.exists():
-                    new_path = candidate_path
-                    break
-                candidate_dt = candidate_dt.replace(
-                    second=0, microsecond=0
-                ) + timedelta(minutes=1)
-            else:
-                return {
-                    "ok": False,
-                    "error": "Could not find a free minute for new file",
-                }
         try:
             self._atomic_write(new_path, render_md(data))
         except OSError as e:
@@ -568,54 +519,9 @@ class TodoStore:
             "previous_item_count": previous_count,
             "file": str(new_path),
         }
-        if source_path:
-            result["source_file"] = str(source_path)
-        if loaded_from:
-            result["loaded_from"] = loaded_from
         # Include full list state for downstream display
         result.update(self._build_list_state(data, new_path))
         return result
-
-    def _validate_source_path(self, sender_key: str, file_path: str) -> Path | dict:
-        """Validate that `file_path` is a safe .md source for `sender_key`.
-
-        Checks:
-        1. Path resolves to a file inside the todos directory.
-        2. Suffix is `.md`.
-        3. Filename matches `sender_key`'s prefix (plaintext or sha256 form).
-
-        Returns the resolved Path on success, or an error dict on failure.
-        """
-        if not file_path:
-            return {"ok": False, "error": "file_path is empty"}
-        try:
-            candidate = Path(file_path).resolve()
-        except (OSError, ValueError) as e:
-            return {"ok": False, "error": f"Invalid path: {e}"}
-        # Must live inside the todos directory
-        try:
-            candidate.relative_to(self._dir.resolve())
-        except ValueError:
-            return {"ok": False, "error": "file_path is outside the todos directory"}
-        if candidate.suffix.lower() != ".md":
-            return {"ok": False, "error": "only .md files are supported"}
-        if not candidate.is_file():
-            return {"ok": False, "error": "file does not exist"}
-        # Filename prefix must match this sender_key
-        if ":" in sender_key:
-            platform, _, sid = sender_key.partition(":")
-            prefix = f"{platform}_{sid}_"
-        else:
-            prefix = f"{sender_key}_"
-        h = hashlib.sha256(sender_key.encode("utf-8")).hexdigest()[:16]
-        if not (
-            candidate.name.startswith(prefix) or candidate.name.startswith(f"{h}_")
-        ):
-            return {
-                "ok": False,
-                "error": "file does not belong to the current user",
-            }
-        return candidate
 
     def query(self, sender_key: str) -> dict:
         """读取 list，返回结构化数据。"""
@@ -625,7 +531,7 @@ class TodoStore:
                 "ok": False,
                 "proposal": (
                     "当前无 todo list，请先调用 "
-                    "todo_list(action='create', items=[...]) 创建"
+                    "todo_create(items=[...]) 创建"
                 ),
             }
         result = {"ok": True, "file": str(path)}
@@ -655,10 +561,10 @@ class TodoStore:
             "attention_items": attention_ids,
         }
 
-    def add(self, sender_key: str, item: dict | list[dict]) -> dict:
+    def add(self, sender_key: str, items: dict | list[dict]) -> dict:
         """追加一个或多个 item。
 
-        `item` 接受:
+        `items` 接受:
         - dict         → 追加单条
         - list[dict]   → 批量追加多条,每条独立带 title/status/notes
 
@@ -666,11 +572,10 @@ class TodoStore:
         - 追加后总数超过 MAX_ITEMS → 全量回滚(已有数据原封不动)
         - 任一 item 含非法 status → 全量回滚
         - 永远返回完整 list + stats + attention_items
-        - 单条时同时带 item_id(int)/ item(dict) 兼容旧调用方;
-          批量时只带 item_ids(list)/ items(list)
+        - 返回统一使用 list 形式 item_ids + items(v2.2.0 移除单条兼容字段 item_id/item)
         """
         try:
-            new_items = _normalize_items(item, context="item")
+            new_items = _normalize_items(items, context="items")
         except ValueError as e:
             return {"ok": False, "error": str(e)}
 
@@ -678,7 +583,7 @@ class TodoStore:
         if not path:
             return {
                 "ok": False,
-                "proposal": "当前无 todo list，请先 todo_list(action='create', ...)",
+                "proposal": "当前无 todo list，请先 todo_create(items=[...])",
             }
 
         current = data["items"]
@@ -690,6 +595,7 @@ class TodoStore:
                     f"items 数量将超上限: 现有 {len(current)} + "
                     f"待加 {len(new_items)} > {MAX_ITEMS}"
                 ),
+                "item_count": len(current),  # v2.2.0: 便于前端展示当前上限状态
             }
 
         # 校验所有 status(任何一条非法就全量回滚)
@@ -729,10 +635,7 @@ class TodoStore:
             "items": added,  # 与 item_ids 一一对应
             "item_count": len(current),
         }
-        # 单条时带 item_id (int) / item (dict) 以兼容旧调用方
-        if len(added) == 1:
-            result["item_id"] = added[0]["id"]
-            result["item"] = added[0]
+        # v2.2.0: 移除单条兼容字段 item_id(int)/ item(dict);统一返回 list 形式
         # 附带完整 list 状态，便于前端在 add 后直接展示
         result.update(self._build_list_state(data, path))
         return result
@@ -740,22 +643,22 @@ class TodoStore:
     def update(
         self,
         sender_key: str,
-        item_id: int | list[int],
+        item_ids: int | list[int],
         status: str = "",
         notes: str = "",
         clear_notes: bool = False,
     ) -> dict:
         """更新一个或多个 item 的 status / notes。
 
-        `item_id` 可为单个 int(只改一条)或 list[int](批量改,共用同一组
+        `item_ids` 可为单个 int(只改一条)或 list[int](批量改,共用同一组
         status/notes/clear_notes)。任意 ID 不存在 → 全量回滚,不会留下
         残缺状态。
 
-        返回: 成功时同时包含 `item_ids`(list, 永远存在)和 `item_id`/ `item`
-        (int / dict, 单条时为了兼容旧调用方也带上)。
+        返回: 成功时包含 `item_ids`(list) + `items`(list),单条 / 批量
+        统一返回 list 形式,前端无需按数量分支。
         """
         try:
-            ids = _normalize_item_ids(item_id, allow_zero=False, context="item_id")
+            ids = _normalize_item_ids(item_ids, allow_zero=False, context="item_ids")
         except ValueError as e:
             return {"ok": False, "error": str(e)}
 
@@ -763,7 +666,7 @@ class TodoStore:
         if not path:
             return {
                 "ok": False,
-                "proposal": "当前无 todo list，请先 todo_list(action='create', ...)",
+                "proposal": "当前无 todo list，请先 todo_create(items=[...])",
             }
 
         # 任何 status 校验必须在动数据之前
@@ -808,26 +711,32 @@ class TodoStore:
             "item_ids": ids,  # 永远返回 list, 统一下游消费
             "items": updated_items,  # 与 item_ids 一一对应
         }
-        # 单条时也带 item_id (int) 和 item (dict) 以兼容旧调用方
-        if len(ids) == 1:
-            result["item_id"] = ids[0]
-            result["item"] = updated_items[0]
         result.update(self._build_list_state(data, path))
         return result
 
-    def delete(self, sender_key: str, item_id: int | list[int]) -> dict:
+    def delete(self, sender_key: str, item_ids: int | list[int]) -> dict:
         """删一个或多个 item。
 
-        `item_id` 接受:
-        - int 0           → 删整个 list(整文件 unlink,无 list 字段)
-        - int > 0         → 删单条(回传完整 list/stats)
-        - list[int > 0]   → 批量删多条(回传完整 list/stats)
+        `item_ids` 接受:
+        - int > 0        → 删单条(回传完整 list/stats)
+        - list[int > 0]  → 批量删多条(回传完整 list/stats)
+
+        v2.2.0: **不再接受 0** —— 清空整个 list 由独立的 todo_clear 工具负责。
+        `item_ids=0` 或 `item_ids=[..., 0, ...]` 都会返回 ok=False 错误。
+        这样 update/delete 字段语义彻底统一,0 永远不是合法 ID。
 
         批量场景下,任一 ID 不存在 → 全量回滚,数据原封不动。
-        list 中不允许塞 0(避免和单项 0 的 clear-list 语义冲突)。
+
+        返回 (v2.2.0 统一契约):
+        - ok / error / proposal
+        - deleted (int, 删除条数)
+        - item_ids (list[int], 与 ids 入参顺序一致)
+        - item_count (剩余条数)
+        - list / stats / attention_items (与 query 对齐,便于前端在删后直接渲染)
+        - **不带** 旧兼容字段 item_id (int);统一返回 list 形式以对齐 add/update
         """
         try:
-            ids = _normalize_item_ids(item_id, allow_zero=True, context="item_id")
+            ids = _normalize_item_ids(item_ids, allow_zero=False, context="item_ids")
         except ValueError as e:
             return {"ok": False, "error": str(e)}
 
@@ -837,11 +746,6 @@ class TodoStore:
                 "ok": False,
                 "proposal": "当前无 todo list",
             }
-
-        # 特殊:单项 0 (列表里只有 0) → 整 list 删除
-        if ids == [0]:
-            path.unlink()
-            return {"ok": True, "deleted": "list", "file": str(path)}
 
         # 批量校验:任一 ID 缺失 → 全部回滚
         by_id = {it["id"]: it for it in data["items"]}
@@ -868,16 +772,78 @@ class TodoStore:
         result: dict = {
             "ok": True,
             "deleted": deleted_count,
-            "item_ids": ids,  # 永远返回 list
+            "item_ids": ids,  # 永远返回 list (v2.2.0: 移除单条兼容字段 item_id)
             "item_count": len(data["items"]),
         }
-        # 单条时也带 item_id (int) 以兼容旧调用方
-        if len(ids) == 1:
-            result["item_id"] = ids[0]
         # 删单/批条后列表还在,附带完整 list 状态
         result.update(self._build_list_state(data, path))
         return result
 
+    def modify(
+        self,
+        sender_key: str,
+        mode: str,
+        items: list[dict] | None = None,
+        item_ids: int | list[int] | None = None,
+        status: str = "",
+        notes: str | None = UNSET_NOTES,
+    ) -> dict:
+        """统一 add / update / delete 的分发入口。
+
+        - mode='add':    调用 self.add(items=items)
+        - mode='update': 调用 self.update(item_ids=item_ids, status=status, notes=notes)
+        - mode='delete': 调用 self.delete(item_ids=item_ids)
+        - 其他 mode:     返回 {"ok": False, "error": "未知 mode: {mode}"}
+
+        notes 三态 (None = 未传, 保留旧值):
+        - None  → 保留旧 notes
+        - ""    → 清空 notes
+        - "xxx" → 覆盖 notes
+        """
+        if mode == "add":
+            return self.add(sender_key, items)
+        if mode == "update":
+            # notes 三态桥接到 update() 的 (notes, clear_notes) 二元:
+            #   None (未传)  →  保留旧值   → clear_notes=False, notes=""
+            #   ""   (传空)  →  清空 notes → clear_notes=True,  notes=""
+            #   "x"  (传值)  →  覆盖       → clear_notes=False, notes="x"
+            # 注意: update() 内部 if clear_notes: target["notes"] = "" 无条件清空,
+            # 所以"覆盖"分支必须 clear_notes=False,否则新值会被清空逻辑覆盖掉。
+            if notes is None:
+                actual_notes = ""
+                actual_clear = False
+            elif notes == "":
+                actual_notes = ""
+                actual_clear = True
+            else:
+                actual_notes = notes
+                actual_clear = False
+            return self.update(
+                sender_key, item_ids,
+                status=status,
+                notes=actual_notes,
+                clear_notes=actual_clear,
+            )
+        if mode == "delete":
+            return self.delete(sender_key, item_ids)
+        return {
+            "ok": False,
+            "error": f"未知 mode: {mode}",
+            "proposal": "可选: add/update/delete",
+        }
+
     def clear(self, sender_key: str) -> dict:
-        """delete(item_id=0) 的语义别名。"""
-        return self.delete(sender_key, 0)
+        """删整个 todo list(文件 unlink)。
+
+        v2.2.0: 不再是 delete(0) 的别名,而是独立实现。delete() 已拒绝 ID=0,
+        所以本方法直接 unlink 文件,语义保持不变以让 main.py 的 action=='clear'
+        继续可用。未来 todo_clear 工具可能进一步封装此方法。
+        """
+        path, data = self._load(sender_key)
+        if not path:
+            return {
+                "ok": False,
+                "proposal": "当前无 todo list",
+            }
+        path.unlink()
+        return {"ok": True, "deleted": "list", "file": str(path)}

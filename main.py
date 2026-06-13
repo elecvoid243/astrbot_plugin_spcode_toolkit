@@ -395,184 +395,272 @@ class FileDiffTool(FunctionTool):
 
 
 @dataclass
-class TodoListTool(FunctionTool):
-    """LLM self-managed todo list. See description field for the full protocol."""
+class _TodoToolBase(FunctionTool):
+    """4 个 todo_* 工具的公共基类。
 
-    name: str = "todo_list"
+    封装 sender_key 提取、TodoStore 初始化、async dispatch。
+    子类只需定义自己的 parameters / call()，其余样板代码继承自此基类。
+
+    所有 call() 方法返回 ToolExecResult (JSON 字符串):
+    - 成功路径经 _dispatch → unwrap() → JSON 字符串
+    - 失败路径经 _err() 直接生成 JSON 字符串
+    """
+
+    def _err(self, error: str, proposal: str = "") -> str:
+        """Build a JSON error response string with optional proposal.
+
+        永远返回 JSON 字符串(与 unwrap() 风格一致),保证 call() 协议统一。
+        """
+        import json as _json
+        payload: dict = {"ok": False, "error": error}
+        if proposal:
+            payload["proposal"] = proposal
+        return _json.dumps(payload, ensure_ascii=False)
+
+    def _setup(self, context) -> tuple | dict:
+        """提取 sender_key,创建 store,返回 (store, sender_key) 元组。
+
+        失败时返回 dict 错误响应(供 _dispatch 透传给 unwrap 包成 JSON 字符串)。
+        """
+        try:
+            event = context.context.event
+        except AttributeError:
+            return {"ok": False, "error": "无 event 上下文"}
+        sender_key = _todo_list_mod.extract_sender_key(event)
+        data_dir = str(StarTools.get_data_dir())
+        todos_dir = os.path.join(data_dir, "todos")
+        store = _todo_list_mod.TodoStore(todos_dir)
+        return store, sender_key
+
+    async def _dispatch(self, context, fn, *args, **kwargs) -> str:
+        """通用 dispatch: 记录调用 + setup + 异步执行 fn(store, sender_key, *args, **kwargs)。
+
+        返回: 永远为 JSON 字符串(与 unwrap() 风格一致)。
+        - setup 失败 → 直接 unwrap(setup_dict) 透传 proposal 字段
+        - 业务异常 → err_json 包装
+        """
+        _record(self.name)
+        try:
+            setup = self._setup(context)
+            if isinstance(setup, dict):  # 错误响应,经 unwrap 包成 JSON 字符串
+                return unwrap(setup)
+            store, sender_key = setup
+            result = await run_sync(lambda: fn(store, sender_key, *args, **kwargs))
+            return unwrap(result)
+        except Exception as e:
+            return err_json(f"{self.name} 失败: {e}")
+
+
+@dataclass
+class TodoCreateTool(_TodoToolBase):
+    """Create a new todo list. Overwrites any existing list for current user."""
+
+    name: str = "todo_create"
     description: str = (
-        "Self-managed task list. Use to plan and track "
-        "multi-step work. "
-        "6 actions: create / query / add / update / delete / clear. "
-        "create() overwrites any existing list for the current user — query() first "
-        "if you want to keep the old one. "
-        "4 statuses: pending `[ ]`, in_progress `[~]`, done `[x]`, cancelled `[-]`. "
-        "Batch: `item` (add) and `item_id` (update/delete) accept a single value OR "
-        "a list (e.g. [1, 3, 5]) to operate on multiple items in one call; any error "
-        "causes all-or-nothing rollback. "
-        "in_progress + notes → flagged as 'attention' in query results."
+        "Create a new todo list (overwrites existing). "
+        "Use to start tracking multi-step work. "
+        "Returns full list + stats. "
+        "4 statuses: pending `[ ]`, in_progress `[~]`, done `[x]`, cancelled `[-]`."
     )
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["create", "query", "add", "update", "delete", "clear"],
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "done", "cancelled"],
+                            },
+                            "notes": {"type": "string"},
+                        },
+                        "required": ["title"],
+                    },
+                    "minItems": 1,
                     "description": (
-                        "Operation to perform. create=replace list; query=read; "
-                        "add=append; update=modify one; delete=remove one or whole; "
-                        "clear=alias of delete(item_id=0)."
+                        "Initial items. Each: {title, status?, notes?}. "
+                        "status defaults to 'pending' if omitted. "
+                        "Cannot be empty."
                     ),
                 },
                 "title": {
                     "type": "string",
-                    "description": "[create] Title for the new list.",
+                    "description": "List title. Empty = auto-generated from sender_key.",
+                },
+            },
+            "required": ["items"],
+        }
+    )
+
+    async def call(
+        self, context, items: list[dict], title: str = "", **kwargs
+    ) -> ToolExecResult:
+        if not items:
+            return self._err(
+                "items 不能为空",
+                proposal="至少提供一个 item: {\"title\": \"...\"}",
+            )
+        return await self._dispatch(
+            context, lambda s, k: s.create(k, title=title, items=items)
+        )
+
+
+@dataclass
+class TodoQueryTool(_TodoToolBase):
+    """Read current todo list with full stats and attention items."""
+
+    name: str = "todo_query"
+    description: str = (
+        "Read current todo list. Returns list + stats + attention_items. "
+        "attention_items = IDs of in_progress items with non-empty notes "
+        "(stuck/blocked items needing attention). "
+        "If no list exists, returns proposal to call todo_create."
+    )
+    parameters: dict = field(default_factory=lambda: {"type": "object", "properties": {}})
+
+    async def call(self, context, **kwargs) -> ToolExecResult:
+        return await self._dispatch(context, lambda s, k: s.query(k))
+
+
+@dataclass
+class TodoModifyTool(_TodoToolBase):
+    """Modify todo list with 3 modes: add / update / delete."""
+
+    name: str = "todo_modify"
+    description: str = (
+        "Modify an existing todo list. 3 modes: "
+        "add=append items; "
+        "update=change status/notes by item_ids; "
+        "delete=remove by item_ids. "
+        "For update: notes='' clears notes, omit notes keeps existing. "
+        "For delete: use todo_clear() to delete the whole list. "
+        "All operations return full list + stats. "
+        "Any invalid id → all-or-nothing rollback."
+    )
+    parameters: dict = field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["add", "update", "delete"],
+                    "description": "Operation mode.",
                 },
                 "items": {
                     "type": "array",
                     "items": {"type": "object"},
-                    "description": (
-                        "[create] Initial items. Each item: {title, status, notes}. "
-                        "status defaults to 'pending' if omitted."
-                    ),
+                    "minItems": 1,
+                    "description": "[add mode] Items to append. Each: {title, status?, notes?}.",
                 },
-                "from_file": {
-                    "type": "string",
-                    "description": (
-                        "[create] Optional path to a persisted .md file inside the "
-                        "todos directory. When provided, the new list is created as "
-                        "a snapshot of that file (the source file is preserved). "
-                        "Mutually exclusive with `items`. If both `items` and "
-                        "`from_file` are empty, the tool auto-discovers the most "
-                        "recent .md file for the current user."
-                    ),
-                },
-                "item": {
-                    "anyOf": [
-                        {
-                            "type": "object",
-                            "description": (
-                                "Single item to append: {title, status, notes}. "
-                                "status defaults to 'pending' if omitted."
-                            ),
-                        },
-                        {
-                            "type": "array",
-                            "items": {"type": "object"},
-                            "minItems": 1,
-                            "description": (
-                                "Batch append: each element is an item dict "
-                                "{title, status, notes} with independent status."
-                            ),
-                        },
-                    ],
-                    "description": (
-                        "[add] Item(s) to append. Pass a single {title, status, notes} "
-                        "object, or an array of such objects to batch-append multiple "
-                        "items in one call. Each item can have its own status. "
-                        "Any invalid status, or total exceeding the 100-item limit, "
-                        "causes all-or-nothing rollback."
-                    ),
-                },
-                "item_id": {
+                "item_ids": {
                     "anyOf": [
                         {"type": "integer"},
-                        {
-                            "type": "array",
-                            "items": {"type": "integer"},
-                            "minItems": 1,
-                        },
+                        {"type": "array", "items": {"type": "integer"}, "minItems": 1},
                     ],
-                    "description": (
-                        "[update/delete] Target item id(s). Pass a single int (e.g. 3) "
-                        "to operate on one item, or an array of ints (e.g. [1, 3, 5]) "
-                        "to batch-operate on multiple items in one call — they share the "
-                        "same status/notes/clear_notes fields. For delete: 0 (single int) "
-                        "= delete the entire list. 0 inside an array is rejected to avoid "
-                        "ambiguity. Any missing id in a batch → all-or-nothing rollback."
-                    ),
+                    "description": "[update/delete mode] Target item id(s).",
                 },
                 "status": {
                     "type": "string",
                     "enum": ["pending", "in_progress", "done", "cancelled"],
-                    "description": "[update] New status. Empty string keeps the current one.",
+                    "description": "[update mode] New status. Omit = keep existing.",
                 },
                 "notes": {
                     "type": "string",
                     "description": (
-                        "[update] New notes. WARNING: empty string KEEPS the old notes. "
-                        "To actually clear them, also set clear_notes=true."
+                        "[update mode] New notes. "
+                        "Empty string = clear notes. "
+                        "Omit = keep existing."
                     ),
-                },
-                "clear_notes": {
-                    "type": "boolean",
-                    "description": (
-                        "[update] Set to true to actually clear notes. "
-                        "Required because empty 'notes' is reserved for 'keep existing'."
-                    ),
-                    "default": False,
                 },
             },
-            "required": ["action"],
+            "required": ["mode"],
         }
     )
 
     async def call(
         self,
-        context: ContextWrapper[AstrAgentContext],
-        action: str,
-        title: str = "",
+        context,
+        mode: str,
         items: list[dict] | None = None,
-        item: dict | list[dict] | None = None,
-        item_id: int | list[int] = 0,
+        item_ids: int | list[int] | None = None,
         status: str = "",
-        notes: str = "",
-        clear_notes: bool = False,
-        from_file: str = "",
+        notes: str | None = _todo_list_mod.UNSET_NOTES,
         **kwargs,
     ) -> ToolExecResult:
+        """notes 三态语义:
+        - notes=None (未传) → 保留旧值
+        - notes=""   (空串) → 清空 notes
+        - notes="x"  (内容) → 覆盖 notes
+        """
+        if mode == "add" and (items is None or not items):
+            return self._err(
+                "add 模式必须提供非空 items",
+                proposal="传入 items=[{...}, ...]",
+            )
+        if mode in ("update", "delete") and item_ids is None:
+            return self._err(
+                f"{mode} 模式必须提供 item_ids",
+                proposal="传入 item_ids=3 或 item_ids=[1, 3, 5]",
+            )
+        return await self._dispatch(
+            context,
+            lambda s, k: s.modify(
+                k, mode=mode, items=items, item_ids=item_ids,
+                status=status, notes=notes,
+            ),
+        )
+
+
+@dataclass
+class TodoClearTool(_TodoToolBase):
+    """Delete the entire todo list (remove file) for current user."""
+
+    name: str = "todo_clear"
+    description: str = (
+        "Delete the entire todo list for current user (removes the file). "
+        "Use this to start fresh. "
+        "For removing individual items, use todo_modify(mode='delete', item_ids=...)."
+    )
+    parameters: dict = field(default_factory=lambda: {"type": "object", "properties": {}})
+
+    async def call(self, context, **kwargs) -> ToolExecResult:
+        return await self._dispatch(context, lambda s, k: s.clear(k))
+
+
+@dataclass
+class TodoListLegacyStubTool(FunctionTool):
+    """DEPRECATED stub for the old single-tool 'todo_list'.
+
+    Kept for one release cycle to give existing agent sessions a clear
+    migration path. New code should use the 4 focused tools:
+    todo_create / todo_query / todo_modify / todo_clear.
+    """
+
+    name: str = "todo_list"
+    description: str = (
+        "[DEPRECATED] This tool has been split into 4 focused tools in v2.2.0: "
+        "todo_create, todo_query, todo_modify, todo_clear. "
+        "Please stop using todo_list and use those tools instead. "
+        "This stub is kept for one release cycle to surface migration guidance."
+    )
+    parameters: dict = field(default_factory=lambda: {"type": "object", "properties": {}})
+
+    async def call(self, context, **kwargs) -> ToolExecResult:
         _record(self.name)
-        try:
-            event = context.context.event
-            sender_key = _todo_list_mod.extract_sender_key(event)
-            data_dir = str(StarTools.get_data_dir())
-            todos_dir = os.path.join(data_dir, "todos")
-            store = _todo_list_mod.TodoStore(todos_dir)
-
-            def _dispatch():
-                if action == "create":
-                    return store.create(
-                        sender_key,
-                        title=title,
-                        items=items,
-                        from_file=from_file,
-                    )
-                if action == "query":
-                    return store.query(sender_key)
-                if action == "add":
-                    return store.add(sender_key, item or {})
-                if action == "update":
-                    return store.update(
-                        sender_key,
-                        item_id,
-                        status=status,
-                        notes=notes,
-                        clear_notes=clear_notes,
-                    )
-                if action == "delete":
-                    return store.delete(sender_key, item_id)
-                if action == "clear":
-                    return store.clear(sender_key)
-                return {
-                    "ok": False,
-                    "error": f"未知 action: {action}",
-                    "proposal": "可选: create/query/add/update/delete/clear",
-                }
-
-            result = await run_sync(_dispatch)
-            return unwrap(result)
-        except Exception as e:
-            return err_json(f"todo_list 失败: {e}")
+        return self._err(
+            "todo_list 已废弃（v2.2.0 拆分为 4 个工具）",
+            proposal=(
+                "请改用以下 4 个工具之一:\n"
+                "- todo_create(items=[...], title='...') — 创建新列表\n"
+                "- todo_query() — 读取当前列表\n"
+                "- todo_modify(mode='add'|'update'|'delete', ...) — 修改列表\n"
+                "- todo_clear() — 清空整个列表"
+            ),
+        )
 
 
 # ── inta_shell 工具(v2.5 从 interactive_shell 插件集成) ─
@@ -825,7 +913,11 @@ _PLUGINS_TOOLS = [
     EsSearchTool(),
     FileRemoveTool(),
     FileDiffTool(),
-    TodoListTool(),
+    TodoCreateTool(),
+    TodoQueryTool(),
+    TodoModifyTool(),
+    TodoClearTool(),
+    TodoListLegacyStubTool(),
     IntaShellStartTool(),
     IntaShellSendTool(),
     IntaShellReadTool(),
