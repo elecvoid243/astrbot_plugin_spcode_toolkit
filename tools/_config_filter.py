@@ -6,6 +6,11 @@
 from __future__ import annotations
 
 # 全部可用工具名（用于校验 enabled_tools 字段）
+#
+# 注意:`todo_list` / `inta_shell` 不在此处——它们是组别名(group alias),
+# 在下方 _TOOL_GROUPS 中定义,会被 filter_enabled_tools() 展开为实际工具名。
+# 这样用户在配置中只看到一个 `todo_list` / `inta_shell` 选项,
+# 勾选后系统一次性注入该组全部子工具,避免漏勾导致功能残缺。
 ALL_TOOL_NAMES: list[str] = [
     "code_check",
     # "code_index",
@@ -13,12 +18,12 @@ ALL_TOOL_NAMES: list[str] = [
     "es_search",
     "astrbot_file_remove",
     "astrbot_file_compare",
+    # todo_list 4 个子工具(v2.6 通过 `todo_list` 组别名一键启用)
     "todo_create",
     "todo_query",
     "todo_modify",
     "todo_clear",
-    "todo_list",  # legacy deprecation stub (v2.2.0)
-    # inta_shell 工具(v2.5)
+    # inta_shell 5 个子工具(v2.5)
     "astrbot_inta_shell_start",
     "astrbot_inta_shell_send",
     "astrbot_inta_shell_read",
@@ -27,13 +32,26 @@ ALL_TOOL_NAMES: list[str] = [
 ]
 
 # 快捷组名(可一键启用整组工具)
+#
+# 设计动机:避免用户在配置页"勾选 4 个 todo_* 工具"这种易错操作。
+# 配置 UI 只暴露组别名,filter_enabled_tools() 内部展开为全部子工具名。
 _TOOL_GROUPS: dict[str, list[str]] = {
+    # 交互式 Shell 会话管理:start / send / read / stop / list
     "inta_shell": [
         "astrbot_inta_shell_start",
         "astrbot_inta_shell_send",
         "astrbot_inta_shell_read",
         "astrbot_inta_shell_stop",
         "astrbot_inta_shell_list",
+    ],
+    # Todo list 自我管理:create / query / modify / clear
+    # 4 个工具强相关,缺一会导致功能不完整(如 modify 不能 add),
+    # 因此必须以组形式整体启用。
+    "todo_list": [
+        "todo_create",
+        "todo_query",
+        "todo_modify",
+        "todo_clear",
     ],
 }
 

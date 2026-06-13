@@ -630,39 +630,6 @@ class TodoClearTool(_TodoToolBase):
     async def call(self, context, **kwargs) -> ToolExecResult:
         return await self._dispatch(context, lambda s, k: s.clear(k))
 
-
-@dataclass
-class TodoListLegacyStubTool(FunctionTool):
-    """DEPRECATED stub for the old single-tool 'todo_list'.
-
-    Kept for one release cycle to give existing agent sessions a clear
-    migration path. New code should use the 4 focused tools:
-    todo_create / todo_query / todo_modify / todo_clear.
-    """
-
-    name: str = "todo_list"
-    description: str = (
-        "[DEPRECATED] This tool has been split into 4 focused tools in v2.2.0: "
-        "todo_create, todo_query, todo_modify, todo_clear. "
-        "Please stop using todo_list and use those tools instead. "
-        "This stub is kept for one release cycle to surface migration guidance."
-    )
-    parameters: dict = field(default_factory=lambda: {"type": "object", "properties": {}})
-
-    async def call(self, context, **kwargs) -> ToolExecResult:
-        _record(self.name)
-        return self._err(
-            "todo_list 已废弃（v2.2.0 拆分为 4 个工具）",
-            proposal=(
-                "请改用以下 4 个工具之一:\n"
-                "- todo_create(items=[...], title='...') — 创建新列表\n"
-                "- todo_query() — 读取当前列表\n"
-                "- todo_modify(mode='add'|'update'|'delete', ...) — 修改列表\n"
-                "- todo_clear() — 清空整个列表"
-            ),
-        )
-
-
 # ── inta_shell 工具(v2.5 从 interactive_shell 插件集成) ─
 
 
@@ -917,7 +884,6 @@ _PLUGINS_TOOLS = [
     TodoQueryTool(),
     TodoModifyTool(),
     TodoClearTool(),
-    TodoListLegacyStubTool(),
     IntaShellStartTool(),
     IntaShellSendTool(),
     IntaShellReadTool(),

@@ -1,14 +1,16 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: 2.6.0
+version: 2.6.1
 description: |
   spcode 开发工具箱 — 13 个工具，3 个命令组。
   code_check / es_search / file_remove / file_compare / inta_shell_*(5个)
-  todo_create / todo_query / todo_modify / todo_clear(4 个,v2.6 拆分自旧 todo_list)。
+  todo_create / todo_query / todo_modify / todo_clear(4 个,通过 `todo_list` 组别名一键启用)。
   v2.0 自动集成 codegraph 官方 MCP server。
   v2.4 合并 AGENTS.md 管理(/agentsmd)。
   v2.5 合并交互式 Shell 工具(/inta_shell start|send|read|stop|list)。
-  v2.6 重构 todo_list 单工具为 4 工具 API,旧 todo_list 转 stub。
+  v2.6 重构 todo_list 单工具为 4 工具 API。
+  v2.6.1 配置页:把 todo_list 4 个子工具收纳为单一 `todo_list` 组别名,与 inta_shell 同等 UX;
+    旧 config 中独立勾选的 todo_* 工具名继续生效,无需手动改。
   部分实现基于Irmia DevKit插件。
 repo: https://github.com/elecvoid243/astrbot_plugin_spcode_toolkit
