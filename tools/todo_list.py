@@ -531,7 +531,7 @@ class TodoStore:
                 "ok": False,
                 "proposal": (
                     "当前无 todo list，请先调用 "
-                    "todo_list(action='create', items=[...]) 创建"
+                    "todo_create(items=[...]) 创建"
                 ),
             }
         result = {"ok": True, "file": str(path)}
@@ -583,7 +583,7 @@ class TodoStore:
         if not path:
             return {
                 "ok": False,
-                "proposal": "当前无 todo list，请先 todo_list(action='create', ...)",
+                "proposal": "当前无 todo list，请先 todo_create(items=[...])",
             }
 
         current = data["items"]
@@ -666,7 +666,7 @@ class TodoStore:
         if not path:
             return {
                 "ok": False,
-                "proposal": "当前无 todo list，请先 todo_list(action='create', ...)",
+                "proposal": "当前无 todo list，请先 todo_create(items=[...])",
             }
 
         # 任何 status 校验必须在动数据之前
