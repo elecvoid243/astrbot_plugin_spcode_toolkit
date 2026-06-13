@@ -7,4 +7,3 @@ data/
 .ruff_cache/
 docs/
 .worktrees/
-.codegraph/

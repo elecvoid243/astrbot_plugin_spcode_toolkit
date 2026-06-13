@@ -1152,11 +1152,11 @@ class SPCodeToolkit(star.Star):
         # 7. 步骤 3/3 汇总
         yield event.plain_result(
             f"✅ 项目已加载: {target}\n"
-            f"已激活:\n"
+            f"已自动进行如下步骤:\n"
+            f"  - 设定工作目录\n"
             f"  - AGENTS.md 注入到 system_prompt\n"
-            f"  - codegraph 索引 + 默认项目\n"
-            f"  - 代码搜索指引(优先 codegraph 工具组)\n"
-            f"卸载: /project unload"
+            f"  - 载入 codegraph 索引\n"
+            f"\n若要卸载，请执行`/project unload`"
         )
 
     @project.command("unload")
@@ -1826,11 +1826,16 @@ class SPCodeToolkit(star.Star):
         if _agentsmd_mod.INJECTION_MARKER in (req.system_prompt or ""):
             return
 
+        # v2.8: 把项目目录也注入到 system_prompt(放在 AGENTS.md 之前),
+        # 让 LLM 知道当前会话绑定到哪个项目。
+        directory = info.get("directory", "")
         if req.system_prompt is None or req.system_prompt == "":
-            req.system_prompt = _agentsmd_mod.build_injection(content).lstrip("\n")
+            req.system_prompt = _agentsmd_mod.build_injection(
+                content, directory=directory
+            ).lstrip("\n")
         else:
             req.system_prompt = req.system_prompt + _agentsmd_mod.build_injection(
-                content
+                content, directory=directory
             )
 
         logger.debug(

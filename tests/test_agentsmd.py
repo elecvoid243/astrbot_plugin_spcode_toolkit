@@ -245,6 +245,48 @@ def test_build_injection_ends_with_content():
     assert s.endswith("body text")
 
 
+# ── v2.8 新增: build_injection(directory=...) ────────────────
+
+
+def test_build_injection_includes_directory_when_provided():
+    """v2.8: 提供 directory 时,输出含 "项目路径: <directory>"。"""
+    s = build_injection("# My Content", directory="/home/user/myproject")
+    assert "项目路径: /home/user/myproject" in s
+    # 既有内容也保留
+    assert "# My Content" in s
+    assert INJECTION_MARKER in s
+
+
+def test_build_injection_omits_directory_when_empty():
+    """v2.8: directory 为空字符串时,不含路径块(向后兼容)。"""
+    s = build_injection("body", directory="")
+    assert "项目路径:" not in s
+    assert INJECTION_MARKER in s
+    assert "body" in s
+
+
+def test_build_injection_omits_directory_by_default():
+    """v2.8: 不传 directory 参数时,行为与 v2.7 完全一致。"""
+    s = build_injection("body")
+    assert "项目路径:" not in s
+    assert INJECTION_MARKER in s
+
+
+def test_build_injection_path_before_marker():
+    """v2.8: 路径块必须放在 INJECTION_MARKER 之前。"""
+    s = build_injection("# Content", directory="/proj")
+    path_pos = s.find("项目路径: /proj")
+    marker_pos = s.find(INJECTION_MARKER)
+    assert path_pos != -1 and marker_pos != -1
+    assert path_pos < marker_pos, "路径块必须先于 marker 出现"
+
+
+def test_build_injection_path_before_content():
+    """v2.8: 路径块必须放在 AGENTS.md 内容之前。"""
+    s = build_injection("# CONTENT_MARKER", directory="/proj")
+    assert s.find("项目路径: /proj") < s.find("# CONTENT_MARKER")
+
+
 # ── resolve_init_template ───────────────────────────
 
 
