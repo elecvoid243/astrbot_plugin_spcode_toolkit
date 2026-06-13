@@ -432,35 +432,10 @@ class TodoListTool(FunctionTool):
                     "type": "array",
                     "items": {"type": "object"},
                     "description": (
-                        "[create] Initial items. Each item: {title, status, notes}. "
-                        "status defaults to 'pending' if omitted."
-                    ),
-                },
-                "item": {
-                    "anyOf": [
-                        {
-                            "type": "object",
-                            "description": (
-                                "Single item to append: {title, status, notes}. "
-                                "status defaults to 'pending' if omitted."
-                            ),
-                        },
-                        {
-                            "type": "array",
-                            "items": {"type": "object"},
-                            "minItems": 1,
-                            "description": (
-                                "Batch append: each element is an item dict "
-                                "{title, status, notes} with independent status."
-                            ),
-                        },
-                    ],
-                    "description": (
-                        "[add] Item(s) to append. Pass a single {title, status, notes} "
-                        "object, or an array of such objects to batch-append multiple "
-                        "items in one call. Each item can have its own status. "
-                        "Any invalid status, or total exceeding the 100-item limit, "
-                        "causes all-or-nothing rollback."
+                        "[create/add] For create: initial items (each: "
+                        "{title, status, notes}, status defaults to 'pending'). "
+                        "For add: items to append to the existing list. "
+                        "Empty / null on add is rejected."
                     ),
                 },
                 "item_id": {
@@ -512,7 +487,6 @@ class TodoListTool(FunctionTool):
         action: str,
         title: str = "",
         items: list[dict] | None = None,
-        item: dict | list[dict] | None = None,
         item_id: int | list[int] = 0,
         status: str = "",
         notes: str = "",
@@ -537,7 +511,7 @@ class TodoListTool(FunctionTool):
                 if action == "query":
                     return store.query(sender_key)
                 if action == "add":
-                    return store.add(sender_key, item or {})
+                    return store.add(sender_key, items or [])
                 if action == "update":
                     return store.update(
                         sender_key,

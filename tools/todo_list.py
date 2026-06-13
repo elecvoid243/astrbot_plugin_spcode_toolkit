@@ -552,10 +552,10 @@ class TodoStore:
             "attention_items": attention_ids,
         }
 
-    def add(self, sender_key: str, item: dict | list[dict]) -> dict:
+    def add(self, sender_key: str, items: dict | list[dict]) -> dict:
         """追加一个或多个 item。
 
-        `item` 接受:
+        `items` 接受:
         - dict         → 追加单条
         - list[dict]   → 批量追加多条,每条独立带 title/status/notes
 
@@ -563,11 +563,10 @@ class TodoStore:
         - 追加后总数超过 MAX_ITEMS → 全量回滚(已有数据原封不动)
         - 任一 item 含非法 status → 全量回滚
         - 永远返回完整 list + stats + attention_items
-        - 单条时同时带 item_id(int)/ item(dict) 兼容旧调用方;
-          批量时只带 item_ids(list)/ items(list)
+        - 返回统一使用 list 形式 item_ids + items(v2.2.0 移除单条兼容字段 item_id/item)
         """
         try:
-            new_items = _normalize_items(item, context="item")
+            new_items = _normalize_items(items, context="items")
         except ValueError as e:
             return {"ok": False, "error": str(e)}
 
@@ -626,10 +625,7 @@ class TodoStore:
             "items": added,  # 与 item_ids 一一对应
             "item_count": len(current),
         }
-        # 单条时带 item_id (int) / item (dict) 以兼容旧调用方
-        if len(added) == 1:
-            result["item_id"] = added[0]["id"]
-            result["item"] = added[0]
+        # v2.2.0: 移除单条兼容字段 item_id(int)/ item(dict);统一返回 list 形式
         # 附带完整 list 状态，便于前端在 add 后直接展示
         result.update(self._build_list_state(data, path))
         return result

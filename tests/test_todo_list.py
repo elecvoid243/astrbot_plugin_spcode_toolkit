@@ -132,9 +132,10 @@ def test_add_returns_full_list_and_stats(tmp_path: Path):
     store = _new_store(tmp_path)
     store.create(SENDER, title="计划", items=[{"title": "task1"}])
 
-    r = store.add(SENDER, {"title": "task2", "status": "in_progress"})
+    r = store.add(SENDER, [{"title": "task2", "status": "in_progress"}])
     assert r["ok"] is True
-    assert r["item_id"] == 2
+    # v2.2.0: 单条时仍返回 list 形式
+    assert r["item_ids"] == [2]
     assert r["item_count"] == 2
 
     # 关键：add 后也应能看到完整列表
@@ -803,20 +804,6 @@ def test_add_batch_with_list_of_dicts(tmp_path: Path):
     assert r["attention_items"] == [2]
 
 
-def test_add_single_still_returns_item_id_for_backcompat(tmp_path: Path):
-    """单条 add 保留 item_id / item 字段以兼容旧调用方。"""
-    store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "first"}])
-
-    r = store.add(SENDER, {"title": "second", "status": "in_progress"})
-    assert r["ok"] is True
-    # 单条带 item_id(int) + item(dict) + item_ids(list) + items(list)
-    assert r["item_id"] == 2
-    assert r["item"] == r["items"][0]
-    assert r["item_ids"] == [2]
-    assert len(r["items"]) == 1
-
-
 def test_add_batch_preserves_mixed_statuses(tmp_path: Path):
     """批量 add 每个 item 可独立指定 status,不会被强制成同一个。"""
     store = _new_store(tmp_path)
@@ -1026,3 +1013,42 @@ def test_build_filename_sha256_fallback_for_unsafe_chars(tmp_path: Path):
     assert todo_list.ILLEGAL_FILENAME_CHARS.search(fname) is None
     # 时间戳部分仍在末尾
     assert fname.endswith("_202606131201.md")
+
+
+# ── v2.2.0 Task 1.2: add() 参数重命名 item→items, 移除单条兼容字段 ──
+
+
+def test_add_accepts_items_param_not_item(tmp_path: Path):
+    """v2.2.0: add() 签名应为 items(不再是 item)。"""
+    import inspect
+
+    store = _new_store(tmp_path)
+    sig = inspect.signature(store.add)
+    assert "items" in sig.parameters, (
+        f"add() should have 'items' param, got {list(sig.parameters)}"
+    )
+    assert "item" not in sig.parameters, (
+        f"add() should not have 'item' param, got {list(sig.parameters)}"
+    )
+
+
+def test_add_result_has_no_legacy_item_id_field(tmp_path: Path):
+    """v2.2.0: add 返回 dict 不应含单条兼容字段 item_id (int) 或 item (dict)。
+
+    单条时仍只返回 list 形式 item_ids + items,前端统一按 list 处理。
+    """
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "a"}])
+    r = store.add(SENDER, [{"title": "b"}])
+    assert r["ok"] is True
+    assert "item_id" not in r, (
+        f"add should not return legacy item_id, got keys={list(r.keys())}"
+    )
+    assert "item" not in r, (
+        f"add should not return legacy item, got keys={list(r.keys())}"
+    )
+    # 仍应有 list 形式
+    assert "item_ids" in r
+    assert "items" in r
+    assert r["item_ids"] == [2]
+    assert r["items"][0]["title"] == "b"
