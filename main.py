@@ -1826,11 +1826,16 @@ class SPCodeToolkit(star.Star):
         if _agentsmd_mod.INJECTION_MARKER in (req.system_prompt or ""):
             return
 
+        # v2.8: 把项目目录也注入到 system_prompt(放在 AGENTS.md 之前),
+        # 让 LLM 知道当前会话绑定到哪个项目。
+        directory = info.get("directory", "")
         if req.system_prompt is None or req.system_prompt == "":
-            req.system_prompt = _agentsmd_mod.build_injection(content).lstrip("\n")
+            req.system_prompt = _agentsmd_mod.build_injection(
+                content, directory=directory
+            ).lstrip("\n")
         else:
             req.system_prompt = req.system_prompt + _agentsmd_mod.build_injection(
-                content
+                content, directory=directory
             )
 
         logger.debug(

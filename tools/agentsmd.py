@@ -21,6 +21,7 @@ from pathlib import Path
 
 # 默认的 AGENTS.md 生成 prompt 模板
 DEFAULT_INIT_TEMPLATE = """请分析此代码库并创建一个 AGENTS.md 文件,包含:
+- 该项目的绝对路径
 - 构建/lint/测试命令——特别是运行单个测试的命令。如果使用msbuild进行构建,只输出错误信息和警告信息
 - 代码风格指南,包括导入、格式化、类型、命名约定、错误处理等
 - 代码目录结构和架构说明,如果有多级子目录,请列举
@@ -248,12 +249,36 @@ async def generate_agents_md_via_llm(
     return content if content else DEFAULT_AGENTS_MD
 
 
-def build_injection(content: str) -> str:
+# v2.8 新增: 注入路径前缀模板,放在 AGENTS.md 注入位置之前
+# 让 LLM 知道当前会话绑定到哪个项目目录(配合 /agentsmd load 使用)
+# 不带尾随换行:DEFAULT_INJECTION_HEADER 自带 \n\n 前缀,正好形成空行分隔
+PROJECT_PATH_PREFIX_TEMPLATE = "你的工作项目路径: {directory}"
+
+
+def build_injection(content: str, *, directory: str = "") -> str:
     """构造注入到 system_prompt 末尾的文本。
 
-    on_llm_request 钩子调用,确保不重复注入(INJECTION_MARKER 检测)。
+    当提供 directory 时,会在 AGENTS.md 内容前注入一行
+    "项目路径: <directory>",便于 LLM 知道当前会话绑定到哪个项目目录。
+
+    on_llm_request 钩子调用,marker 检测防重复注入(由调用方配合)。
+
+    输出格式(有 directory):
+        项目路径: <directory>
+
+        <INJECTION_MARKER>
+        <content>
+
+    输出格式(无 directory,向后兼容):
+        <INJECTION_MARKER>
+        <content>
     """
-    return f"{DEFAULT_INJECTION_HEADER}{content}"
+    path_prefix = (
+        PROJECT_PATH_PREFIX_TEMPLATE.format(directory=directory)
+        if directory
+        else ""
+    )
+    return f"{path_prefix}{DEFAULT_INJECTION_HEADER}{content}"
 
 
 def resolve_init_template(config: dict | None, default: str = "") -> str:
