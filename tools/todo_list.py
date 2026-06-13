@@ -633,22 +633,22 @@ class TodoStore:
     def update(
         self,
         sender_key: str,
-        item_id: int | list[int],
+        item_ids: int | list[int],
         status: str = "",
         notes: str = "",
         clear_notes: bool = False,
     ) -> dict:
         """更新一个或多个 item 的 status / notes。
 
-        `item_id` 可为单个 int(只改一条)或 list[int](批量改,共用同一组
+        `item_ids` 可为单个 int(只改一条)或 list[int](批量改,共用同一组
         status/notes/clear_notes)。任意 ID 不存在 → 全量回滚,不会留下
         残缺状态。
 
-        返回: 成功时同时包含 `item_ids`(list, 永远存在)和 `item_id`/ `item`
-        (int / dict, 单条时为了兼容旧调用方也带上)。
+        返回: 成功时包含 `item_ids`(list) + `items`(list),单条 / 批量
+        统一返回 list 形式,前端无需按数量分支。
         """
         try:
-            ids = _normalize_item_ids(item_id, allow_zero=False, context="item_id")
+            ids = _normalize_item_ids(item_ids, allow_zero=False, context="item_id")
         except ValueError as e:
             return {"ok": False, "error": str(e)}
 
@@ -701,10 +701,6 @@ class TodoStore:
             "item_ids": ids,  # 永远返回 list, 统一下游消费
             "items": updated_items,  # 与 item_ids 一一对应
         }
-        # 单条时也带 item_id (int) 和 item (dict) 以兼容旧调用方
-        if len(ids) == 1:
-            result["item_id"] = ids[0]
-            result["item"] = updated_items[0]
         result.update(self._build_list_state(data, path))
         return result
 

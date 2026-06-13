@@ -175,10 +175,11 @@ def test_update_returns_full_list_and_stats(tmp_path: Path):
     )
 
     # 把 #2 标记为 done
-    r = store.update(SENDER, item_id=2, status="done")
+    r = store.update(SENDER, item_ids=2, status="done")
     assert r["ok"] is True
-    assert r["item_id"] == 2
-    assert r["item"]["status"] == "done"
+    # v2.2.0: 单条时仍返回 list 形式,无 item_id (int) / item (dict) 兼容字段
+    assert r["item_ids"] == [2]
+    assert r["items"][0]["status"] == "done"
 
     # 关键：update 后也能看到完整列表 + 进度变化
     assert "list" in r
@@ -198,7 +199,7 @@ def test_update_marks_attention(tmp_path: Path):
     store = _new_store(tmp_path)
     store.create(SENDER, items=[{"title": "x"}])
 
-    r = store.update(SENDER, item_id=1, status="in_progress", notes="被外部阻塞")
+    r = store.update(SENDER, item_ids=1, status="in_progress", notes="被外部阻塞")
     assert r["ok"] is True
     # attention_items 应包含 #1
     assert r["attention_items"] == [1]
@@ -213,7 +214,7 @@ def test_update_invalid_id_returns_proposal(tmp_path: Path):
     store = _new_store(tmp_path)
     store.create(SENDER, items=[{"title": "x"}])
 
-    r = store.update(SENDER, item_id=999, status="done")
+    r = store.update(SENDER, item_ids=999, status="done")
     assert r["ok"] is False
     assert "proposal" in r
     assert "list" not in r
@@ -433,7 +434,7 @@ def test_update_batch_with_list_of_ids(tmp_path: Path):
         ],
     )
 
-    r = store.update(SENDER, item_id=[1, 3], status="done")
+    r = store.update(SENDER, item_ids=[1, 3], status="done")
     assert r["ok"] is True
     # 批量永远返回 item_ids(list)
     assert r["item_ids"] == [1, 3]
@@ -461,7 +462,7 @@ def test_update_batch_with_notes(tmp_path: Path):
         ],
     )
 
-    r = store.update(SENDER, item_id=[1, 2], notes="等待外部依赖")
+    r = store.update(SENDER, item_ids=[1, 2], notes="等待外部依赖")
     assert r["ok"] is True
     # 两个 item 都带 attention(in_progress + notes)
     assert r["attention_items"] == [1, 2]
@@ -482,7 +483,7 @@ def test_update_batch_clear_notes(tmp_path: Path):
     q = store.query(SENDER)
     assert q["attention_items"] == [1, 2]
 
-    r = store.update(SENDER, item_id=[1, 2], clear_notes=True)
+    r = store.update(SENDER, item_ids=[1, 2], clear_notes=True)
     assert r["ok"] is True
     # notes 被清掉,attention_items 也归零
     assert r["attention_items"] == []
@@ -500,7 +501,7 @@ def test_update_batch_empty_notes_preserves_old_value(tmp_path: Path):
         ],
     )
 
-    r = store.update(SENDER, item_id=[1, 2], status="done")
+    r = store.update(SENDER, item_ids=[1, 2], status="done")
     assert r["ok"] is True
     # notes 没传,旧值保留
     assert r["items"][0]["notes"] == "原值1"
@@ -518,7 +519,7 @@ def test_update_batch_with_missing_id_returns_error(tmp_path: Path):
         items=[{"title": "a"}, {"title": "b"}, {"title": "c"}],
     )
 
-    r = store.update(SENDER, item_id=[1, 999, 3], status="done")
+    r = store.update(SENDER, item_ids=[1, 999, 3], status="done")
     assert r["ok"] is False
     assert "error" in r
     assert "proposal" in r
@@ -537,7 +538,7 @@ def test_update_batch_with_invalid_status_returns_error(tmp_path: Path):
     store = _new_store(tmp_path)
     store.create(SENDER, items=[{"title": "a"}, {"title": "b"}])
 
-    r = store.update(SENDER, item_id=[1, 2], status="bogus")
+    r = store.update(SENDER, item_ids=[1, 2], status="bogus")
     assert r["ok"] is False
     assert "bogus" in r["error"]
     assert "list" not in r
@@ -551,7 +552,7 @@ def test_update_batch_with_empty_list_returns_error(tmp_path: Path):
     store = _new_store(tmp_path)
     store.create(SENDER, items=[{"title": "a"}])
 
-    r = store.update(SENDER, item_id=[], status="done")
+    r = store.update(SENDER, item_ids=[], status="done")
     assert r["ok"] is False
     assert "error" in r
     # 数据未动
@@ -665,7 +666,7 @@ def test_delete_single_zero_still_clears_list(tmp_path: Path):
 def test_update_with_string_item_id_returns_error(tmp_path: Path):
     store = _new_store(tmp_path)
     store.create(SENDER, items=[{"title": "a"}])
-    r = store.update(SENDER, item_id="1", status="done")  # type: ignore[arg-type]
+    r = store.update(SENDER, item_ids="1", status="done")  # type: ignore[arg-type]
     assert r["ok"] is False
     assert "error" in r
 
@@ -695,7 +696,7 @@ def test_update_batch_refreshes_attention_list(tmp_path: Path):
     q = store.query(SENDER)
     assert sorted(q["attention_items"]) == [1, 2]
 
-    r = store.update(SENDER, item_id=[1, 2], status="done")
+    r = store.update(SENDER, item_ids=[1, 2], status="done")
     assert r["ok"] is True
     assert r["attention_items"] == []
     assert r["stats"]["done"] == 2
@@ -1052,3 +1053,42 @@ def test_add_result_has_no_legacy_item_id_field(tmp_path: Path):
     assert "items" in r
     assert r["item_ids"] == [2]
     assert r["items"][0]["title"] == "b"
+
+
+# ── v2.2.0 Task 1.3: update() 参数重命名 item_id→item_ids, 移除单条兼容字段 ──
+
+
+def test_update_accepts_item_ids_param_not_item_id(tmp_path: Path):
+    """v2.2.0: update() 签名应为 item_ids(不再是 item_id)。"""
+    import inspect
+
+    store = _new_store(tmp_path)
+    sig = inspect.signature(store.update)
+    assert "item_ids" in sig.parameters, (
+        f"update() should have 'item_ids' param, got {list(sig.parameters)}"
+    )
+    assert "item_id" not in sig.parameters, (
+        f"update() should not have 'item_id' param, got {list(sig.parameters)}"
+    )
+
+
+def test_update_result_has_no_legacy_item_id_field(tmp_path: Path):
+    """v2.2.0: update 返回 dict 不应含单条兼容字段 item_id (int) 或 item (dict)。
+
+    单条时仍只返回 list 形式 item_ids + items,前端统一按 list 处理。
+    """
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "a"}, {"title": "b"}])
+    r = store.update(SENDER, 1, status="done")  # 单条
+    assert r["ok"] is True
+    assert "item_id" not in r, (
+        f"update should not return legacy item_id, got keys={list(r.keys())}"
+    )
+    assert "item" not in r, (
+        f"update should not return legacy item, got keys={list(r.keys())}"
+    )
+    # 仍应有 list 形式
+    assert "item_ids" in r
+    assert "items" in r
+    assert r["item_ids"] == [1]
+    assert r["items"][0]["status"] == "done"
