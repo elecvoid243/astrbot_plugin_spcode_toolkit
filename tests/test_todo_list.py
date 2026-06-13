@@ -361,10 +361,10 @@ def test_normalize_list_dedupes_preserving_order():
 
 
 def test_normalize_list_with_zero_raises():
-    """list 中含 0 必须报错:用单项 0 触发 clear-list,不要混在批量里。"""
+    """v2.2.0: list 中含 0 必须报错(0 永远不是合法 ID,不能用于 clear-list)。"""
     import pytest
 
-    with pytest.raises(ValueError, match="cannot appear inside a list"):
+    with pytest.raises(ValueError, match="0 is not valid"):
         todo_list._normalize_item_ids([1, 0, 2])
 
 
