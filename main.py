@@ -436,17 +436,6 @@ class TodoListTool(FunctionTool):
                         "status defaults to 'pending' if omitted."
                     ),
                 },
-                "from_file": {
-                    "type": "string",
-                    "description": (
-                        "[create] Optional path to a persisted .md file inside the "
-                        "todos directory. When provided, the new list is created as "
-                        "a snapshot of that file (the source file is preserved). "
-                        "Mutually exclusive with `items`. If both `items` and "
-                        "`from_file` are empty, the tool auto-discovers the most "
-                        "recent .md file for the current user."
-                    ),
-                },
                 "item": {
                     "anyOf": [
                         {
@@ -528,7 +517,6 @@ class TodoListTool(FunctionTool):
         status: str = "",
         notes: str = "",
         clear_notes: bool = False,
-        from_file: str = "",
         **kwargs,
     ) -> ToolExecResult:
         _record(self.name)
@@ -545,7 +533,6 @@ class TodoListTool(FunctionTool):
                         sender_key,
                         title=title,
                         items=items,
-                        from_file=from_file,
                     )
                 if action == "query":
                     return store.query(sender_key)
