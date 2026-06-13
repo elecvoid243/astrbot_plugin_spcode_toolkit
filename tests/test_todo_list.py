@@ -1218,3 +1218,122 @@ def test_modify_update_with_new_notes_overwrites(tmp_path: Path):
     assert r["ok"] is True
     q = store.query(SENDER)
     assert q["list"]["items"][0]["notes"] == "新内容"
+
+
+# ── v2.2.0 Task 4.1: 空值拒绝测试 ──
+
+
+def test_create_rejects_empty_items(tmp_path: Path):
+    """create(items=[]) 必须返回错误。"""
+    store = _new_store(tmp_path)
+    r = store.create(SENDER, title="t", items=[])
+    assert r["ok"] is False
+    assert "items" in r["error"].lower()
+
+
+def test_modify_add_rejects_empty_items(tmp_path: Path):
+    """modify(mode='add') items=[] 拒绝。"""
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "a"}])
+    r = store.modify(SENDER, mode="add", items=[])
+    assert r["ok"] is False
+    assert "items" in r["error"].lower() or "add" in r["error"].lower()
+
+
+def test_modify_add_rejects_none_items(tmp_path: Path):
+    """modify(mode='add') items=None 拒绝。"""
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "a"}])
+    r = store.modify(SENDER, mode="add", items=None)
+    assert r["ok"] is False
+
+
+def test_modify_update_rejects_none_item_ids(tmp_path: Path):
+    """modify(mode='update') item_ids=None 拒绝。"""
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "a"}])
+    r = store.modify(SENDER, mode="update", item_ids=None, status="done")
+    assert r["ok"] is False
+    assert "item_ids" in r["error"]
+
+
+def test_modify_delete_rejects_none_item_ids(tmp_path: Path):
+    """modify(mode='delete') item_ids=None 拒绝。"""
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "a"}])
+    r = store.modify(SENDER, mode="delete", item_ids=None)
+    assert r["ok"] is False
+    assert "item_ids" in r["error"]
+
+
+# ── v2.2.0 Task 4.2: MAX_ITEMS 临界值测试 ──
+
+
+def test_modify_add_at_max_items_boundary(tmp_path: Path):
+    """add 触发 100 上限临界值测试。
+
+    - 99 + 1 add = 100 → 成功
+    - 100 + 1 add → 失败,总数保持 100
+    """
+    store = _new_store(tmp_path)
+    items_99 = [{"title": f"t{i}"} for i in range(99)]
+    r1 = store.create(SENDER, title="t", items=items_99)
+    assert r1["ok"] is True
+    assert r1["item_count"] == 99
+
+    # add 1 个 → 成功
+    r2 = store.modify(SENDER, mode="add", items=[{"title": "t99"}])
+    assert r2["ok"] is True
+    assert r2["item_count"] == 100
+
+    # 再 add 1 个 → 失败
+    r3 = store.modify(SENDER, mode="add", items=[{"title": "t100"}])
+    assert r3["ok"] is False
+    assert r3["item_count"] == 100  # 不变
+
+
+def test_modify_add_rollback_at_max_boundary(tmp_path: Path):
+    """add 触发 100 上限时,已存在数据保持不变。"""
+    store = _new_store(tmp_path)
+    items_99 = [{"title": f"t{i}"} for i in range(99)]
+    store.create(SENDER, title="t", items=items_99)
+
+    # 尝试加 2 个(99+2=101 > 100)→ 失败,文件状态不变
+    r = store.modify(SENDER, mode="add", items=[{"title": "x"}, {"title": "y"}])
+    assert r["ok"] is False
+    q = store.query(SENDER)
+    assert len(q["list"]["items"]) == 99  # 已存在数据未被修改
+
+
+# ── v2.2.0 Task 4.3: 回滚一致性测试 ──
+
+
+def test_modify_update_rollback_on_missing_id(tmp_path: Path):
+    """update 模式中,任一 item_ids 不存在 → 全量回滚。"""
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "a"}, {"title": "b"}])
+    # item_ids=[1, 999],其中 999 不存在
+    r = store.modify(SENDER, mode="update", item_ids=[1, 999], status="done")
+    assert r["ok"] is False
+    # id=1 的状态应保持原状(pending),不被部分更新
+    q = store.query(SENDER)
+    assert q["list"]["items"][0]["status"] == "pending"
+
+
+def test_modify_delete_rollback_on_missing_id(tmp_path: Path):
+    """delete 模式中,任一 item_ids 不存在 → 全量回滚。"""
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "a"}, {"title": "b"}])
+    r = store.modify(SENDER, mode="delete", item_ids=[1, 999])
+    assert r["ok"] is False
+    # 列表应保持 2 项
+    q = store.query(SENDER)
+    assert len(q["list"]["items"]) == 2
+
+
+# ── v2.2.0 Task 4.4: 已完成标记 ──
+# 旧测试清理已在前面 subagent 完成:
+# - test_create_with_from_file_*      → 替换为 test_create_no_longer_accepts_from_file
+# - test_update_clear_notes_*          → 替换为 test_update_batch_clear_notes
+# - test_delete_with_zero_item_id_*    → 替换为 test_delete_no_longer_handles_zero_sentinel
+# impl_t4 标记: 9 个新测试追加, 时间 2026-06-13 15:05 (CST)

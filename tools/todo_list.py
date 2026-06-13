@@ -595,6 +595,7 @@ class TodoStore:
                     f"items 数量将超上限: 现有 {len(current)} + "
                     f"待加 {len(new_items)} > {MAX_ITEMS}"
                 ),
+                "item_count": len(current),  # v2.2.0: 便于前端展示当前上限状态
             }
 
         # 校验所有 status(任何一条非法就全量回滚)
@@ -657,7 +658,7 @@ class TodoStore:
         统一返回 list 形式,前端无需按数量分支。
         """
         try:
-            ids = _normalize_item_ids(item_ids, allow_zero=False, context="item_id")
+            ids = _normalize_item_ids(item_ids, allow_zero=False, context="item_ids")
         except ValueError as e:
             return {"ok": False, "error": str(e)}
 
@@ -735,7 +736,7 @@ class TodoStore:
         - **不带** 旧兼容字段 item_id (int);统一返回 list 形式以对齐 add/update
         """
         try:
-            ids = _normalize_item_ids(item_ids, allow_zero=False, context="item_id")
+            ids = _normalize_item_ids(item_ids, allow_zero=False, context="item_ids")
         except ValueError as e:
             return {"ok": False, "error": str(e)}
 
