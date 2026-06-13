@@ -420,8 +420,9 @@ class TodoListTool(FunctionTool):
                     "enum": ["create", "query", "add", "update", "delete", "clear"],
                     "description": (
                         "Operation to perform. create=replace list; query=read; "
-                        "add=append; update=modify one; delete=remove one or whole; "
-                        "clear=alias of delete(item_id=0)."
+                        "add=append; update=modify one or batch; "
+                        "delete=remove one or batch (does NOT clear whole list — "
+                        "use 'clear' for that); clear=delete the whole list."
                     ),
                 },
                 "title": {
@@ -451,9 +452,10 @@ class TodoListTool(FunctionTool):
                         "[update/delete] Target item id(s). Pass a single int (e.g. 3) "
                         "to operate on one item, or an array of ints (e.g. [1, 3, 5]) "
                         "to batch-operate on multiple items in one call — they share the "
-                        "same status/notes/clear_notes fields. For delete: 0 (single int) "
-                        "= delete the entire list. 0 inside an array is rejected to avoid "
-                        "ambiguity. Any missing id in a batch → all-or-nothing rollback."
+                        "same status/notes/clear_notes fields. ID 0 is NEVER valid "
+                        "(update/delete always expect positive IDs); to delete the "
+                        "entire list, use action='clear' instead. Any missing id in a "
+                        "batch → all-or-nothing rollback."
                     ),
                 },
                 "status": {

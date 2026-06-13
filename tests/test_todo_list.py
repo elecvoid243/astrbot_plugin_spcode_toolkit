@@ -252,7 +252,7 @@ def test_delete_single_includes_list_and_stats(tmp_path: Path):
         ],
     )
 
-    r = store.delete(SENDER, item_id=2)
+    r = store.delete(SENDER, item_ids=2)
     assert r["ok"] is True
     assert r["deleted"] == 1
     assert r["item_count"] == 2
@@ -283,7 +283,7 @@ def test_delete_in_progress_with_notes_refreshes_attention(tmp_path: Path):
         ],
     )
     # 删掉唯一 in_progress 项
-    r = store.delete(SENDER, item_id=1)
+    r = store.delete(SENDER, item_ids=1)
     assert r["ok"] is True
     # attention_items 应为空（in_progress 项已删）
     assert r["attention_items"] == []
@@ -295,7 +295,10 @@ def test_delete_in_progress_with_notes_refreshes_attention(tmp_path: Path):
 
 
 def test_clear_does_not_include_list(tmp_path: Path):
-    """clear() = delete(item_id=0)，整个列表被删，无 list 可回传。"""
+    """clear() 直接 unlink 整个 list 文件,无 list 可回传。
+
+    v2.2.0: clear 不再是 delete(0) 的别名,而是独立实现。
+    """
     store = _new_store(tmp_path)
     store.create(SENDER, items=[{"title": "a"}, {"title": "b"}])
 
@@ -306,16 +309,7 @@ def test_clear_does_not_include_list(tmp_path: Path):
     assert "list" not in r
 
 
-def test_delete_with_item_id_zero_does_not_include_list(tmp_path: Path):
-    """delete(item_id=0) 与 clear() 等价，不回传 list。"""
-    store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "a"}])
-
-    r = store.delete(SENDER, item_id=0)
-    assert r["ok"] is True
-    assert r["deleted"] == "list"
-    assert "list" not in r
-
+# Removed in v2.2.0: test_delete_with_item_id_zero_does_not_include_list (delete no longer accepts 0; see test_delete_no_longer_handles_zero_sentinel)
 
 # ── 11. delete 失败路径不污染 list 字段 ──────────────
 
@@ -324,7 +318,7 @@ def test_delete_nonexistent_id_returns_error_without_list(tmp_path: Path):
     store = _new_store(tmp_path)
     store.create(SENDER, items=[{"title": "a"}])
 
-    r = store.delete(SENDER, item_id=999)
+    r = store.delete(SENDER, item_ids=999)
     assert r["ok"] is False
     assert "error" in r
     assert "list" not in r
@@ -332,7 +326,7 @@ def test_delete_nonexistent_id_returns_error_without_list(tmp_path: Path):
 
 def test_delete_no_list_returns_proposal(tmp_path: Path):
     store = _new_store(tmp_path)
-    r = store.delete(SENDER, item_id=1)
+    r = store.delete(SENDER, item_ids=1)
     assert r["ok"] is False
     assert "proposal" in r
     assert "list" not in r
@@ -352,7 +346,11 @@ def test_normalize_single_int():
 
 
 def test_normalize_single_zero_with_allow_zero_returns_sentinel():
-    """allow_zero=True 时,0 返回 [0] 供 delete 判定 clear-list。"""
+    """allow_zero=True 时,0 返回 [0](helper 自身能力,目前无活跃调用方)。
+
+    v2.2.0: delete/update 都用 allow_zero=False,所以此分支不再被业务使用;
+    但 helper 仍保留 allow_zero 参数以备未来 todo_clear 工具复用。
+    """
     assert todo_list._normalize_item_ids(0, allow_zero=True) == [0]
 
 
@@ -370,10 +368,10 @@ def test_normalize_list_dedupes_preserving_order():
 
 
 def test_normalize_list_with_zero_raises():
-    """list 中含 0 必须报错:用单项 0 触发 clear-list,不要混在批量里。"""
+    """v2.2.0: list 中含 0 必须报错(0 永远不是合法 ID,不能用于 clear-list)。"""
     import pytest
 
-    with pytest.raises(ValueError, match="cannot appear inside a list"):
+    with pytest.raises(ValueError, match="0 is not valid"):
         todo_list._normalize_item_ids([1, 0, 2])
 
 
@@ -577,7 +575,7 @@ def test_delete_batch_with_list_of_ids(tmp_path: Path):
         ],
     )
 
-    r = store.delete(SENDER, item_id=[2, 4])
+    r = store.delete(SENDER, item_ids=[2, 4])
     assert r["ok"] is True
     assert r["deleted"] == 2
     assert r["item_ids"] == [2, 4]
@@ -591,18 +589,7 @@ def test_delete_batch_with_list_of_ids(tmp_path: Path):
     assert remaining_ids == [1, 3]
 
 
-def test_delete_batch_single_id_back_compat(tmp_path: Path):
-    """单条 delete 仍保留 item_id 字段(int)以兼容旧调用方。"""
-    store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "a"}, {"title": "b"}])
-
-    r = store.delete(SENDER, item_id=2)
-    assert r["ok"] is True
-    assert r["deleted"] == 1
-    # 单条时 item_id 仍是 int
-    assert r["item_id"] == 2
-    assert r["item_ids"] == [2]
-
+# Removed in v2.2.0: test_delete_batch_single_id_back_compat (replaced by test_delete_result_has_no_legacy_item_id_field)
 
 # ── 16. 批量 delete 失败 / 边界路径 ───────────────────
 
@@ -612,7 +599,7 @@ def test_delete_batch_with_missing_id_returns_error(tmp_path: Path):
     store = _new_store(tmp_path)
     store.create(SENDER, items=[{"title": "a"}, {"title": "b"}])
 
-    r = store.delete(SENDER, item_id=[1, 999])
+    r = store.delete(SENDER, item_ids=[1, 999])
     assert r["ok"] is False
     assert "999" in r["error"]
     assert "proposal" in r
@@ -624,11 +611,11 @@ def test_delete_batch_with_missing_id_returns_error(tmp_path: Path):
 
 
 def test_delete_batch_with_zero_in_list_returns_error(tmp_path: Path):
-    """list 里塞 0 必须报错——'clear list' 只能传单项 0,不能混在批量里。"""
+    """list 里塞 0 必须报错——v2.2.0 后 delete 不再接受 0(单项或批量)。"""
     store = _new_store(tmp_path)
     store.create(SENDER, items=[{"title": "a"}])
 
-    r = store.delete(SENDER, item_id=[1, 0])
+    r = store.delete(SENDER, item_ids=[1, 0])
     assert r["ok"] is False
     assert "error" in r
     # 列表必须还在(没被 clear 误触发)
@@ -641,24 +628,14 @@ def test_delete_batch_with_empty_list_returns_error(tmp_path: Path):
     store = _new_store(tmp_path)
     store.create(SENDER, items=[{"title": "a"}])
 
-    r = store.delete(SENDER, item_id=[])
+    r = store.delete(SENDER, item_ids=[])
     assert r["ok"] is False
     assert "error" in r
     q = store.query(SENDER)
     assert q["stats"]["total"] == 1
 
 
-def test_delete_single_zero_still_clears_list(tmp_path: Path):
-    """回归:单项 0 仍然是 clear-list 的语义,不能被批量逻辑破坏。"""
-    store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "a"}, {"title": "b"}])
-
-    r = store.delete(SENDER, item_id=0)
-    assert r["ok"] is True
-    assert r["deleted"] == "list"
-    # 文件被删
-    assert not Path(r["file"]).exists()
-
+# Removed in v2.2.0: test_delete_single_zero_still_clears_list (delete no longer accepts 0)
 
 # ── 17. 边界:None / 字符串 / dict 直接报错 ──────────────
 
@@ -674,7 +651,7 @@ def test_update_with_string_item_id_returns_error(tmp_path: Path):
 def test_delete_with_dict_item_id_returns_error(tmp_path: Path):
     store = _new_store(tmp_path)
     store.create(SENDER, items=[{"title": "a"}])
-    r = store.delete(SENDER, item_id={"id": 1})  # type: ignore[arg-type]
+    r = store.delete(SENDER, item_ids={"id": 1})  # type: ignore[arg-type]
     assert r["ok"] is False
     assert "error" in r
 
@@ -716,7 +693,7 @@ def test_delete_batch_preserves_unrelated_attention(tmp_path: Path):
     )
 
     # 只删 #1,保留 #2 的 attention
-    r = store.delete(SENDER, item_id=[1])
+    r = store.delete(SENDER, item_ids=[1])
     assert r["ok"] is True
     assert r["attention_items"] == [2]
     # #1 不在 list 中,#2 还在且 attention=True
@@ -725,10 +702,89 @@ def test_delete_batch_preserves_unrelated_attention(tmp_path: Path):
     assert r["list"]["items"][0]["attention"] is True
 
 
+# ── 18b. v2.2.0 契约:delete 不再处理 item_ids=0 哨兵 ──────────
+
+
+def test_delete_no_longer_handles_zero_sentinel(tmp_path: Path):
+    """v2.2.0: delete 不再处理 item_ids=0(清空列表由 todo_clear 工具负责)。
+
+    旧实现:item_id=0 → 整 list 删除 (sentinel 语义)
+    新实现:item_ids=0 → ValueError,返回 ok=False,文件原封不动
+    """
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "x"}])
+
+    # delete(item_ids=0) 应返回错误而不是清空
+    r = store.delete(SENDER, item_ids=0)
+    assert r["ok"] is False, f"item_ids=0 should be rejected, got {r}"
+    assert "error" in r
+    assert "0" in r["error"]
+
+    # 文件应仍存在
+    files = list(tmp_path.glob("*.md"))
+    assert len(files) == 1, f"file should still exist, got {files}"
+
+    # list 内容也未被动
+    q = store.query(SENDER)
+    assert q["ok"] is True
+    assert q["stats"]["total"] == 1
+
+
+def test_delete_result_has_no_legacy_item_id_field(tmp_path: Path):
+    """v2.2.0: delete 返回 dict 不应含单条兼容字段 item_id (int)。
+
+    旧实现:单条 delete 返回 {item_id: int, item_ids: list}
+    新实现:统一只返回 {item_ids: list},对齐 add/update 的 list-only 契约
+    """
+    store = _new_store(tmp_path)
+    store.create(
+        SENDER,
+        title="t",
+        items=[{"title": "a"}, {"title": "b"}, {"title": "c"}],
+    )
+
+    # 单条删除
+    r = store.delete(SENDER, item_ids=2)
+    assert r["ok"] is True
+    assert "item_ids" in r
+    assert r["item_ids"] == [2]
+    # 关键:不应含旧兼容字段
+    assert "item_id" not in r, (
+        f"delete 应不再返回 legacy item_id (int), got keys={list(r.keys())}"
+    )
+
+    # 批量删除同样不带 item_id
+    r2 = store.delete(SENDER, item_ids=[1, 3])
+    assert r2["ok"] is True
+    assert "item_id" not in r2, (
+        f"batch delete 应不再返回 legacy item_id, got keys={list(r2.keys())}"
+    )
+
+
+def test_clear_method_still_works_independently(tmp_path: Path):
+    """v2.2.0: clear() 不再是 delete(0) 的别名,而是独立实现。
+
+    main.py 的 action=='clear' 仍需可用,所以 clear() 保留并直接 unlink 文件。
+    """
+    store = _new_store(tmp_path)
+    store.create(SENDER, title="t", items=[{"title": "a"}])
+
+    r = store.clear(SENDER)
+    assert r["ok"] is True
+    assert r["deleted"] == "list"
+    # 文件被删
+    files = list(tmp_path.glob("*.md"))
+    assert files == [], f"files should be gone, got {files}"
+
+    # 二次 clear 应返回 proposal (no list)
+    r2 = store.clear(SENDER)
+    assert r2["ok"] is False
+    assert "proposal" in r2
+
+
 # ══════════════════════════════════════════════════════════════════════
 # Phase 4: batch add (item: dict | list[dict])
 # ══════════════════════════════════════════════════════════════════════
-
 
 # ── 19. _normalize_items 工具函数 ─────────────────────
 

@@ -290,7 +290,8 @@ def _normalize_item_ids(
 
     接受:
     - int > 0  →  [int]
-    - int == 0  →  [0]  (仅当 allow_zero=True,代表"清空整个 list" 的哨兵)
+    - int == 0  →  [0]  (仅当 allow_zero=True;v2.2.0 后 delete/update 都用 False,
+                          此分支目前无活跃调用方,保留为 helper 的可选能力)
     - list[int] →  list[int](去重,保留首次出现的顺序)
 
     拒绝(抛 ValueError,让上层转 ok=False 错误响应):
@@ -332,8 +333,7 @@ def _normalize_item_ids(
                 )
             if v == 0:
                 raise ValueError(
-                    f"{context}=0 cannot appear inside a list; "
-                    f"use {context}=0 (single value) to clear the whole list"
+                    f"{context}=0 is not valid; IDs start at 1"
                 )
             if v < 0:
                 raise ValueError(f"{context} entries must be positive, got {v}")
@@ -704,19 +704,29 @@ class TodoStore:
         result.update(self._build_list_state(data, path))
         return result
 
-    def delete(self, sender_key: str, item_id: int | list[int]) -> dict:
+    def delete(self, sender_key: str, item_ids: int | list[int]) -> dict:
         """删一个或多个 item。
 
-        `item_id` 接受:
-        - int 0           → 删整个 list(整文件 unlink,无 list 字段)
-        - int > 0         → 删单条(回传完整 list/stats)
-        - list[int > 0]   → 批量删多条(回传完整 list/stats)
+        `item_ids` 接受:
+        - int > 0        → 删单条(回传完整 list/stats)
+        - list[int > 0]  → 批量删多条(回传完整 list/stats)
+
+        v2.2.0: **不再接受 0** —— 清空整个 list 由独立的 todo_clear 工具负责。
+        `item_ids=0` 或 `item_ids=[..., 0, ...]` 都会返回 ok=False 错误。
+        这样 update/delete 字段语义彻底统一,0 永远不是合法 ID。
 
         批量场景下,任一 ID 不存在 → 全量回滚,数据原封不动。
-        list 中不允许塞 0(避免和单项 0 的 clear-list 语义冲突)。
+
+        返回 (v2.2.0 统一契约):
+        - ok / error / proposal
+        - deleted (int, 删除条数)
+        - item_ids (list[int], 与 ids 入参顺序一致)
+        - item_count (剩余条数)
+        - list / stats / attention_items (与 query 对齐,便于前端在删后直接渲染)
+        - **不带** 旧兼容字段 item_id (int);统一返回 list 形式以对齐 add/update
         """
         try:
-            ids = _normalize_item_ids(item_id, allow_zero=True, context="item_id")
+            ids = _normalize_item_ids(item_ids, allow_zero=False, context="item_id")
         except ValueError as e:
             return {"ok": False, "error": str(e)}
 
@@ -726,11 +736,6 @@ class TodoStore:
                 "ok": False,
                 "proposal": "当前无 todo list",
             }
-
-        # 特殊:单项 0 (列表里只有 0) → 整 list 删除
-        if ids == [0]:
-            path.unlink()
-            return {"ok": True, "deleted": "list", "file": str(path)}
 
         # 批量校验:任一 ID 缺失 → 全部回滚
         by_id = {it["id"]: it for it in data["items"]}
@@ -757,16 +762,25 @@ class TodoStore:
         result: dict = {
             "ok": True,
             "deleted": deleted_count,
-            "item_ids": ids,  # 永远返回 list
+            "item_ids": ids,  # 永远返回 list (v2.2.0: 移除单条兼容字段 item_id)
             "item_count": len(data["items"]),
         }
-        # 单条时也带 item_id (int) 以兼容旧调用方
-        if len(ids) == 1:
-            result["item_id"] = ids[0]
         # 删单/批条后列表还在,附带完整 list 状态
         result.update(self._build_list_state(data, path))
         return result
 
     def clear(self, sender_key: str) -> dict:
-        """delete(item_id=0) 的语义别名。"""
-        return self.delete(sender_key, 0)
+        """删整个 todo list(文件 unlink)。
+
+        v2.2.0: 不再是 delete(0) 的别名,而是独立实现。delete() 已拒绝 ID=0,
+        所以本方法直接 unlink 文件,语义保持不变以让 main.py 的 action=='clear'
+        继续可用。未来 todo_clear 工具可能进一步封装此方法。
+        """
+        path, data = self._load(sender_key)
+        if not path:
+            return {
+                "ok": False,
+                "proposal": "当前无 todo list",
+            }
+        path.unlink()
+        return {"ok": True, "deleted": "list", "file": str(path)}
