@@ -296,7 +296,7 @@ class EsSearchTool(FunctionTool):
 
 @dataclass
 class FileRemoveTool(FunctionTool):
-    name: str = "astrbot_file_remove"
+    name: str = "astrbot_file_remove_tool"
     description: str = (
         "Delete an entire file or directory. Before deleting, it is necessary to ask the user. "
         "If delete fragments instead of the entire file, use `astrbot_file_edit_tool`. "
@@ -368,7 +368,7 @@ class FileRemoveTool(FunctionTool):
 
 @dataclass
 class FileDiffTool(FunctionTool):
-    name: str = "astrbot_file_compare"
+    name: str = "astrbot_file_compare_tool"
     description: str = (
         "Compares two text files and returns a structured diff: counts of added and "
         "removed lines, plus a unified diff. Files larger than 50MB are rejected. "
@@ -982,6 +982,17 @@ class SPCodeToolkit(star.Star):
         # 与 _loaded_agents 平行——一个跟踪 AGENTS.md,一个跟踪整个项目组合状态。
         # 格式: {umo: {"directory": str, "loaded_at": float}}
         self._loaded_projects: dict[str, dict] = {}
+
+        # v2.8: /plan 模式状态(per-umo)。
+        # True = plan 模式激活,LLM 工具列表会被 _plan_filter_tools 钩子
+        # 过滤掉 plan_mode.blocked_tools 列出的写工具;
+        # False/缺省 = build 模式(默认),工具列表完全不动。
+        self._plan_mode: dict[str, bool] = {}
+
+        # v2.8: plan 模式第一轮 reminder 注入标记(per-umo)。
+        # 避免每轮都在 user message 末尾追加 system-reminder
+        # (污染 prefix cache;参考 opencode 设计:reminder 仅在过渡点插入一次)。
+        self._plan_reminded: dict[str, bool] = {}
 
         # 根据 enabled_tools 配置过滤实际注册的工具
         enabled_names, unknown = filter_enabled_tools(
@@ -1904,3 +1915,165 @@ class SPCodeToolkit(star.Star):
                 req.func_tool = new_set
             except Exception as exc:
                 logger.warning(f"spcode_toolkit 鉴权失败: {exc}")
+
+    # ── v2.8: /plan 模式 — 工具过滤 + reminder 注入 + 简化的 /plan /build 命令 ──
+    #
+    # 设计要点(参考 opencode plan/build 模式):
+    # 1. /build 模式(默认)下钩子 no-op,完全不影响 LLM 调用
+    #    —— 与默认 AstrBot 行为完全一致(零开销)
+    # 2. /plan 模式下:从 req.func_tool 中过滤 plan_mode_blocked_tools 列表
+    # 3. reminder 仅在 plan 模式**第一轮**注入(后续轮次不再重复)
+    # 4. reminder 放 user message 末尾(**不放 system_prompt**),保证 prefix cache
+    # 5. 命令极简化:输入 /plan → 激活,输入 /build → 退出(回到默认)
+    #
+    # ⚠️ 配置键必须是**顶层扁平键**(`plan_mode_blocked_tools` / `plan_mode_reminder`),
+    # 不能嵌套为 `{"plan_mode": {"blocked_tools": [...]}}`。
+    # 原因:AstrBot 把 _conf_schema.json 中的 "object" 包装视为 UI 分组,
+    # 实际 config 键全部扁平化到顶层。参考 spcode 其他配置:
+    # `self._config.get("agentsmd_enabled")` / `self._config.get("codegraph_enabled")` 等。
+    #    不引入 /plan on/off 等二级子命令,降低用户记忆负担
+    # 6. 状态完全 per-umo(per 会话)隔离,跨 session 互不影响
+    # 7. 配置由 _conf_schema.json 中的 plan_mode 节控制
+
+    def _filter_func_tool(self, req: ProviderRequest, blocked: set[str]) -> int:
+        """从 req.func_tool 中过滤掉 blocked 集合里的工具名,返回被过滤的数量。
+
+        设计要点(参考 opencode plan 模式):
+        1. 新建 ToolSet 替换原引用,避免 in-place 修改原 list
+           —— 防止共享引用污染其他 session(多 agent run 共享 func_tool 时)
+        2. 被过滤的工具**完全从 LLM 工具列表消失**(schema 不序列化)
+           —— LLM 看不到也调不到,比"调用时拒绝"更干净
+        3. 不存在的工具名静默跳过——配置可写"计划中"的工具名
+        """
+        if not req.func_tool or not blocked:
+            return 0
+        kept = [t for t in req.func_tool.tools if t.name not in blocked]
+        actual_removed = len(req.func_tool.tools) - len(kept)
+        if actual_removed == 0:
+            return 0
+        try:
+            from astrbot.core.agent.tool import ToolSet
+
+            new_set = ToolSet()
+            for t in kept:
+                new_set.add_tool(t)
+            req.func_tool = new_set
+            return actual_removed
+        except Exception as exc:
+            logger.warning(f"spcode_toolkit 工具过滤失败: {exc}")
+            return 0
+
+    @filter.on_llm_request()
+    async def _plan_filter_tools(self, event, req: ProviderRequest):
+        """v2.8: /plan 模式钩子 — 从 LLM 工具列表过滤写工具 + 注入 reminder。"""
+        umo = event.unified_msg_origin
+        if not self._plan_mode.get(umo, False):
+            return  # build 模式(默认):不做事
+        if not req.func_tool:
+            return
+
+        blocked_tools = self._config.get("plan_mode_blocked_tools") or []
+        if blocked_tools:
+            blocked_set = set(blocked_tools)
+            removed_count = self._filter_func_tool(req, blocked_set)
+            if removed_count > 0:
+                logger.debug(
+                    f"[plan] 会话 {umo}: 从工具列表过滤 {removed_count} 个写工具"
+                )
+        else:
+            # plan 模式激活但没配置 blocked_tools = 配置错误,记 warning
+            logger.warning(
+                f"[plan] 会话 {umo} 处于 plan 模式但 plan_mode_blocked_tools 为空,"
+                f"将不会过滤任何工具。请在 _conf_schema.json 配置。"
+            )
+
+        # plan 模式第一轮:在 user message 末尾追加 reminder(prefix cache 友好)
+        if self._plan_reminded.get(umo, False):
+            return
+
+        reminder_template = (
+            self._config.get("plan_mode_reminder") or ""
+        ).strip()
+        if not reminder_template:
+            # 没配 reminder,标记为已注入(避免每轮检查)
+            self._plan_reminded[umo] = True
+            return
+
+        # 替换 {blocked} 占位符
+        blocked_str = ", ".join(sorted(set(blocked_tools))) if blocked_tools else "(none)"
+        reminder_text = reminder_template.replace("{blocked}", blocked_str)
+        if not reminder_text.lstrip().startswith("<system-reminder>"):
+            reminder_text = f"<system-reminder>\n{reminder_text}\n</system-reminder>"
+
+        # 追加到最后一条 user 消息(OpenAI 格式 dict)
+        # WHY: 不放 system_prompt 是为了避免污染 prefix cache;
+        #      user message 改动只影响本轮,后续轮 reminder 不再注入。
+        if isinstance(req.contexts, list) and req.contexts:
+            for msg in reversed(req.contexts):
+                if isinstance(msg, dict) and msg.get("role") == "user":
+                    content = msg.get("content", "")
+                    if isinstance(content, str):
+                        msg["content"] = content + "\n\n" + reminder_text
+                    break
+
+        self._plan_reminded[umo] = True
+        logger.debug(
+            f"[plan] 会话 {umo}: 已注入 plan 模式 reminder 到 user message"
+        )
+
+    @filter.command("plan")
+    async def plan(self, event):
+        """/plan — 进入 plan 模式(过滤写工具,提示 LLM 调研而非动手)
+
+        与 opencode /plan 等价:激活后,_plan_filter_tools 钩子会从 LLM 工具列表
+        过滤掉 plan_mode.blocked_tools 列出的写工具;首次 LLM 调用时自动注入
+        plan 模式 reminder 到 user message。
+
+        退出请使用 /build。
+        """
+        umo = event.unified_msg_origin
+        was_active = self._plan_mode.get(umo, False)
+        self._plan_mode[umo] = True
+        # 重置 reminder 标记,下次 LLM 调用时再次注入
+        self._plan_reminded.pop(umo, None)
+        blocked = self._config.get("plan_mode_blocked_tools") or []
+        if not blocked:
+            yield event.plain_result(
+                "⚠️ plan 模式已激活,但 plan_mode_blocked_tools 为空。\n"
+                "将不会过滤任何工具。请在插件配置中填写要过滤的工具名。\n"
+                "使用 /build 退出 plan 模式。"
+            )
+            return
+        if was_active:
+            # 已经在 plan 模式时再次输入,顺手重置 reminder 让 LLM 重新看到
+            yield event.plain_result(
+                f"🔄 plan 模式仍激活 (会话 {umo})\n"
+                f"已过滤 {len(blocked)} 个写工具:{', '.join(blocked)}\n"
+                f"reminder 已重置,下次 LLM 调用时重新注入。\n"
+                f"使用 /build 退出 plan 模式。"
+            )
+        else:
+            yield event.plain_result(
+                f"✅ plan 模式已激活 (会话 {umo})\n"
+                f"已过滤 {len(blocked)} 个写工具:{', '.join(blocked)}\n"
+                f"LLM 仅可使用只读工具调研。使用 /build 退出。"
+            )
+
+    @filter.command("build")
+    async def build(self, event):
+        """/build — 退出 plan 模式,回到默认 build 模式(全部工具可用)
+
+        与 opencode /build 等价:build 是默认状态,本命令等价于"关闭 plan 模式"。
+        执行后,LLM 工具列表不再被过滤,下次 LLM 调用按完整工具集处理。
+        """
+        umo = event.unified_msg_origin
+        was_active = self._plan_mode.pop(umo, False)
+        self._plan_reminded.pop(umo, None)
+        if was_active:
+            yield event.plain_result(
+                f"✅ plan 模式已关闭 (会话 {umo})。所有工具现已可用。"
+            )
+        else:
+            yield event.plain_result(
+                f"ℹ️ 已在 build 模式 (会话 {umo})。所有工具默认可用,无需切换。"
+            )

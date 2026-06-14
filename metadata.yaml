@@ -1,9 +1,9 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: 2.7.0
+version: 2.8.0
 description: |
-  spcode 开发工具箱 — 13 个工具，4 个命令组。
+  spcode 开发工具箱 — 13 个工具，5 个命令组。
   code_check / es_search / file_remove / file_compare / inta_shell_*(5个)
   todo_create / todo_query / todo_modify / todo_clear(4 个,通过 `todo_list` 组别名一键启用)。
   v2.0 自动集成 codegraph 官方 MCP server。
@@ -14,5 +14,9 @@ description: |
     旧 config 中独立勾选的 todo_* 工具名继续生效,无需手动改。
   v2.7 新增 /project load|unload 命令组,一键组合 agentsmd+codegraph;
     加载后自动注入 codegraph 优先使用指引,引导 LLM 走语义搜索而非 astrbot_file_grep_tool。
+  v2.8 新增 /plan 和 /build 命令(opencode plan/build 模式借鉴);
+    /plan 激活时按 plan_mode.blocked_tools 配置从 LLM 工具列表过滤写工具,
+    并在第一轮 LLM 调用时向 user message 注入 plan 模式 reminder(prefix cache 友好);
+    /build 退出 plan 模式,默认状态下完全不修改 LLM 请求,与 AstrBot 默认行为一致。
   部分实现基于Irmia DevKit插件。
 repo: https://github.com/elecvoid243/astrbot_plugin_spcode_toolkit

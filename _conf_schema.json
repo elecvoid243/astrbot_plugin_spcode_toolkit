@@ -6,8 +6,8 @@
     "options": [
       "code_check",
       "es_search",
-      "astrbot_file_remove",
-      "astrbot_file_compare",
+      "astrbot_file_remove_tool",
+      "astrbot_file_compare_tool",
       "todo_list",
       "inta_shell"
     ],
@@ -126,6 +126,39 @@
         "hint": "留空则用 AstrBot workspace。",
         "type": "string",
         "default": ""
+      }
+    }
+  },
+  "plan_mode": {
+    "description": "plan / build模式配置",
+    "hint": "在 /plan 激活时，plan工具黑名单列出的工具会从 LLM 工具列表中过滤掉,防止 LLM 在调研阶段意外执行写操作。/build 还原为全部工具可见(默认)。",
+    "type": "object",
+    "items": {
+      "plan_mode_blocked_tools": {
+        "description": "plan模式下的工具黑名单 — /plan 激活时从 LLM 工具列表中过滤的工具名",
+        "hint": "移除写工具，让LLM 在 plan 模式下只能只读探索。默认走 strict 模式，过滤所有 spcode 写工具 + AstrBot 内建文件写编辑工具。",
+        "type": "list",
+        "item": {
+          "type": "string",
+          "hint": "例如:astrbot_file_remove"
+        },
+        "default": [
+          "astrbot_file_remove",
+          "todo_create",
+          "todo_modify",
+          "todo_clear",
+          "astrbot_inta_shell_start",
+          "astrbot_inta_shell_send",
+          "astrbot_inta_shell_stop",
+          "astrbot_file_write_tool",
+          "astrbot_file_edit_tool"
+        ]
+      },
+      "plan_mode_reminder": {
+        "description": "切换到plan模式时，给LLM的提醒文本，作为<system-reminder>注入",
+        "hint": "支持将 {blocked} 占位符替换为实际的黑名单列表。留空则不注入。建议放友好的简短指引,不放长篇规则。",
+        "type": "text",
+        "default": "Plan mode is active. The following tools have been removed from your tool list: {blocked}. You can only use read-only tools to explore and gather information. When done planning, present your approach to the user and wait for approval before any write operation."
       }
     }
   },
