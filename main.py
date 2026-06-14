@@ -570,19 +570,19 @@ class TodoModifyTool(_TodoToolBase):
                     "type": "array",
                     "items": {"type": "object"},
                     "minItems": 1,
-                    "description": "[add mode] Items to append. Each: {title, status?, notes?}.",
+                    "description": "[Required for add mode] Items to append. Each: {title, status?, notes?}.",
                 },
                 "item_ids": {
                     "anyOf": [
                         {"type": "integer"},
                         {"type": "array", "items": {"type": "integer"}, "minItems": 1},
                     ],
-                    "description": "[update/delete mode] Target item id(s).",
+                    "description": "[Required for update/delete mode] Target item id(s). ",
                 },
                 "status": {
                     "type": "string",
                     "enum": ["pending", "in_progress", "done", "cancelled"],
-                    "description": "[update mode] New status. Omit = keep existing.",
+                    "description": "[Required for update mode] New status. Omit = keep existing.",
                 },
                 "notes": {
                     "type": "string",
@@ -701,14 +701,17 @@ class IntaShellStartTool(FunctionTool):
         _record(self.name)
         try:
             event = context.context.event
-            result = await _inta_shell_tools.start(
+            # WHY: tools.inta_shell.tools.start() 内部已通过 _ok/_deny
+            # 返回 JSON 字符串。如果再走 unwrap(str),会触发
+            # "工具返回了非预期类型: str" 错误(虽然底层进程已被启动)。
+            # 直接透传字符串结果即可。
+            return await _inta_shell_tools.start(
                 _inta_component,
                 event.unified_msg_origin,
                 command,
                 env=env,
                 default_cwd=_inta_default_cwd,
             )
-            return unwrap(result)
         except Exception as e:
             return err_json(f"inta_shell_start 失败: {e}")
 
@@ -757,10 +760,11 @@ class IntaShellSendTool(FunctionTool):
     ) -> ToolExecResult:
         _record(self.name)
         try:
-            result = await _inta_shell_tools.send(
+            # WHY: tools.inta_shell.tools.send() 内部已通过 _ok/_deny
+            # 返回 JSON 字符串。直接透传,绕过 unwrap() 的 dict 类型校验。
+            return await _inta_shell_tools.send(
                 _inta_component, session_id, input, send_eof=send_eof
             )
-            return unwrap(result)
         except Exception as e:
             return err_json(f"inta_shell_send 失败: {e}")
 
@@ -809,10 +813,11 @@ class IntaShellReadTool(FunctionTool):
     ) -> ToolExecResult:
         _record(self.name)
         try:
-            result = await _inta_shell_tools.read(
+            # WHY: tools.inta_shell.tools.read() 内部已通过 _ok/_deny
+            # 返回 JSON 字符串。直接透传,绕过 unwrap() 的 dict 类型校验。
+            return await _inta_shell_tools.read(
                 _inta_component, session_id, timeout=timeout, max_chars=max_chars
             )
-            return unwrap(result)
         except Exception as e:
             return err_json(f"inta_shell_read 失败: {e}")
 
@@ -857,10 +862,11 @@ class IntaShellStopTool(FunctionTool):
     ) -> ToolExecResult:
         _record(self.name)
         try:
-            result = await _inta_shell_tools.stop(
+            # WHY: tools.inta_shell.tools.stop() 内部已通过 _ok/_deny
+            # 返回 JSON 字符串。直接透传,绕过 unwrap() 的 dict 类型校验。
+            return await _inta_shell_tools.stop(
                 _inta_component, session_id, force=force
             )
-            return unwrap(result)
         except Exception as e:
             return err_json(f"inta_shell_stop 失败: {e}")
 
@@ -886,8 +892,9 @@ class IntaShellListTool(FunctionTool):
     ) -> ToolExecResult:
         _record(self.name)
         try:
-            result = await _inta_shell_tools.list_sessions(_inta_component)
-            return unwrap(result)
+            # WHY: tools.inta_shell.tools.list_sessions() 内部已通过 _ok/_deny
+            # 返回 JSON 字符串。直接透传,绕过 unwrap() 的 dict 类型校验。
+            return await _inta_shell_tools.list_sessions(_inta_component)
         except Exception as e:
             return err_json(f"inta_shell_list 失败: {e}")
 

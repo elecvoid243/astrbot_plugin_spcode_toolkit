@@ -254,10 +254,37 @@ def test_terminate_handles_shutdown_timeout_warning(caplog):
 
 
 def test_old_codegraph_module_removed():
-    """验证 tools/codegraph.py 和 tools/codegraph_cpp.py 不存在。"""
-    pkg_dir = Path(__file__).resolve().parent.parent / "tools"
-    assert not (pkg_dir / "codegraph.py").exists()
-    assert not (pkg_dir / "codegraph_cpp.py").exists()
+    """验证 tools/codegraph.py 不再作为 LLM 工具层出现(改用 MCP 集成)。
+
+    WHY (v2.1+ 重构):
+      旧版本把 ``tools/codegraph.py`` 同时承担 LLM 工具层(CodeIndexTool /
+      CodeExploreTool)与 Python AST 解析后端两个角色。
+      v2.1+ 拆分为两层:
+        - LLM 工具层 → ``tools/_codegraph_mcp.py``(MCP server stdio 启动器)
+        - Python AST 后端 → ``tools/codegraph.py`` + ``tools/codegraph_cpp.py``
+          仍保留,被 ``tests/test_codegraph_cpp.py`` 通过
+          ``from tools.codegraph import CodeGraph`` 使用,提供纯 Python AST
+          解析能力(MCP 不可用时的 fallback + 测试夹具)。
+
+    因此本测试**不应再断言文件被删除**——这是 v2.1 重构后的正确状态。
+    正确的检查是: ``_PLUGINS_TOOLS`` 中不含来自 ``tools.codegraph`` 模块的工具
+    实例(即不再作为 LLM 工具暴露给 LLM)。
+    """
+    from astrbot_plugin_spcode_toolkit import main
+
+    tools = main._PLUGINS_TOOLS
+    tool_modules = {type(t).__module__ for t in tools}
+    # 排除 mcp 启动器模块(它是新版的 LLM 工具层,允许存在)
+    leaked = {
+        m
+        for m in tool_modules
+        if m.startswith("astrbot_plugin_spcode_toolkit.tools.codegraph")
+        and "codegraph_mcp" not in m
+    }
+    assert not leaked, (
+        f"_PLUGINS_TOOLS 中残留旧 codegraph 工具层 (期望仅保留 _codegraph_mcp): "
+        f"{leaked}"
+    )
 
 
 def test_main_no_longer_registers_code_index():
