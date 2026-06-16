@@ -23,7 +23,7 @@ from pathlib import Path
 from astrbot.api import logger
 
 # v2.9: 代码文件检测(共享内部模块)。仅在调用方传入 require_code_files=True 时启用。
-from tools._code_detect import CODE_FILE_EXTENSIONS, has_code_files  # noqa: F401
+from ._code_detect import CODE_FILE_EXTENSIONS, has_code_files  # noqa: F401
 
 # 与 mcp_client.py:50 的 _SHELL_META_RE 完全一致
 SHELL_META_RE = re.compile(r"[\r\n\x00;&|<>`$]")

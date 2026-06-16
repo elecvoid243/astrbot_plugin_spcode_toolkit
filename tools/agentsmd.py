@@ -21,7 +21,7 @@ from pathlib import Path
 
 # v2.9: 代码文件检测逻辑已抽到 tools/_code_detect(共享给 agentsmd 与 codegraph)
 # 本模块仅 re-export,保持向后兼容(老 import 路径仍可用)。
-from tools._code_detect import (  # noqa: F401  (re-exports)
+from ._code_detect import (  # noqa: F401  (re-exports)
     CODE_FILE_EXTENSIONS,
     _SKIP_DIRS,
     has_code_files,
