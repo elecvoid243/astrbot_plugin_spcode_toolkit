@@ -19,6 +19,14 @@ import os
 import re
 from pathlib import Path
 
+# v2.9: 代码文件检测逻辑已抽到 tools/_code_detect(共享给 agentsmd 与 codegraph)
+# 本模块仅 re-export,保持向后兼容(老 import 路径仍可用)。
+from tools._code_detect import (  # noqa: F401  (re-exports)
+    CODE_FILE_EXTENSIONS,
+    _SKIP_DIRS,
+    has_code_files,
+)
+
 # 默认的 AGENTS.md 生成 prompt 模板
 DEFAULT_INIT_TEMPLATE = """请分析此代码库并创建一个 AGENTS.md 文件,包含:
 - 该项目的绝对路径
@@ -106,22 +114,8 @@ KEY_PROJECT_FILES: tuple[str, ...] = (
     "Dockerfile",
 )
 
-# 目录扫描时跳过的常见垃圾目录
-_SKIP_DIRS: frozenset[str] = frozenset(
-    {
-        "node_modules",
-        "__pycache__",
-        "venv",
-        ".venv",
-        "dist",
-        "build",
-        "target",
-        ".git",
-        ".idea",
-        ".vscode",
-        "venv",
-    }
-)
+# v2.9: _SKIP_DIRS 已抽到 tools/_code_detect(共享给 agentsmd.scan_project_context
+# 与 _code_detect.has_code_files),顶部 import 引入,此处不再定义。
 
 
 def _max_subdirs_at_depth(dirs: list[str], cap: int = 10) -> None:
@@ -130,7 +124,7 @@ def _max_subdirs_at_depth(dirs: list[str], cap: int = 10) -> None:
         extra = len(dirs) - cap
         del dirs[cap:]
         return extra  # type: ignore[return-value]
-    return 0  # type: ignore[return-value]
+    return 0  # type: ignore[return-value]  # noqa: E501
 
 
 def scan_project_context(dir_path: Path, *, max_depth: int = 2) -> str:
@@ -285,3 +279,8 @@ def resolve_init_template(config: dict | None, default: str = "") -> str:
     if custom and custom.strip():
         return custom.strip()
     return default or DEFAULT_INIT_TEMPLATE
+
+
+# v2.9: CODE_FILE_EXTENSIONS 与 has_code_files 已抽到 tools/_code_detect。
+# 本模块顶部 import 引入并 re-export,保持向后兼容(老代码 `from tools.agentsmd
+# import has_code_files, CODE_FILE_EXTENSIONS` 仍然可用)。

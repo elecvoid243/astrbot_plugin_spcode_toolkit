@@ -1485,10 +1485,13 @@ class SPCodeToolkit(star.Star):
     async def _codegraph_init_or_uninit(self, event, directory: str, *, init: bool):
         """共享实现,init/uninit 只差一个 subcommand。"""
         # 1. 路径校验
+        #    v2.9: init 时要求目录下至少存在一个代码文件(对齐 /agentsmd init);
+        #    uninit 故意跳过此检查(允许对空目录 uninit,语义上无害)。
         target = resolve_project_path(
             directory,
             init=init,
             user_blacklist=self._config.get("file_remove_blacklist") or [],
+            require_code_files=init,
         )
         if isinstance(target, str):  # 错误消息
             yield event.plain_result(target)
@@ -1633,15 +1636,28 @@ class SPCodeToolkit(star.Star):
             yield event.plain_result(f"❌ 路径不允许: {reason}")
             return
 
+        # v2.9: 显式拒绝不存在的目录(取消自动 mkdir,避免对路径拼错场景静默创建空目录)
         if not target.exists():
-            try:
-                target.mkdir(parents=True, exist_ok=True)
-            except Exception as e:
-                yield event.plain_result(f"❌ 无法创建目录 `{directory}`: {e}")
-                return
-
+            yield event.plain_result(
+                f"❌ 目录 `{directory}` 不存在。\n"
+                "请先创建该目录,或确认路径是否正确。"
+            )
+            return
         if not target.is_dir():
             yield event.plain_result(f"❌ `{directory}` 不是一个有效的目录。")
+            return
+
+        # v2.9: 要求目录下至少存在一个代码文件,避免对空目录或纯文档目录误用。
+        # AGENTS.md 是给"在此仓库工作的编程代理"用的规范,没有代码的项目无意义。
+        if not _agentsmd_mod.has_code_files(target):
+            supported = ", ".join(
+                f".{ext}" for ext in sorted(_agentsmd_mod.CODE_FILE_EXTENSIONS)
+            )
+            yield event.plain_result(
+                f"❌ 目录 `{directory}` 下未找到代码文件。\n"
+                f"AGENTS.md 仅用于代码项目,支持的后缀: {supported}\n"
+                "请确认目录是否正确,或选择包含源代码的目录。"
+            )
             return
 
         agents_md_path = target / "AGENTS.md"
@@ -1684,6 +1700,30 @@ class SPCodeToolkit(star.Star):
         )
         if not ok:
             yield event.plain_result(f"❌ 路径不允许: {reason}")
+            return
+
+        # v2.9: 显式校验目标目录存在且是目录,避免把"目录不存在"和
+        # "目录存在但缺 AGENTS.md"混为同一个错误消息。
+        if not target.exists():
+            yield event.plain_result(
+                f"❌ 目录 `{directory}` 不存在。\n"
+                "请先创建该目录,或确认路径是否正确。"
+            )
+            return
+        if not target.is_dir():
+            yield event.plain_result(f"❌ `{directory}` 不是一个目录。")
+            return
+
+        # v2.9: 代码文件检测(与 init 对齐)
+        if not _agentsmd_mod.has_code_files(target):
+            supported = ", ".join(
+                f".{ext}" for ext in sorted(_agentsmd_mod.CODE_FILE_EXTENSIONS)
+            )
+            yield event.plain_result(
+                f"❌ 目录 `{directory}` 下未找到代码文件。\n"
+                f"AGENTS.md 仅用于代码项目,支持的后缀: {supported}\n"
+                "请确认目录是否正确,或选择包含源代码的目录。"
+            )
             return
 
         agents_md_path = target / "AGENTS.md"
