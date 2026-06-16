@@ -22,6 +22,9 @@ from pathlib import Path
 
 from astrbot.api import logger
 
+# v2.9: 代码文件检测(共享内部模块)。仅在调用方传入 require_code_files=True 时启用。
+from tools._code_detect import CODE_FILE_EXTENSIONS, has_code_files  # noqa: F401
+
 # 与 mcp_client.py:50 的 _SHELL_META_RE 完全一致
 SHELL_META_RE = re.compile(r"[\r\n\x00;&|<>`$]")
 
@@ -56,6 +59,7 @@ def resolve_project_path(
     *,
     init: bool,
     user_blacklist: list[str] | None = None,
+    require_code_files: bool = False,
 ) -> Path | str:
     """校验 + 解析用户输入的项目目录路径。
 
@@ -63,6 +67,10 @@ def resolve_project_path(
         raw: 用户原始输入(可能含引号、~、相对路径)
         init: True=init 操作(目录必须存在); False=uninit(目录不存在也允许)
         user_blacklist: 用户自定义黑名单(绝对路径前缀),与系统黑名单叠加
+        require_code_files: True=要求目录下至少存在一个代码文件
+            (CODE_FILE_EXTENSIONS 白名单中的后缀)。仅在 init=True 时生效,
+            uninit 时忽略(允许对空目录/无代码目录 uninit)。/codegraph init
+            通过此参数对齐 /agentsmd init|load 的代码项目检测语义。
 
     Returns:
         Path: 解析后的绝对路径
@@ -97,6 +105,15 @@ def resolve_project_path(
             return f"❌ 目录不存在: {p}"
         if not p.is_dir():
             return f"❌ 路径不是目录: {p}"
+        # v2.9: 代码文件检测(/codegraph init 要求目标目录至少含一个代码文件,
+        # 避免对纯文档/空目录建无意义的索引)
+        if require_code_files and not has_code_files(p):
+            supported = ", ".join(f".{ext}" for ext in sorted(CODE_FILE_EXTENSIONS))
+            return (
+                f"❌ 目录 `{p}` 下未找到代码文件。\n"
+                f"codegraph 仅用于代码项目,支持的后缀: {supported}\n"
+                "请确认目录是否正确,或选择包含源代码的目录。"
+            )
     return p
 
 

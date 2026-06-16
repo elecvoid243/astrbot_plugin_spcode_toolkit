@@ -138,6 +138,108 @@ def test_resolve_project_path_strips_quotes(tmp_path):
     assert r == p.resolve()
 
 
+# ── resolve_project_path(require_code_files=...) ─────
+# v2.9: /codegraph init 要求目标目录下至少有一个代码文件,
+# 对齐 /agentsmd init|load 语义。
+
+
+def test_resolve_project_path_require_code_files_with_py(tmp_path):
+    """init + require_code_files=True + 目录含 .py → 通过。"""
+    p = tmp_path / "realproj"
+    p.mkdir()
+    (p / "main.py").write_text("x = 1")
+    r = resolve_project_path(str(p), init=True, require_code_files=True)
+    assert r == p.resolve()
+
+
+def test_resolve_project_path_require_code_files_empty_dir(tmp_path):
+    """init + require_code_files=True + 空目录 → 报错。"""
+    p = tmp_path / "empty"
+    p.mkdir()
+    r = resolve_project_path(str(p), init=True, require_code_files=True)
+    assert isinstance(r, str) and "代码文件" in r
+
+
+def test_resolve_project_path_require_code_files_only_docs(tmp_path):
+    """init + require_code_files=True + 只有 markdown/json → 报错。"""
+    p = tmp_path / "docsonly"
+    p.mkdir()
+    (p / "README.md").write_text("# doc")
+    (p / "package.json").write_text("{}")
+    r = resolve_project_path(str(p), init=True, require_code_files=True)
+    assert isinstance(r, str) and "代码文件" in r
+
+
+def test_resolve_project_path_require_code_files_nested(tmp_path):
+    """init + require_code_files=True + 代码在子目录 → 仍然通过(递归)。"""
+    p = tmp_path / "nested"
+    p.mkdir()
+    src = p / "src" / "deep"
+    src.mkdir(parents=True)
+    (src / "module.py").write_text("x = 1")
+    r = resolve_project_path(str(p), init=True, require_code_files=True)
+    assert r == p.resolve()
+
+
+def test_resolve_project_path_require_code_files_skips_node_modules(tmp_path):
+    """init + require_code_files=True + 仅 node_modules 里有 .py → 报错。"""
+    p = tmp_path / "noise"
+    p.mkdir()
+    nm = p / "node_modules"
+    nm.mkdir()
+    (nm / "dep.py").write_text("# ignored")
+    r = resolve_project_path(str(p), init=True, require_code_files=True)
+    assert isinstance(r, str) and "代码文件" in r
+
+
+def test_resolve_project_path_require_code_files_default_false(tmp_path):
+    """require_code_files 默认 False:空目录也能 init(向后兼容)。"""
+    p = tmp_path / "empty_legacy"
+    p.mkdir()
+    r = resolve_project_path(str(p), init=True)  # 不传 require_code_files
+    assert r == p.resolve()
+
+
+def test_resolve_project_path_require_code_files_ignored_for_uninit(tmp_path):
+    """uninit 时 require_code_files=True 也不报错(uninit 允许空目录)。"""
+    ghost = tmp_path / "ghost"
+    r = resolve_project_path(str(ghost), init=False, require_code_files=True)
+    assert isinstance(r, Path)
+
+
+def test_resolve_project_path_require_code_files_only_junk_in_subdir(tmp_path):
+    """真实代码在子目录 + 垃圾目录里有 .py → 以真实代码为准,通过。"""
+    p = tmp_path / "mixed"
+    p.mkdir()
+    nm = p / "node_modules"
+    nm.mkdir()
+    (nm / "dep.py").write_text("# ignored")
+    (p / "real.py").write_text("x = 1")
+    r = resolve_project_path(str(p), init=True, require_code_files=True)
+    assert r == p.resolve()
+
+
+def test_resolve_project_path_require_code_files_multiple_extensions(tmp_path):
+    """init + require_code_files + 目录含主流语言代码 → 通过。"""
+    p = tmp_path / "polyglot"
+    p.mkdir()
+    for f in ["app.js", "main.go", "lib.rs", "Main.java"]:
+        (p / f).write_text(f"// {f}")
+    r = resolve_project_path(str(p), init=True, require_code_files=True)
+    assert r == p.resolve()
+
+
+def test_resolve_project_path_require_code_files_message_lists_supported(tmp_path):
+    """错误消息应列出支持的后缀,便于用户理解。"""
+    p = tmp_path / "empty"
+    p.mkdir()
+    r = resolve_project_path(str(p), init=True, require_code_files=True)
+    assert isinstance(r, str)
+    # 至少出现几个标志后缀
+    for ext in [".py", ".js", ".cpp", ".go"]:
+        assert ext in r, f"错误消息应列出 {ext}"
+
+
 # ── ensure_stdio_allowlist ─────────────────────────
 
 
