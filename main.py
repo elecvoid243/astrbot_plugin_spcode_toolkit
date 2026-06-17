@@ -1669,11 +1669,14 @@ class SPCodeToolkit(star.Star):
                 umo=umo, reason="directory_missing", directory=directory,
                 elapsed_ms=_elapsed())
 
-        # 4. Git 仓库探测
+        # 4. Git repository probe — git outputs UTF-8 on every platform,
+        # so we always decode with utf-8 regardless of the Windows console
+        # codepage (cp936/GBK on zh-CN systems would otherwise mojibake
+        # non-ASCII characters in subsequent diff output).
         probe = await run_sync(
             run_cmd,
             [git_bin, "-C", directory, "rev-parse", "--is-inside-work-tree"],
-            encoding=_GIT_DIFF_ENCODING,
+            encoding="utf-8",
         )
         if not probe["ok"]:
             combined = (probe.get("stderr", "") + probe.get("error", "")).lower()
@@ -1690,13 +1693,16 @@ class SPCodeToolkit(star.Star):
                 stderr=probe.get("stderr", "") or probe.get("error", ""),
                 elapsed_ms=_elapsed())
 
-        # 5. 并发收集 diff 三件套 + raw
+        # 5. Concurrently collect the raw diff + three auxiliary listings.
+        # All four git invocations output UTF-8, so we decode with utf-8
+        # to avoid mojibake when changed lines contain non-ASCII characters
+        # (e.g. Chinese comments / strings) on a cp936 Windows host.
         git_prefix = [git_bin, "-C", directory, "-c", "color.ui=never"]
         raw_result, name_status_result, numstat_result, stat_result = await asyncio.gather(
-            run_sync(run_cmd, git_prefix + ["diff"], encoding=_GIT_DIFF_ENCODING),
-            run_sync(run_cmd, git_prefix + ["diff", "--name-status"], encoding=_GIT_DIFF_ENCODING),
-            run_sync(run_cmd, git_prefix + ["diff", "--numstat"], encoding=_GIT_DIFF_ENCODING),
-            run_sync(run_cmd, git_prefix + ["diff", "--stat"], encoding=_GIT_DIFF_ENCODING),
+            run_sync(run_cmd, git_prefix + ["diff"], encoding="utf-8"),
+            run_sync(run_cmd, git_prefix + ["diff", "--name-status"], encoding="utf-8"),
+            run_sync(run_cmd, git_prefix + ["diff", "--numstat"], encoding="utf-8"),
+            run_sync(run_cmd, git_prefix + ["diff", "--stat"], encoding="utf-8"),
         )
 
         if not raw_result["ok"]:
