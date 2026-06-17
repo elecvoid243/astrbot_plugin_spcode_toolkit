@@ -1124,6 +1124,18 @@ class SPCodeToolkit(star.Star):
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(f"注册 spcode project-status web API 失败: {exc!s}")
 
+        # 与 project-status 平行的端点：返回当前已载入项目的未暂存 git diff，
+        # 供本地 dashboard 显示编辑器中尚未提交的工作区改动。
+        try:
+            self.context.register_web_api(
+                route="/spcode/git-diff",
+                view_handler=self.handle_get_git_diff,
+                methods=["GET"],
+                desc="获取 spcode 当前会话已载入项目的未暂存 git diff（供 dashboard 调用）",
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"注册 spcode git-diff web API 失败: {exc!s}")
+
         cfg = self._inta_shell_cfg
         component = LocalInteractiveShellComponent(
             max_sessions=cfg["max_sessions"],
