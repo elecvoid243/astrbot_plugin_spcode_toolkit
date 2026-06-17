@@ -49,6 +49,7 @@ from .tools.inta_shell import tools as _inta_shell_tools
 from .tools.inta_shell.component import LocalInteractiveShellComponent
 from .tools._path_safety import is_path_safe as _is_path_safe
 import time as _time
+import datetime as _datetime
 
 # 让 main.py 可以动态添加 MethodType
 from collections import defaultdict
@@ -1042,6 +1043,22 @@ class SPCodeToolkit(star.Star):
         构造 inta_shell 组件单例。codegraph MCP 由 __init__ 内异步任务管理，
         不在这里重复处理。
         """
+        # Register dashboard-facing web API so the UI can query the currently
+        # loaded project without polluting chat history with a /project status
+        # command. The endpoint accepts an optional ``umo`` query param; when
+        # the dashboard does not know the umo it can omit it and receive the
+        # most-recently-loaded project (single-user dashboards are fine with
+        # this fallback).
+        try:
+            self.context.register_web_api(
+                route="/spcode/project-status",
+                view_handler=self.handle_get_project_status,
+                methods=["GET"],
+                desc="获取 spcode 当前会话已加载的项目信息（供 dashboard 调用）",
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"注册 spcode project-status web API 失败: {exc!s}")
+
         cfg = self._inta_shell_cfg
         component = LocalInteractiveShellComponent(
             max_sessions=cfg["max_sessions"],
@@ -1088,26 +1105,89 @@ class SPCodeToolkit(star.Star):
     # ── /project 命令组(v2.7 组合 agentsmd + codegraph) ───────────
 
     @filter.command_group("project")
-    def project(self):
-        """项目管理指令组(组合 agentsmd + codegraph 一键加载/卸载)。
+    def project(self, event, sub_command: str = "", *args):
+        """``/project`` 指令组的统一入口。
 
-        仅在 agentsmd_enabled 和 codegraph_enabled 都为 true 时可用。
-        handler 入口会做 feature flag 校验,关闭时返回明确错误。
+        装饰器模式下,本方法被 ``@filter.command_group`` 替换为
+        ``RegisteringCommandable``,实际不会执行;真正的分发由
+        :meth:`_project_router` 处理,以便单元测试可以直接调用。
+
+        Args:
+            event: AstrBot 事件对象(由框架注入)。
+            sub_command: ``/project`` 后面的第一个子命令(load / unload / status / ...)。
+            *args: 子命令对应的额外参数。
         """
-        pass
+        return None
+
+    async def _project_router(self, event, sub_command: str, *args):
+        """Implementation of the ``/project`` command group.
+
+        Dispatches ``sub_command`` to the matching ``_project_*_impl`` helper
+        and yields its messages. Unknown sub-commands yield a single error
+        message.
+
+        Args:
+            event: AstrBot 事件对象。
+            sub_command: 子命令字符串(load / unload / status / ...)。
+            *args: 子命令对应的额外参数。
+
+        Yields:
+            Plain text messages for the user.
+        """
+        sub = (sub_command or "").strip().lower()
+        if sub == "load":
+            if not args:
+                yield event.plain_result("❌ /project load 需要 <directory> 参数。")
+                return
+            async for msg in self._project_load_impl(event, args[0]):
+                yield msg
+            return
+        if sub == "unload":
+            async for msg in self._project_unload_impl(event):
+                yield msg
+            return
+        if sub == "status":
+            async for msg in self._project_status_impl(event):
+                yield msg
+            return
+        # Unknown subcommand.
+        yield event.plain_result(
+            f"❌ 未知子命令: {sub_command!r}。支持: load / unload / status"
+        )
+        return
 
     @project.command("load")
     async def project_load(self, event, directory: str):
         """/project load <directory>
 
-        一键加载项目到当前会话:同时执行 agentsmd init+load 和 codegraph init+set,
-        并在 system_prompt 注入 codegraph 优先使用指引。
+        一键加载项目到当前会话(委托给 ``_project_load_impl``)。
 
-        前置条件:
-        - agentsmd_enabled = true
-        - codegraph_enabled = true
-        - 当前会话未加载其他项目(Q2=B 决策:重复 load 直接拒绝,需先 unload)
+        Args:
+            event: AstrBot 事件对象。
+            directory: 用户提供的项目目录路径。
         """
+        # Delegate to the testable helper so unit tests can exercise the
+        # state-mutation path without depending on the @register decorator.
+        async for msg in self._project_load_impl(event, directory):
+            yield msg
+        return
+
+    async def _project_load_impl(self, event, directory: str):
+        """Implementation of :meth:`project_load`.
+
+        Performs the multi-step project load: feature-flag check, duplicate
+        load guard, path safety, agentsmd init+load, codegraph init+set,
+        records the load into ``self._loaded_projects[umo]``, and finally
+        yields a summary message.
+
+        Args:
+            event: AstrBot 事件对象。
+            directory: 用户提供的项目目录路径。
+
+        Yields:
+            Plain text messages for the user.
+        """
+        umo = event.unified_msg_origin
         # 1. Feature flag 校验
         agentsmd_on = self._config.get("agentsmd_enabled", True)
         codegraph_on = self._config.get("codegraph_enabled", True)
@@ -1119,7 +1199,6 @@ class SPCodeToolkit(star.Star):
             return
 
         # 2. 重复 load 拦截(Q2=B 决策)
-        umo = event.unified_msg_origin
         if umo in self._loaded_projects:
             loaded = self._loaded_projects[umo]
             yield event.plain_result(
@@ -1179,12 +1258,27 @@ class SPCodeToolkit(star.Star):
 
     @project.command("unload")
     async def project_unload(self, event):
-        """/project unload
+        """/project unload(委托给 ``_project_unload_impl``)。
 
-        卸载当前会话已加载的项目:
-        1. /agentsmd unload(清掉 AGENTS.md 注入)
-        2. /codegraph set <codegraph_project>(配置中的默认项目;若未配置则跳过)
-        3. 清空 self._loaded_projects[umo] 状态
+        Args:
+            event: AstrBot 事件对象。
+        """
+        async for msg in self._project_unload_impl(event):
+            yield msg
+        return
+
+    async def _project_unload_impl(self, event):
+        """Implementation of :meth:`project_unload`.
+
+        Unloads the current session's project: feature-flag check, no-op guard,
+        agentsmd unload, codegraph set to default, and finally clears
+        ``self._loaded_projects[umo]``.
+
+        Args:
+            event: AstrBot 事件对象。
+
+        Yields:
+            Plain text messages for the user.
         """
         # 1. Feature flag 校验
         agentsmd_on = self._config.get("agentsmd_enabled", True)
@@ -1222,6 +1316,151 @@ class SPCodeToolkit(star.Star):
             f"  - AGENTS.md 注入已移除\n"
             f"  - codegraph 默认项目已重置"
         )
+
+    @project.command("status")
+    async def project_status(self, event):
+        """/project status(委托给 ``_project_status_impl``)。
+
+        Args:
+            event: AstrBot 事件对象。
+        """
+        async for msg in self._project_status_impl(event):
+            yield msg
+        return
+
+    async def _project_status_impl(self, event):
+        """Implementation of :meth:`project_status`.
+
+        Reads ``self._loaded_projects[umo]`` and yields a human-readable
+        status (with a hidden ``<!--spcode-status:...-->`` payload the
+        dashboard scrapes to render its status panel).
+
+        Args:
+            event: AstrBot 事件对象。
+
+        Yields:
+            Plain text messages for the user.
+        """
+        umo = event.unified_msg_origin
+        info = self._loaded_projects.get(umo)
+        if info is None:
+            yield event.plain_result("📂 当前会话未加载项目")
+            return
+        directory = info.get("directory", "")
+        loaded_at_ts = info.get("loaded_at", 0)
+        loaded_at_str = (
+            _datetime.datetime.fromtimestamp(loaded_at_ts).strftime("%Y-%m-%d %H:%M:%S")
+            if loaded_at_ts
+            else "未知"
+        )
+        yield event.plain_result(
+            f"📂 当前已加载项目\n"
+            f"路径: {directory}\n"
+            f"加载于: {loaded_at_str}\n"
+            f"<!--spcode-status:"
+            f'{{"loaded":true,"directory":"{directory}","loaded_at":{loaded_at_ts}}}-->'
+        )
+
+    def get_loaded_project(self, umo: str) -> dict | None:
+        """Get the loaded project info for a given unified message origin.
+
+        Args:
+            umo: The unified message origin (session key).
+
+        Returns:
+            A dict with `directory` and `loaded_at` keys, or ``None`` if no
+            project is currently loaded for the given ``umo``.
+        """
+        info = self._loaded_projects.get(umo)
+        if info is None:
+            return None
+        # Return a shallow copy so callers cannot mutate internal state.
+        return dict(info)
+
+    async def handle_get_project_status(self) -> dict:
+        """Web API handler for ``GET /spcode/project-status``.
+
+        Query params:
+            umo (optional): the unified message origin to query. When omitted
+                the endpoint returns the most-recently-loaded project across
+                all umos (the dashboard can use this fallback when it does not
+                know its umo).
+
+        Returns:
+            A JSON envelope of the form::
+
+                {
+                    "status": "ok",
+                    "data": {
+                        "loaded": bool,
+                        "directory": str | None,
+                        "loaded_at": float | None,
+                        "umo": str | None,
+                        "all_loaded_count": int
+                    }
+                }
+        """
+        # Late import to avoid circular issues with the plugin module.
+        from astrbot.api import web
+
+        umo: str | None = None
+        try:
+            umo = web.request.query.get("umo") or None
+        except Exception:
+            umo = None
+
+        if umo:
+            info = self._loaded_projects.get(umo)
+            if info is None:
+                return {
+                    "status": "ok",
+                    "data": {
+                        "loaded": False,
+                        "directory": None,
+                        "loaded_at": None,
+                        "umo": umo,
+                        "all_loaded_count": len(self._loaded_projects),
+                    },
+                }
+            return {
+                "status": "ok",
+                "data": {
+                    "loaded": True,
+                    "directory": info.get("directory"),
+                    "loaded_at": info.get("loaded_at"),
+                    "umo": umo,
+                    "all_loaded_count": len(self._loaded_projects),
+                },
+            }
+
+        # No umo provided: return the most-recently-loaded project as a
+        # convenience for callers that don't track umos (e.g. the dashboard).
+        if not self._loaded_projects:
+            return {
+                "status": "ok",
+                "data": {
+                    "loaded": False,
+                    "directory": None,
+                    "loaded_at": None,
+                    "umo": None,
+                    "all_loaded_count": 0,
+                },
+            }
+        # Pick the entry with the largest loaded_at (most recent).
+        recent_umo, recent_info = max(
+            self._loaded_projects.items(),
+            key=lambda item: item[1].get("loaded_at", 0),
+        )
+        return {
+            "status": "ok",
+            "data": {
+                "loaded": True,
+                "directory": recent_info.get("directory"),
+                "loaded_at": recent_info.get("loaded_at"),
+                "umo": recent_umo,
+                "all_loaded_count": len(self._loaded_projects),
+            },
+        }
 
     @codegraph.command("init")
     async def codegraph_init(self, event, directory: str):
@@ -1639,8 +1878,7 @@ class SPCodeToolkit(star.Star):
         # v2.9: 显式拒绝不存在的目录(取消自动 mkdir,避免对路径拼错场景静默创建空目录)
         if not target.exists():
             yield event.plain_result(
-                f"❌ 目录 `{directory}` 不存在。\n"
-                "请先创建该目录,或确认路径是否正确。"
+                f"❌ 目录 `{directory}` 不存在。\n请先创建该目录,或确认路径是否正确。"
             )
             return
         if not target.is_dir():
@@ -1706,8 +1944,7 @@ class SPCodeToolkit(star.Star):
         # "目录存在但缺 AGENTS.md"混为同一个错误消息。
         if not target.exists():
             yield event.plain_result(
-                f"❌ 目录 `{directory}` 不存在。\n"
-                "请先创建该目录,或确认路径是否正确。"
+                f"❌ 目录 `{directory}` 不存在。\n请先创建该目录,或确认路径是否正确。"
             )
             return
         if not target.is_dir():
@@ -2038,16 +2275,16 @@ class SPCodeToolkit(star.Star):
         if self._plan_reminded.get(umo, False):
             return
 
-        reminder_template = (
-            self._config.get("plan_mode_reminder") or ""
-        ).strip()
+        reminder_template = (self._config.get("plan_mode_reminder") or "").strip()
         if not reminder_template:
             # 没配 reminder,标记为已注入(避免每轮检查)
             self._plan_reminded[umo] = True
             return
 
         # 替换 {blocked} 占位符
-        blocked_str = ", ".join(sorted(set(blocked_tools))) if blocked_tools else "(none)"
+        blocked_str = (
+            ", ".join(sorted(set(blocked_tools))) if blocked_tools else "(none)"
+        )
         reminder_text = reminder_template.replace("{blocked}", blocked_str)
         if not reminder_text.lstrip().startswith("<system-reminder>"):
             reminder_text = f"<system-reminder>\n{reminder_text}\n</system-reminder>"
@@ -2064,9 +2301,7 @@ class SPCodeToolkit(star.Star):
                     break
 
         self._plan_reminded[umo] = True
-        logger.debug(
-            f"[plan] 会话 {umo}: 已注入 plan 模式 reminder 到 user message"
-        )
+        logger.debug(f"[plan] 会话 {umo}: 已注入 plan 模式 reminder 到 user message")
 
     @filter.command("plan")
     async def plan(self, event):
