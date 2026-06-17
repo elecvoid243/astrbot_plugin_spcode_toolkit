@@ -35,7 +35,7 @@ from .tools import (
     file_remove,
     todo_list as _todo_list_mod,
 )
-from .tools._helpers import run_sync, unwrap, err_json
+from .tools._helpers import run_cmd, run_sync, unwrap, err_json, detect_console_encoding  # noqa: F401  # run_cmd: 供后续 /spcode/git-diff handler 使用
 from .tools._config_filter import ALL_TOOL_NAMES, filter_enabled_tools
 from .tools._codegraph_mcp import (
     SHELL_META_RE,
@@ -53,6 +53,10 @@ import datetime as _datetime
 
 # 让 main.py 可以动态添加 MethodType
 from collections import defaultdict
+
+# git-diff 端点专用常量(也用于 __init__ 启动期探测)
+MAX_GIT_DIFF_BYTES = 1 * 1024 * 1024  # 1 MB 硬上限
+_GIT_DIFF_ENCODING = detect_console_encoding()  # 进程内一次探测
 
 # inta_shell 组件单例(v2.5: 由 initialize 设置,FunctionTool 通过模块级引用访问)
 _inta_component: LocalInteractiveShellComponent | None = None
@@ -85,6 +89,7 @@ def _record(name: str) -> None:
 
 _DEFAULT_CONFIG = {
     "es_path": "",  # Everything es.exe 路径（Windows）；Linux/macOS 留空
+    "git_path": "",  # git 可执行文件绝对路径;留空走系统 PATH
     "cppcheck_path": "",  # cppcheck.exe 路径（Windows/Linux/macOS）；C/C++ 检查时优先于 cpplint
     "cppcheck_shortcircuit": "error",  # cppcheck 短路策略：error/warning/never（仅 auto 模式生效）
     "codegraph_enabled": True,  # 是否启用 codegraph MCP 集成
@@ -1037,6 +1042,39 @@ class SPCodeToolkit(star.Star):
         if _config.get("codegraph_enabled", True):
             self._codegraph_task = asyncio.create_task(self._bootstrap_codegraph_mcp())
 
+        # ── git 可用性探测 ──
+        # 启动期一次同步探测,缺失不阻塞插件加载(端点注册照常);
+        # 失败仅记 WARNING,用户首次调用 /spcode/git-diff 时会得到
+        # reason="git_unavailable" 的结构化响应。
+        try:
+            import subprocess as _sp
+            _git_probe = _sp.run(
+                [self._git_binary(), "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                encoding=_GIT_DIFF_ENCODING,
+                errors="replace",
+            )
+            if _git_probe.returncode == 0:
+                _first_line = (_git_probe.stdout or "").splitlines()[0] if _git_probe.stdout else "unknown"
+                logger.info(f"[git-diff] detected: {_first_line}")
+            else:
+                logger.warning(
+                    f"[git-diff] git 探测失败(returncode={_git_probe.returncode}, "
+                    f"stderr={(_git_probe.stderr or '').strip()!r})"
+                    " — /spcode/git-diff 端点将不可用。"
+                    " 请安装 git 或在插件配置中设置 git_path。"
+                )
+        except FileNotFoundError:
+            logger.warning(
+                "[git-diff] git 未安装或不在 PATH 中"
+                " — /spcode/git-diff 端点将不可用。"
+                " 请安装 git 或在插件配置中设置 git_path。"
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"[git-diff] 启动期探测异常: {exc!s}")
+
     async def initialize(self) -> None:
         """插件激活（AstrBot 框架在 __init__ 后调用）。
 
@@ -1095,6 +1133,18 @@ class SPCodeToolkit(star.Star):
             else:
                 flat[key] = value
         return flat
+
+    def _git_binary(self) -> str:
+        """解析 git 二进制路径。
+
+        优先级:配置 `git_path` > 默认 `"git"`(走系统 PATH)。
+        空字符串、纯空白都会被规整为 `"git"`。
+
+        Returns:
+            git 可执行文件名或绝对路径。
+        """
+        raw = (self._config.get("git_path") or "git")
+        return raw.strip() or "git"
 
     # ── /codegraph 命令组(AstrBot 规范: 命令组和子命令必须是插件类方法)───
     @filter.command_group("codegraph", alias={"cg"})

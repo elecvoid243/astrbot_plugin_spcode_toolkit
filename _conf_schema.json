@@ -180,5 +180,18 @@
         "default": ""
       }
     }
+  },
+  "git_diff": {
+    "description": "git_diff — /spcode/git-diff 端点配置",
+    "hint": "返回当前会话已载入项目的未暂存 git diff 给本地 dashboard。",
+    "type": "object",
+    "items": {
+      "git_path": {
+        "description": "git 可执行文件绝对路径",
+        "hint": "留空时自动从 PATH 查找 'git'。例如 Windows 自定义安装 'C:\\Program Files\\Git\\bin\\git.exe'。",
+        "type": "string",
+        "default": ""
+      }
+    }
   }
 }
