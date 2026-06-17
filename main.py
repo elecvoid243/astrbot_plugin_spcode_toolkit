@@ -58,6 +58,33 @@ from collections import defaultdict
 MAX_GIT_DIFF_BYTES = 1 * 1024 * 1024  # 1 MB 硬上限
 _GIT_DIFF_ENCODING = detect_console_encoding()  # 进程内一次探测
 
+
+def _make_git_diff_empty_envelope(
+    umo: str | None,
+    reason: str,
+    directory: str | None = None,
+    stderr: str = "",
+    elapsed_ms: int = 0,
+) -> dict:
+    """构造未载入 / 失败路径的响应骨架(对称于 handle_get_project_status 风格)。"""
+    return {
+        "status": "ok",
+        "data": {
+            "loaded": False,
+            "directory": directory,
+            "umo": umo,
+            "reason": reason,
+            "diff": None,
+            "stat": None,
+            "files_changed": [],
+            "truncated": False,
+            "truncated_at_bytes": 0,
+            "max_bytes": MAX_GIT_DIFF_BYTES,
+            "elapsed_ms": elapsed_ms,
+        },
+    }
+
+
 # inta_shell 组件单例(v2.5: 由 initialize 设置,FunctionTool 通过模块级引用访问)
 _inta_component: LocalInteractiveShellComponent | None = None
 _inta_default_cwd: str = ""
@@ -1146,6 +1173,52 @@ class SPCodeToolkit(star.Star):
         raw = (self._config.get("git_path") or "git")
         return raw.strip() or "git"
 
+    @staticmethod
+    def _parse_files_changed(name_status_out: str, numstat_out: str) -> list[dict]:
+        """Inner-join ``git diff --name-status`` (status, path) with
+        ``git diff --numstat`` (add, del, path) on the new path.
+
+        Handles R/C markers (``R100<tab>old<tab>new``, ``C075<tab>src<tab>dst``)
+        by using the *new* path as the join key. Binary files (numstat ``-``/``-``)
+        decode to ``additions=0, deletions=0``.
+        """
+        status_by_path: dict[str, str] = {}
+        for line in name_status_out.splitlines():
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            marker = parts[0]
+            if marker.startswith("R") and len(parts) >= 3:
+                status_by_path[parts[2]] = "R"
+            elif marker.startswith("C") and len(parts) >= 3:
+                status_by_path[parts[2]] = "C"
+            else:
+                status_by_path[parts[1]] = marker[0]  # M / A / D / T
+
+        counts_by_path: dict[str, tuple[int, int]] = {}
+        for line in numstat_out.splitlines():
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            add_raw, del_raw, path = parts[0], parts[1], parts[2]
+            add = 0 if add_raw == "-" else int(add_raw)
+            delete = 0 if del_raw == "-" else int(del_raw)
+            counts_by_path[path] = (add, delete)
+
+        return [
+            {
+                "path": path,
+                "status": status,
+                "additions": counts_by_path.get(path, (0, 0))[0],
+                "deletions": counts_by_path.get(path, (0, 0))[1],
+            }
+            for path, status in status_by_path.items()
+        ]
+
     # ── /codegraph 命令组(AstrBot 规范: 命令组和子命令必须是插件类方法)───
     @filter.command_group("codegraph", alias={"cg"})
     def codegraph(self):
@@ -1512,6 +1585,138 @@ class SPCodeToolkit(star.Star):
                 "loaded_at": recent_info.get("loaded_at"),
                 "umo": recent_umo,
                 "all_loaded_count": len(self._loaded_projects),
+            },
+        }
+
+    async def handle_get_git_diff(self) -> dict:
+        """Web API handler for ``GET /spcode/git-diff``.
+
+        Returns a JSON envelope of the form::
+
+            {
+                "status": "ok",
+                "data": {
+                    "loaded": bool,
+                    "directory": str | None,
+                    "umo": str | None,
+                    "diff": str | None,
+                    "stat": str | None,
+                    "files_changed": [{"path", "status", "additions", "deletions"}],
+                    "truncated": bool,
+                    "truncated_at_bytes": int,
+                    "max_bytes": int,
+                    "elapsed_ms": int,
+                    "reason": str | None
+                }
+            }
+
+        The endpoint is only "valid" (loaded=True) when:
+          - agentsmd_enabled AND codegraph_enabled are both true
+          - A project is loaded for the requested (or most-recent) umo
+          - The loaded directory still exists and is a git repository
+        Otherwise returns ``loaded=False`` with a structured ``reason`` code.
+        """
+        t0 = _time.time()
+        from astrbot.api import web
+        umo: str | None = None
+        try:
+            umo = web.request.query.get("umo") or None
+        except Exception:
+            umo = None
+
+        git_bin = self._git_binary()
+
+        def _elapsed() -> int:
+            return int((_time.time() - t0) * 1000)
+
+        # 1. Feature flag 校验
+        if not (self._config.get("agentsmd_enabled", True)
+                and self._config.get("codegraph_enabled", True)):
+            return _make_git_diff_empty_envelope(
+                umo=umo, reason="feature_disabled", elapsed_ms=_elapsed())
+
+        # 2. umo 解析与回退
+        if umo:
+            info = self._loaded_projects.get(umo)
+        else:
+            if not self._loaded_projects:
+                info = None
+            else:
+                _, info = max(self._loaded_projects.items(),
+                              key=lambda kv: kv[1].get("loaded_at", 0))
+
+        if info is None:
+            return _make_git_diff_empty_envelope(
+                umo=umo, reason="no_project_loaded", elapsed_ms=_elapsed())
+
+        directory = info.get("directory", "")
+
+        # 3. 目录存在性
+        if not Path(directory).is_dir():
+            return _make_git_diff_empty_envelope(
+                umo=umo, reason="directory_missing", directory=directory,
+                elapsed_ms=_elapsed())
+
+        # 4. Git 仓库探测
+        probe = await run_sync(
+            run_cmd,
+            [git_bin, "-C", directory, "rev-parse", "--is-inside-work-tree"],
+            encoding=_GIT_DIFF_ENCODING,
+        )
+        if not probe["ok"]:
+            combined = (probe.get("stderr", "") + probe.get("error", "")).lower()
+            if "not a git repository" in combined:
+                return _make_git_diff_empty_envelope(
+                    umo=umo, reason="not_a_git_repo", directory=directory,
+                    elapsed_ms=_elapsed())
+            if "未安装" in probe.get("error", ""):
+                return _make_git_diff_empty_envelope(
+                    umo=umo, reason="git_unavailable", directory=directory,
+                    elapsed_ms=_elapsed())
+            return _make_git_diff_empty_envelope(
+                umo=umo, reason="git_error", directory=directory,
+                stderr=probe.get("stderr", "") or probe.get("error", ""),
+                elapsed_ms=_elapsed())
+
+        # 5. 并发收集 diff 三件套 + raw
+        git_prefix = [git_bin, "-C", directory, "-c", "color.ui=never"]
+        raw_result, name_status_result, numstat_result, stat_result = await asyncio.gather(
+            run_sync(run_cmd, git_prefix + ["diff"], encoding=_GIT_DIFF_ENCODING),
+            run_sync(run_cmd, git_prefix + ["diff", "--name-status"], encoding=_GIT_DIFF_ENCODING),
+            run_sync(run_cmd, git_prefix + ["diff", "--numstat"], encoding=_GIT_DIFF_ENCODING),
+            run_sync(run_cmd, git_prefix + ["diff", "--stat"], encoding=_GIT_DIFF_ENCODING),
+        )
+
+        if not raw_result["ok"]:
+            return _make_git_diff_empty_envelope(
+                umo=umo, reason="git_error", directory=directory,
+                stderr=raw_result.get("stderr", ""),
+                elapsed_ms=_elapsed())
+
+        # 6. 截断与解析
+        raw = raw_result["stdout"]
+        truncated = len(raw) > MAX_GIT_DIFF_BYTES
+        diff = raw[:MAX_GIT_DIFF_BYTES]
+        files_changed = self._parse_files_changed(
+            name_status_result.get("stdout", ""),
+            numstat_result.get("stdout", ""),
+        )
+        stat = stat_result["stdout"] if stat_result.get("ok") else ""
+
+        return {
+            "status": "ok",
+            "data": {
+                "loaded": True,
+                "directory": directory,
+                "umo": umo,
+                "diff": diff,
+                "stat": stat,
+                "files_changed": files_changed,
+                "truncated": truncated,
+                "truncated_at_bytes": MAX_GIT_DIFF_BYTES if truncated else 0,
+                "max_bytes": MAX_GIT_DIFF_BYTES,
+                "elapsed_ms": _elapsed(),
+                "reason": None,
             },
         }
 
