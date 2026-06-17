@@ -1193,8 +1193,8 @@ class SPCodeToolkit(star.Star):
         codegraph_on = self._config.get("codegraph_enabled", True)
         if not (agentsmd_on and codegraph_on):
             yield event.plain_result(
-                "❌ /project 命令要求 agentsmd_enabled 和 codegraph_enabled 都为 true。\n"
-                "请在插件配置中启用这两项后重启 AstrBot。"
+                "❌ /project 命令需要先启用 codegraph 和 AGENTS.md 功能。\n"
+                "请在插件配置中打开这两项后再试一次。"
             )
             return
 
@@ -1241,19 +1241,19 @@ class SPCodeToolkit(star.Star):
             yield msg
 
         # 6. 记录状态(必须最后,即使前面步骤失败也记录以便 unload 清理)
+        loaded_at_ts = _time.time()
         self._loaded_projects[umo] = {
             "directory": str(target),
-            "loaded_at": _time.time(),
+            "loaded_at": loaded_at_ts,
         }
 
-        # 7. 步骤 3/3 汇总
         yield event.plain_result(
             f"✅ 项目已加载: {target}\n"
             f"已自动进行如下步骤:\n"
             f"  - 设定工作目录\n"
             f"  - AGENTS.md 注入到 system_prompt\n"
             f"  - 载入 codegraph 索引\n"
-            f"\n若要卸载，请执行`/project unload`"
+            f"\n若要卸载，请执行`/project unload`\n"
         )
 
     @project.command("unload")
@@ -1285,7 +1285,8 @@ class SPCodeToolkit(star.Star):
         codegraph_on = self._config.get("codegraph_enabled", True)
         if not (agentsmd_on and codegraph_on):
             yield event.plain_result(
-                "❌ /project 命令要求 agentsmd_enabled 和 codegraph_enabled 都为 true。"
+                "❌ /project 命令需要先启用 codegraph 和 AGENTS.md 功能。\n"
+                "请在插件配置中打开这两项后再试一次。"
             )
             return
 
@@ -1314,7 +1315,7 @@ class SPCodeToolkit(star.Star):
         yield event.plain_result(
             f"✅ 项目已卸载: {info['directory']}\n"
             f"  - AGENTS.md 注入已移除\n"
-            f"  - codegraph 默认项目已重置"
+            f"  - codegraph 默认项目已重置\n"
         )
 
     @project.command("status")
@@ -1332,8 +1333,12 @@ class SPCodeToolkit(star.Star):
         """Implementation of :meth:`project_status`.
 
         Reads ``self._loaded_projects[umo]`` and yields a human-readable
-        status (with a hidden ``<!--spcode-status:...-->`` payload the
-        dashboard scrapes to render its status panel).
+        status for the chat response. The authoritative state used by the
+        dashboard's spcode chip is exposed separately via
+        :meth:`handle_get_project_status` (mounted at
+        ``GET /spcode/project-status``) — that endpoint is the single
+        source of truth for the dashboard; the chat response is plain
+        text and intentionally does NOT carry any hidden marker.
 
         Args:
             event: AstrBot 事件对象。
@@ -1357,8 +1362,6 @@ class SPCodeToolkit(star.Star):
             f"📂 当前已加载项目\n"
             f"路径: {directory}\n"
             f"加载于: {loaded_at_str}\n"
-            f"<!--spcode-status:"
-            f'{{"loaded":true,"directory":"{directory}","loaded_at":{loaded_at_ts}}}-->'
         )
 
     def get_loaded_project(self, umo: str) -> dict | None:

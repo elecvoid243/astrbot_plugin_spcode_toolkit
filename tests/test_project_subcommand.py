@@ -114,7 +114,7 @@ def test_project_status_reports_loaded_project(plugin):
     # The directory is resolved via Path.resolve(), which on Windows turns
     # "/tmp/y" into "<Drive>:\\tmp\\y". Assert against the resolved form.
     assert str(Path("/tmp/y").resolve()) in text
-    assert "spcode-status" in text  # the hidden JSON marker for the dashboard
+    assert "spcode-status" not in text
 
 
 def test_project_status_reports_unloaded(plugin):
