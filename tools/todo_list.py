@@ -18,6 +18,8 @@ todo_list — LLM Agent 自我管理的 todo list 工具。
 
 MAX_ITEMS = 100
 MAX_FILE_SIZE = 1024 * 1024  # 1MB
+MAX_IMPORT_BYTES = MAX_FILE_SIZE  # 1MB 别名,语义清晰。
+                                  # 有意与 MAX_FILE_SIZE 共享上限值——任一变化须同步评估。
 MAX_FILENAME_LEN = 200
 ILLEGAL_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
@@ -58,6 +60,83 @@ def extract_sender_key(event) -> str:
         except Exception:
             pass
     return f"{platform or 'unknown'}:{sender_id}"
+
+
+def import_from_path(path: str) -> tuple[list[dict], str, str]:
+    """读 .md todo 文件 → 返回 (items, parsed_title, error).
+
+    - 成功: error == ""，items 长度 ≥ 1
+    - 失败: items == [], error 非空(供工具层转 {"ok": False, "error": ...})
+
+    校验链(按顺序短路返回,见 spec §"设计 1"):
+    1. 类型      → 必须是 str
+    2. 绝对路径  → Path.is_absolute()
+    3. 存在性    → Path.exists()
+    4. 是文件    → Path.is_file()
+    5. stat      → p.stat() 不抛
+    6. 大小      → size <= MAX_IMPORT_BYTES
+    7. 读取      → Path.read_text(encoding="utf-8")
+    8. 解析      → parse_md(text)
+    9. 非空      → data["items"] 至少 1 个
+
+    Note: 不做 sender_key 重写 / ID 重排 / title 覆盖 — 全部透传给 TodoStore.create()。
+    """
+    # 1. 类型
+    if not isinstance(path, str):
+        return [], "", "from_path 必须是字符串路径"
+
+    # 2. 绝对路径
+    p = Path(path)
+    if not p.is_absolute():
+        return [], "", f"路径必须是绝对路径: {path}"
+
+    # 3. 存在性
+    if not p.exists():
+        return [], "", f"文件不存在: {path}"
+
+    # 4. 是文件
+    if not p.is_file():
+        return [], "", f"不是文件: {path}"
+
+    # 5. stat
+    try:
+        size = p.stat().st_size
+    except OSError as e:
+        return [], "", f"stat 失败: {e}"
+
+    # 6. 大小上限
+    if size > MAX_IMPORT_BYTES:
+        return (
+            [],
+            "",
+            (
+                f"文件过大: {size} bytes (上限 {MAX_IMPORT_BYTES} bytes). "
+                f"请精简后重试"
+            ),
+        )
+
+    # 7. 读取
+    try:
+        text = p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        return [], "", f"读取失败: {e}"
+
+    # 8. 解析
+    try:
+        data = parse_md(text)
+    except Exception as e:
+        return [], "", f"parse 失败: {e}"
+
+    # 9. 非空
+    items = data.get("items", [])
+    if not items:
+        return (
+            [],
+            "",
+            "解析成功但未找到任何 item (文件可能不含 [ ] / [x] / [~] / [-] checkbox)",
+        )
+
+    return items, data.get("title", ""), ""
 
 
 def build_filename(sender_key: str, when: datetime | None = None) -> str:

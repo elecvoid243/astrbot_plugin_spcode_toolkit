@@ -1339,3 +1339,47 @@ def test_modify_delete_rollback_on_missing_id(tmp_path: Path):
 # - test_update_clear_notes_*          → 替换为 test_update_batch_clear_notes
 # - test_delete_with_zero_item_id_*    → 替换为 test_delete_no_longer_handles_zero_sentinel
 # impl_t4 标记: 9 个新测试追加, 时间 2026-06-13 15:05 (CST)
+
+
+# ── v2.9 import_from_path (新增) ──────────────────────
+
+
+def _write_md(tmp_path: Path, content: str, name: str = "plan.md") -> Path:
+    """Helper: 写一个 .md 文件到 tmp_path,返回绝对路径。"""
+    p = tmp_path / name
+    p.write_text(content, encoding="utf-8")
+    return p
+
+
+_SAMPLE_PLAN_MD = """\
+---
+sender_key: webchat:astrbot
+platform: webchat
+sender_id: "astrbot"
+title: 测试计划
+created_at: 2026-06-18T10:00:00
+updated_at: 2026-06-18T10:00:00
+---
+
+# 测试计划
+
+- [ ] **(1)** 设计 API
+- [x] **(2)** 写文档 *(已完成 README)*
+- [~] **(3)** 实现功能 *(进行中)*
+- [-] **(4)** 旧功能 *(已取消)*
+"""
+
+
+def test_import_from_path_happy_path(tmp_path: Path):
+    """正常 .md 文件 → 返回 4 个 items + title + 空 error."""
+    p = _write_md(tmp_path, _SAMPLE_PLAN_MD)
+    items, title, err = todo_list.import_from_path(str(p))
+    assert err == "", f"unexpected error: {err}"
+    assert title == "测试计划"
+    assert len(items) == 4
+    # 状态全部解析正确
+    statuses = [it["status"] for it in items]
+    assert statuses == ["pending", "done", "in_progress", "cancelled"]
+    # notes 解析正确
+    assert items[1]["notes"] == "已完成 README"
+    assert items[2]["notes"] == "进行中"
