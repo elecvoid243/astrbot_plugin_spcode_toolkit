@@ -153,6 +153,17 @@ A codegraph project is loaded. When dealing with the code for this project:
 """
 
 
+# astrbot_file_remove_tool 启用时注入到 system_prompt 末尾的指引。
+# 设计目标:让 LLM 优先使用 file_remove 工具(自带路径安全 + 回收站)而非绕过。
+# 无 session state 依赖——只靠 self._tool_names 作为 gate。
+_FILE_REMOVE_GUIDANCE_MARKER = "[ASTRBOT_FILE_REMOVE_TOOL_GUIDANCE]"
+
+_FILE_REMOVE_GUIDANCE = f"""
+{_FILE_REMOVE_GUIDANCE_MARKER}
+优先使用 `astrbot_file_remove_tool` 进行文件或目录删除,不要用 shell 命令(如 `rm`/`del`)或 Python 调用绕过它。
+"""
+
+
 # ── Tool 类定义 ──────────────────────────────────────
 
 
