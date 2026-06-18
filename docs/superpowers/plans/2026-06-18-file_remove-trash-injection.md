@@ -160,6 +160,7 @@ pytest tests/test_file_remove.py::test_remove_single_file -v
 FAILED tests/test_file_remove.py::test_remove_single_file
 AttributeError: module 'tools.file_remove' has no attribute 'send2trash'
 ```
+(或 `'SPCodeToolkit' object has no attribute '_file_remove_inject_guidance'`,先跑 Task 2.3 测试时遇到的错误信息)
 
 - [ ] **Step 5: 实现 send2trash 改造(单文件路径)**
 
