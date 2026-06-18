@@ -59,7 +59,7 @@ def test_remove_dir_requires_confirm(tmp_path: Path):
 # ── 3. 目录删除已确认 → 成功 ─────────────────────────
 
 
-def test_remove_dir_with_confirm(tmp_path: Path):
+def test_remove_dir_with_confirm(tmp_path: Path, _mock_send2trash):
     d = tmp_path / "dir"
     d.mkdir()
     (d / "a").write_text("x", encoding="utf-8")
@@ -67,7 +67,7 @@ def test_remove_dir_with_confirm(tmp_path: Path):
     r = file_remove.remove(str(d), confirm=True)
     assert r["ok"] is True
     assert r["deleted"] == 2
-    assert d.exists() is False
+    _mock_send2trash.send2trash.assert_called_once_with(str(d))
 
 
 # ── 4. 系统目录拦截 ──────────────────────────────────

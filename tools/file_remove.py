@@ -5,7 +5,6 @@ file_remove — 文件/目录删除工具。
 
 from __future__ import annotations
 
-import os
 import send2trash
 from pathlib import Path
 
@@ -165,7 +164,10 @@ def remove(
         except PermissionError:
             return {"ok": False, "error": f"无权限移入回收站: {path}"}
         except OSError as e:
-            return {"ok": False, "error": f"回收站不可用: {e}。请确认系统已安装 trash-cli (Linux) 或回收站服务可用。"}
+            return {
+                "ok": False,
+                "error": f"回收站不可用: {e}。请确认系统已安装 trash-cli (Linux) 或回收站服务可用。",
+            }
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -182,7 +184,6 @@ def remove(
         # 单次遍历：统计文件数和总大小
         file_count = 0
         total_size = 0
-        deleted_paths: list[str] = []
         for f in p.rglob("*"):
             if f.is_file():
                 file_count += 1
@@ -200,35 +201,24 @@ def remove(
                 options=["confirm_batch_delete", "cancel"],
             )
 
-        errors: list[dict] = []
+        # 单次原子调用 send2trash（系统回收站）
         try:
-            for root, dirs, files in os.walk(p, topdown=False, followlinks=False):
-                for name in files:
-                    fp = os.path.join(root, name)
-                    try:
-                        os.remove(fp)
-                        deleted_paths.append(fp)
-                    except OSError as e:
-                        errors.append({"path": fp, "reason": str(e)})
-                for name in dirs:
-                    dp = os.path.join(root, name)
-                    try:
-                        os.rmdir(dp)
-                    except OSError as e:
-                        errors.append({"path": dp, "reason": str(e)})
-            try:
-                os.rmdir(p)
-            except OSError as e:
-                errors.append({"path": str(p), "reason": str(e)})
-
+            send2trash.send2trash(str(p))
             return {
                 "ok": True,
-                "deleted": file_count - len(errors),
+                "deleted": file_count,
                 "freed": _human_size(total_size),
-                "deleted_paths": deleted_paths[:10],
-                "errors": errors[:10],
             }
+        except FileNotFoundError:
+            return {"ok": False, "error": f"路径不存在: {path}"}
+        except PermissionError:
+            return {"ok": False, "error": f"无权限移入回收站: {path}"}
         except OSError as e:
+            return {
+                "ok": False,
+                "error": f"回收站不可用: {e}。请确认系统已安装 trash-cli (Linux) 或回收站服务可用。",
+            }
+        except Exception as e:
             return {"ok": False, "error": str(e)}
 
     return {"ok": False, "error": f"不是文件也不是目录: {path}"}
