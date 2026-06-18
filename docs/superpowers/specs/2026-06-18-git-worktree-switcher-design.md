@@ -252,19 +252,21 @@ if common_primary != common_requested:
    ↓
 5. 读 ?worktree query param（trim 后空 → 视同缺省）
    ↓
-6. 若 worktree 提供：
-   ① length & format 检查（≤4096 字符；不含 `..`）
+6. 若 worktree 提供（trim 后非空）：
+   ① length & format 检查（≤4096 字符；不含 `..` 段）
       失败 → reason="worktree_path_invalid"
-   ② Path.resolve() 解析 symlink（防御 §5.2 row 9）
-   ③ _is_path_safe 黑名单检查
+   ② **worktree_resolved = Path.resolve(worktree)**
+      解析 symlink / 相对路径 / 驱动器号，**后续 ③-⑥ 全部用 worktree_resolved**
+      （防御 §5.2 row 9：防 `/safe` → `/unsafe` 的 symlink 绕过黑名单）
+   ③ _is_path_safe(worktree_resolved) 黑名单检查
       失败 → reason="worktree_path_unsafe"
-   ④ Path.is_dir() 检查
+   ④ Path(worktree_resolved).is_dir() 检查
       失败 → reason="worktree_missing"
-   ⑤ git rev-parse --is-inside-work-tree (在 worktree 上)
+   ⑤ git -C worktree_resolved rev-parse --is-inside-work-tree
       失败 → reason="not_a_git_repo"
-   ⑥ git-common-dir 解析后与 primary 比对（§2.3 的 abs-path 算法）
+   ⑥ _resolve_git_common_dir(git_bin, worktree_resolved) 与 primary 比对（§2.3 abs-path 算法）
       不一致 → reason="worktree_not_in_repo"
-   全过则 resolved_worktree = worktree
+   全过则 resolved_worktree = worktree_resolved
    ↓
 7. resolved_worktree 缺省 → 用 primary
 8. git_prefix = [git_bin, "-C", resolved_worktree, "-c", "color.ui=never"]
@@ -468,7 +470,7 @@ export interface SpcodeGitWorktreesRawResponse {
 
 | 触发事件 | selectedWorktree | worktrees | 备注 |
 |----------|------------------|-----------|------|
-| Sidebar 首次打开 | `null` → primary.path | 已加载 | 1 次额外 fetch（accept） |
+| Sidebar 首次打开 | `null` → primary.path | 已加载 | 顺序流程（§3.4），0 重复 fetch |
 | 用户切到 worktree B | B | 不变 | watch → composable 自动 fetch B |
 | 用户按 Refresh 按钮 | 不变 | reload | `onManualRefresh` 并行打 2 个 endpoint（见 §3.4） |
 | `/project load newPath` | `null` → newPrimary | reload | directory watch 触发 |
@@ -647,7 +649,7 @@ detached SHA 的 tooltip 不需要 i18n——是技术数据。
 
 | # | 场景 | 预期 |
 |---|------|------|
-| 1 | 首次打开 sidebar | `selectedWorktree=null` → fetch primary diff；worktrees 返回后设置 `selectedWorktree=primary.path`（1 次重复 fetch，**accept**） |
+| 1 | 首次打开 sidebar | 顺序流程（§3.4）：`wt.refresh()` → set primary → `composable.refresh()`。0 重复 fetch |
 | 2 | 用户快速切换 tab A→B→A | 前一次 fetch 被 `abortController.abort()` 取消；最终状态一致 |
 | 3 | 切换 tab 中途关闭 sidebar | `dispose()` 取消所有 in-flight 请求；停止 polling |
 | 4 | 切换 tab 中途 `/project load` 新路径 | directory watch 触发 → `selectedWorktree=null` → 新 worktrees 加载 → 重新选 primary |
@@ -818,7 +820,7 @@ i18n 文本（4 locale × 4 键 = 16 条）:
 
 **核心不变量**（再次强调，避免实现时漂移）:
 1. `_loaded_projects` 永不被新代码修改（Q1=A）
-2. **`handle_get_git_diff` 内所有 git subprocess 调用都用 `encoding="utf-8"`**（覆盖上一轮 fix 改动的 5 处：line 1750 探测 + line 1796-1799 四个 diff 调用）。**模块级 `_GIT_DIFF_ENCODING = detect_console_encoding()` 常量保持不变**（仅被 `__init__` 启动期 `git --version` 探测使用，输出 ASCII 不受影响）。注意不要在本次实现中"顺手"删常量或改默认值
+2. **`handle_get_git_diff` 内所有 git subprocess 调用都用 `encoding="utf-8"`**（覆盖上一轮 fix 改动的 5 处：line 1750-1751 探测 + line 1788-1791 四个 diff 调用）。**模块级 `_GIT_DIFF_ENCODING = detect_console_encoding()` 常量保持不变**（仅被 `__init__` 启动期 `git --version` 探测使用，输出 ASCII 不受影响）。注意不要在本次实现中"顺手"删常量或改默认值
 3. worktree list 永远从 **primary 的 git dir** 派生（保证同一份 git 仓库的工作树集合）
 4. diff 永远只 poll **激活的** worktree（Q5=A）
 5. 默认选中 = **primary**（Q3=A，无持久化）
@@ -932,8 +934,9 @@ describe('GitDiffSidebar with worktree tabs', () => {
 | `tools/_helpers.py` | 可能微调 | ±5 行（若要抽出 worktree parser） |
 | `tests/test_git_worktrees.py` | 新增 | +150 行 |
 | `tests/test_git_diff.py` | 修改 | +100 行（worktree 扩展测试） |
-| `_conf_schema.json` | 注释 | +3 行 |
 | `docs/superpowers/specs/2026-06-18-...` | 新增 | 本文件 |
+
+> 注：§6.6 已明确：纯 endpoint 改动，**无新 config 字段**，`_conf_schema.json` 不修改。
 
 ### dashboard 仓库
 
