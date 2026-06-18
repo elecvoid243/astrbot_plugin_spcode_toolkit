@@ -69,14 +69,28 @@ except OSError as e:
 - 删除改为单次 `send2trash.send2trash(str(p))`
 - 返回结构简化为 `{ok, deleted, freed}`，移除 `deleted_paths` / `errors`
 
-**错误处理矩阵**:
+**错误处理矩阵**(实现时**必须**按 MRO 顺序:子类先于父类):
 
 | 异常 | 触发条件 | 返回 |
 |------|---------|------|
-| `FileNotFoundError` / `send2trash.NotFoundError` | 文件已不存在 | `{"ok": False, "error": "路径不存在: {path}"}`（与现状一致） |
+| `FileNotFoundError` | 文件已不存在 | `{"ok": False, "error": "路径不存在: {path}"}`（与现状一致） |
 | `PermissionError` | 无权限送回收站 | `{"ok": False, "error": "无权限移入回收站: {path}"}` |
 | `OSError` / `send2trash.TrashPermissionError` | Linux 缺 trash-cli / 服务不可用 | `{"ok": False, "error": "回收站不可用: {原因}。请确认系统已安装 trash-cli (Linux) 或回收站服务可用。"}` |
 | 其他 `Exception` | 兜底 | `{"ok": False, "error": str(e)}` |
+
+实现伪代码(示例):
+```python
+try:
+    send2trash.send2trash(str(p))
+except FileNotFoundError:   # 子类必须先于 OSError
+    return {"ok": False, "error": f"路径不存在: {path}"}
+except PermissionError:     # 子类先于 OSError
+    return {"ok": False, "error": f"无权限移入回收站: {path}"}
+except OSError as e:        # 兜底父类,涵盖 TrashPermissionError
+    return {"ok": False, "error": f"回收站不可用: {e}。请确认系统已安装 trash-cli (Linux) 或回收站服务可用。"}
+except Exception as e:
+    return {"ok": False, "error": str(e)}
+```
 
 **路径校验顺序不变**: `..` → UNC/`\\?\` → 系统黑名单 → 用户黑名单 → `exists()`。回收站失败在最后一步捕获。
 
@@ -132,7 +146,7 @@ async def _file_remove_inject_guidance(self, event, req: ProviderRequest):
 
 **注册位置**: 与现有 `filter.on_llm_request()` 装饰的方法并列（在 `_project_inject_codegraph_guidance` 附近）。
 
-**为什么用 `self._tool_names`**: 该属性在 `main.py` 的"工具注册"段（line ~1097 附近）已根据 `enabled_tools` 配置初始化为 set — 启用的工具在集合内，未启用不在。是注入是否生效的唯一权威源。
+**为什么用 `self._tool_names`**: 该属性在 `main.py` 的"工具注册"段(line ~1104 附近)已根据 `enabled_tools` 配置初始化为 set — 启用的工具在集合内,未启用不在。是注入是否生效的唯一权威源。**无需新增 feature flag**——`enabled_tools` 即 gate,避免双重配置源。
 
 **与现有注入钩子的关系**:
 - `_agentsmd_inject_to_llm_request` — 依赖 session state（"已加载 AGENTS.md"），不同语义，本钩子不依赖
@@ -171,14 +185,24 @@ FileRemoveTool.call → file_remove.remove(...)
 
 #### 5.1 更新 `tests/test_file_remove.py` 现有用例
 
-**改动原则**: 所有"删除成功"的用例不再断言 `p.exists() is False`，改为断言 `send2trash.send2trash` 被以正确参数调用（mock）。
+**改动原则**: **所有产生成功返回 (`r["ok"] is True`) 的用例必须 mock `send2trash.send2trash`**,否则会把 `tmp_path` 下的真实测试文件送入系统回收站(CI 污染 + 部分容器无回收站直接报错)。
 
-具体：
-- `test_remove_single_file`: `monkeypatch.setattr("tools.file_remove.send2trash")`，断言 `mock.called_with(str(f))`，**不再**断言 `f.exists()`。
-- `test_remove_dir_with_confirm`: 断言 mock 被以 `str(d)` 调用；断言 `r["ok"] is True` 和 `r["deleted"] == 2`（file_count 统计仍真实执行）。
-- `test_remove_blocks_system_dir`: 路径在校验阶段拦截，**send2trash 不应被调用**（加 `mock.assert_not_called()`）。
-- `test_remove_dir_requires_confirm`: 同样不应触发 send2trash。
-- 新增 `test_remove_returns_error_when_trash_fails`: mock `send2trash.send2trash` 抛 `OSError("trash-cli not found")`，断言 `r["ok"] is False` 且 error 提示"回收站不可用"。
+**受影响用例清单**(共 5 个,line 编号基于 `tests/test_file_remove.py`):
+- `test_remove_single_file` (line 23)
+- `test_remove_dir_with_confirm` (line 47)
+- `test_remove_user_blacklist_empty_allows` (line 185)
+- `test_remove_user_blacklist_none_allows` (line 194)
+- `test_remove_user_blacklist_unrelated_allows` (line 203)
+
+mock 方式统一为 `monkeypatch.setattr(file_remove, "send2trash", mock_send2trash)`,断言 `mock_send2trash.send2trash.assert_called_once_with(str(p))`,**不再**断言 `p.exists() is False`(回收站不在原路径)。
+
+**未受影响的用例**(路径在校验阶段拦截,send2trash 不应被调用,新增 `mock.assert_not_called()` 断言):系统黑名单、`..`/UNC 拦截、用户黑名单、目录 confirm/proposal 路径等全部保留原行为,仅加 `mock.assert_not_called()`。
+
+**推荐实现**:在 `tests/test_file_remove.py` 顶部加 `pytest.fixture(autouse=True)`,**对所有用例默认 monkeypatch `send2trash` 为 MagicMock**,然后成功路径用例用 `mock_send2trash.send2trash.assert_called_once_with(...)` 做断言。这样无需逐个手工 mock,但显式断言保留。
+
+新增 `test_remove_returns_error_when_trash_fails`:让 mock `send2trash.send2trash` 抛 `OSError("trash-cli not found")`,断言 `r["ok"] is False` 且 error 提示"回收站不可用"。
+
+**`_tool_names` 注入要求**: 现有 `tests/test_project_cmd.py::_make_plugin` 不初始化 `plugin._tool_names`(因为该测试不需要)。新测试文件不得直接复用该 helper(否则 `AttributeError`)。**方案 A**(推荐):在 `tests/test_file_remove_injection.py` 内自己定义一个最小 `_make_plugin` helper,显式 `plugin._tool_names = {"astrbot_file_remove_tool"}` 或 `set()`,与 project_cmd 测试解耦。
 
 #### 5.2 新增 `tests/test_file_remove_injection.py`
 
@@ -188,7 +212,7 @@ FileRemoveTool.call → file_remove.remove(...)
 3. `test_inject_idempotent` — 同一 req 多次走钩子不重复
 4. `test_inject_handles_none_system_prompt` — `system_prompt = None` 时正确初始化
 
-不引入新 fixture，复用 `tests/test_project_cmd.py::_make_plugin` 风格的 helper（或抽到 `tests/conftest.py`）。
+`_make_plugin` helper 在本文件内自包含(详见 §5.1 "_tool_names 注入要求" 方案 A)。
 
 ### 6. 验收标准
 
@@ -205,6 +229,7 @@ FileRemoveTool.call → file_remove.remove(...)
 | 风险 | 缓解 |
 |------|------|
 | Linux 主机未装 trash-cli → send2trash 抛 `OSError` | 返回明确 error 给 LLM（设计 1. 错误矩阵），不 fallback 到 `os.remove`（用户明确禁止） |
+| `file_remove` 返回字段删减 (`deleted_paths[:10]` / `errors[:10]`) | 旧依赖此字段的 LLM prompt / 外部脚本需同步更新;但 `deleted` / `freed` 保留,核心信息无损 |
 | 验收脚本 `pytest tests/` 全跑时遇到 codegraph MCP 不可用 | `codegraph_*` 相关脚本可单独 skip / xfail；不阻塞本特性验收 |
 | 同一文件被 send2trash 两次（罕见但可能：LLM 重试） | 第二次会抛 `FileNotFoundError` → `{"ok": False, "error": "路径不存在: ..."}`，LLM 看到后停止重试 |
 | `_tool_names` 是 set 而非 list，对 in 检查 OK | 不需要额外类型处理 |
@@ -219,7 +244,7 @@ FileRemoveTool.call → file_remove.remove(...)
 ## 变更文件清单
 
 - `requirements.txt` — 新增 `send2trash`
-- `tools/file_remove.py` — `os.remove` / `os.rmdir` → `send2trash.send2trash`，目录返回结构精简，错误处理矩阵扩展
+- `tools/file_remove.py` — `os.remove` / `os.rmdir` → `send2trash.send2trash`,目录返回结构精简,错误处理矩阵扩展;模块 docstring "执行" 改为 "送入回收站"
 - `main.py` — `FileRemoveTool.description` 末尾追加回收站说明；新增 `_FILE_REMOVE_GUIDANCE_MARKER` / `_FILE_REMOVE_GUIDANCE` 常量与 `_file_remove_inject_guidance` 钩子
 - `tests/test_file_remove.py` — 现有用例改 mock 风格；新增 `test_remove_returns_error_when_trash_fails`
 - `tests/test_file_remove_injection.py` — 新增，4 个用例
