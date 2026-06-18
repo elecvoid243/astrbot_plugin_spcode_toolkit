@@ -1452,3 +1452,79 @@ def test_import_from_path_non_utf8_bytes(tmp_path: Path):
     items, _, err = todo_list.import_from_path(str(p))
     assert items == []
     assert "读取失败" in err
+
+
+def test_import_from_path_symlink_to_valid_md(tmp_path: Path):
+    """软链接指向合法 .md → 正常 adopt(证明 read-only 契约对 symlink 目标成立)。
+
+    Windows: 软链接需 admin/Developer Mode,在普通用户下不可用 → skip。
+    POSIX: 应正常通过。
+    """
+    if sys.platform == "win32":
+        import pytest
+
+        pytest.skip("Windows symlink requires admin / Developer Mode")
+    real = _write_md(tmp_path, _SAMPLE_PLAN_MD, name="real.md")
+    link = tmp_path / "link.md"
+    link.symlink_to(real)
+    items, title, err = todo_list.import_from_path(str(link))
+    assert err == ""
+    assert title == "测试计划"
+    assert len(items) == 4
+
+
+def test_import_from_path_no_frontmatter_no_h1_uses_untitled(tmp_path: Path):
+    """无 frontmatter 无 H1,只有 checkbox → title == 'Untitled' (parse_md 默认值)。"""
+    p = _write_md(tmp_path, "- [ ] **(1)** 一个任务\n- [x] **(2)** 另一个 *(完成)*\n")
+    items, title, err = todo_list.import_from_path(str(p))
+    assert err == ""
+    assert title == "Untitled"
+    assert len(items) == 2
+
+
+def test_import_from_path_preserves_parsed_ids(tmp_path: Path):
+    """有 ID 缺口的 items (1, 2, 5) — 透传原始 ID(不重排),重排由 create() 完成。"""
+    md = "- [ ] **(1)** a\n- [ ] **(2)** b\n- [ ] **(5)** gap\n"
+    p = _write_md(tmp_path, md)
+    items, _, err = todo_list.import_from_path(str(p))
+    assert err == ""
+    assert [it["id"] for it in items] == [1, 2, 5]
+
+
+# ── adopt contract: 锁住 TodoStore.create() 的领养语义 ──
+# 未来如果 create() 改了重排 ID / 写当前 sender_key / now() 时间戳的行为,
+# 这些测试会失败,提醒同步更新本 spec.
+
+
+def test_store_adopt_contract_renumbers_ids_from_1(tmp_path: Path):
+    """create() 必须丢弃入参 items 的 id,重排从 1 开始。"""
+    store = _new_store(tmp_path)
+    r = store.create(
+        SENDER,
+        title="t",
+        items=[{"id": 99, "title": "x", "status": "pending"}],
+    )
+    assert r["ok"] is True
+    # 读回落盘文件确认 id 被重排(r["file"] 是 str,需包成 Path)
+    parsed = todo_list.parse_md(Path(r["file"]).read_text(encoding="utf-8"))
+    assert parsed["items"][0]["id"] == 1
+
+
+def test_store_adopt_contract_overwrites_sender_key(tmp_path: Path):
+    """create() 入参的 sender_key 必须覆盖原文件 / 入参 items 的 sender_key。"""
+    store = _new_store(tmp_path)
+    r = store.create(SENDER, title="t", items=[{"title": "x"}])
+    assert r["ok"] is True
+    parsed = todo_list.parse_md(Path(r["file"]).read_text(encoding="utf-8"))
+    assert parsed["sender_key"] == SENDER
+
+
+def test_store_adopt_contract_writes_now_timestamp(tmp_path: Path):
+    """create() 写 created_at / updated_at = now() (秒级精度)。"""
+    store = _new_store(tmp_path)
+    before = datetime.now().isoformat(timespec="seconds")
+    r = store.create(SENDER, title="t", items=[{"title": "x"}])
+    after = datetime.now().isoformat(timespec="seconds")
+    parsed = todo_list.parse_md(Path(r["file"]).read_text(encoding="utf-8"))
+    assert before <= parsed["created_at"] <= after
+    assert before <= parsed["updated_at"] <= after
