@@ -1,7 +1,7 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: 2.8.0
+version: 2.9.0
 description: |
   spcode 开发工具箱 — 13 个工具，5 个命令组。
   code_check / es_search / file_remove / file_compare / inta_shell_*(5个)
@@ -18,5 +18,8 @@ description: |
     /plan 激活时按 plan_mode.blocked_tools 配置从 LLM 工具列表过滤写工具,
     并在第一轮 LLM 调用时向 user message 注入 plan 模式 reminder(prefix cache 友好);
     /build 退出 plan 模式,默认状态下完全不修改 LLM 请求,与 AstrBot 默认行为一致。
+  v2.9 todo_create 新增 from_path 参数:从 .md 文件领养(adopt)todo 列表;
+    与 items 参数互斥,需绝对路径,1MB 上限,保留 status/notes 但重排 ID 从 1、
+    改写 sender_key 为当前用户、updated_at = now()。
   部分实现基于Irmia DevKit插件。
 repo: https://github.com/elecvoid243/astrbot_plugin_spcode_toolkit
