@@ -133,29 +133,34 @@ async def test_worktree_param_missing_falls_back_to_main(plugin, tmp_path, monke
     assert "a.txt" in paths
 
 
-async def test_worktree_param_empty_rejected(plugin, tmp_path, monkeypatch):
-    """Empty string worktree → rejected (defense step 1)."""
+async def test_worktree_param_empty_uses_primary(plugin, tmp_path, monkeypatch):
+    """Empty string worktree → treated as missing (spec §2.2)."""
     _init_git_repo(tmp_path)
+    (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+    subprocess.run(["git", "add", "-N", "a.txt"], cwd=tmp_path, check=True)
     _load_project(plugin, "test:umo", str(tmp_path))
 
     _mock_query(monkeypatch, worktree="", umo="test:umo")
     result = await plugin.handle_get_git_diff()
     data = result["data"]
-    assert data["loaded"] is False
-    assert data["reason"] == "worktree_invalid"
+    assert data["loaded"] is True
+    assert data["directory"] == str(tmp_path)
 
 
-# ─── Defense step 1: empty / whitespace ──────────────────────────────
+# ─── Spec §2.2: empty / whitespace → use primary (backward compat) ───
 
-async def test_worktree_whitespace_only_rejected(plugin, tmp_path, monkeypatch):
+async def test_worktree_whitespace_only_uses_primary(plugin, tmp_path, monkeypatch):
+    """Whitespace-only worktree → treated as missing (spec §2.2)."""
     _init_git_repo(tmp_path)
+    (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+    subprocess.run(["git", "add", "-N", "a.txt"], cwd=tmp_path, check=True)
     _load_project(plugin, "test:umo", str(tmp_path))
 
     _mock_query(monkeypatch, worktree="   ", umo="test:umo")
     result = await plugin.handle_get_git_diff()
     data = result["data"]
-    assert data["loaded"] is False
-    assert data["reason"] in {"worktree_invalid", "feature_disabled"}
+    assert data["loaded"] is True
+    assert data["directory"] == str(tmp_path)
 
 
 # ─── Defense step 2: path traversal ──────────────────────────────────

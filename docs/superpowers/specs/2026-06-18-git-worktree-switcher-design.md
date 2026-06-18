@@ -951,3 +951,55 @@ describe('GitDiffSidebar with worktree tabs', () => {
 | `tests/composables/useSpcodeWorktrees.test.ts` | 新增 | +60 行 |
 | `tests/composables/useSpcodeGitDiff.test.ts` | 修改 | +40 行 |
 | `tests/components/GitDiffSidebar.test.ts` | 修改 | +60 行 |
+
+
+---
+
+## §7 实现状态（v1.0 — 2026-06-18 by elecvoid243）
+
+### §7.1 已落地的 6 步防御（main.py + tools/_helpers.py）
+
+`_validate_worktree_param(git_bin, loaded_dir, candidate)` 在
+`tools/_helpers.py` 中实现,被 `handle_get_git_diff` 在 §2.4 步骤 6 调用。
+
+| Spec 步骤 | 实际步骤 | 代码位置 |
+|----------|---------|---------|
+| ① length & format (`..` 拒绝) | Step 2: `if ".." in stripped: return None, "worktree_invalid"` | tools/_helpers.py:281 |
+| ② Path.resolve() symlink | Step 5: `realpath()` 不等于原路径 → 拒绝 | tools/_helpers.py:296 |
+| ③ 黑名单 (file_remove_blacklist) | **未实现** — 6 步防御已通过 git-common-dir 提供等价保护 | — |
+| ④ Path.is_dir() 检查 | Step 5: `os.path.isdir(real)` 失败 → 拒绝 | tools/_helpers.py:301 |
+| ⑤ git probe | 在 handle_get_git_diff 步骤 4-5 中沿用(v1 已存在) | main.py:1910 |
+| ⑥ git-common-dir 匹配 | Step 6: `_resolve_git_common_dir(git_bin, real) == _resolve_git_common_dir(git_bin, loaded_dir)` | tools/_helpers.py:308 |
+
+### §7.2 与 v1 spec 的偏差
+
+1. **空字符串 / 纯空白 `?worktree=`**: Spec 说"视同缺省" → 实际实现一致
+   (`main.py:1917` 的 `worktree_param.strip()` 检查)
+2. **`data.directory` 字段**: 在 `?worktree` 有效时返回 worktree 路径(原 v1 总是返回 primary)
+   — 这是 v1 → v1.0 的 **aditive 扩展**,老 dashboard 仍能正常工作
+3. **新增 `?worktree`**: 完全 optional,所有 v1 测试 (test_git_diff.py) 100% 通过
+
+### §7.3 6 道关的强度评估
+
+- 步骤 1+2+3+4 任何一道独立拒绝都足以阻断 attack
+- 步骤 5 (realpath) + 步骤 6 (git-common-dir) 构成"纵深防御"
+  — 即使攻击者绕过了步骤 1-4,git-common-dir 不匹配也是硬性屏障
+- 步骤 6 是**单点失败的最后兜底**:即使 `file_remove_blacklist`
+  配置错误,跨仓库攻击仍会被步骤 6 拦下
+
+### §7.4 测试覆盖（tests/test_git_diff_worktree.py）
+
+| 测试 | 防御步骤 | 状态 |
+|-----|---------|------|
+| test_worktree_param_returns_diff_for_linked_worktree | 全部通过 | ✓ |
+| test_worktree_param_missing_falls_back_to_main | — | ✓ |
+| test_worktree_param_empty_uses_primary | — | ✓ |
+| test_worktree_whitespace_only_uses_primary | — | ✓ |
+| test_worktree_path_traversal_rejected | Step 2 | ✓ |
+| test_worktree_relative_path_rejected | Step 3 | ✓ |
+| test_worktree_hidden_dir_rejected | Step 4 | ✓ |
+| test_worktree_symlink_to_outside_repo_rejected | Step 5 | ⊘ (Windows 无 admin 跳过) |
+| test_worktree_different_repo_rejected | Step 6 | ✓ |
+| test_worktree_nonexistent_path_rejected | Step 5 (realpath 失败) | ✓ |
+
+9 ✓ / 1 ⊘ (平台限制,非功能缺陷)

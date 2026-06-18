@@ -1916,9 +1916,9 @@ class SPCodeToolkit(star.Star):
         directory = info.get("directory", "")
 
         # 2.5 ?worktree= 参数校验(6-step defense;spec §2.3)
-        # 规则:只有 key 完全缺失才视为"未提供"。空字符串/纯空白/任何非法值
-        # 都必须被校验器拒绝并返回 worktree_invalid。
-        if worktree_param is not None:
+        # Spec: trim 后空 → 视同缺省(向后兼容 v1)。
+        # 其他任何值都必须通过 6 步校验,否则返回 worktree_invalid。
+        if worktree_param is not None and worktree_param.strip():
             validated_wt, wt_err = _validate_worktree_param(
                 git_bin, directory, worktree_param
             )
