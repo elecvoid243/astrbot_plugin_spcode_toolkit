@@ -6,8 +6,8 @@
     "options": [
       "code_check",
       "es_search",
-      "astrbot_file_remove_tool",
-      "astrbot_file_compare_tool",
+      "file_remove",
+      "file_compare",
       "todo_list",
       "inta_shell"
     ],

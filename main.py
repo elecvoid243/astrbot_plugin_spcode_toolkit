@@ -156,11 +156,11 @@ A codegraph project is loaded. When dealing with the code for this project:
 # astrbot_file_remove_tool 启用时注入到 system_prompt 末尾的指引。
 # 设计目标:让 LLM 优先使用 file_remove 工具(自带路径安全 + 回收站)而非绕过。
 # 无 session state 依赖——只靠 self._tool_names 作为 gate。
-_FILE_REMOVE_GUIDANCE_MARKER = "[ASTRBOT_FILE_REMOVE_TOOL_GUIDANCE]"
+_FILE_REMOVE_GUIDANCE_MARKER = "# Delete only if when necessary"
 
 _FILE_REMOVE_GUIDANCE = f"""
 {_FILE_REMOVE_GUIDANCE_MARKER}
-优先使用 `astrbot_file_remove_tool` 进行文件或目录删除,不要用 shell 命令(如 `rm`/`del`)或 Python 调用绕过它。
+Priority use 'astrbot_file_remove' for file or directory deletion. DO NOT use shell commands (such as' rm '/' del ') or Python calls to bypass it.
 """
 
 
@@ -340,7 +340,7 @@ class EsSearchTool(FunctionTool):
 
 @dataclass
 class FileRemoveTool(FunctionTool):
-    name: str = "astrbot_file_remove_tool"
+    name: str = "astrbot_file_remove"
     description: str = (
         "Delete an entire file or directory. Before deleting, it is necessary to ask the user. "
         "If delete fragments instead of the entire file, use `astrbot_file_edit_tool`. "
@@ -413,7 +413,7 @@ class FileRemoveTool(FunctionTool):
 
 @dataclass
 class FileDiffTool(FunctionTool):
-    name: str = "astrbot_file_compare_tool"
+    name: str = "astrbot_file_compare"
     description: str = (
         "Compares two text files and returns a structured diff: counts of added and "
         "removed lines, plus a unified diff. Files larger than 50MB are rejected. "
@@ -1029,11 +1029,9 @@ def _build_allowed_ids(context, config: dict) -> set[str]:
     "astrbot_plugin_spcode_toolkit",
     "elecvoid243",
     (
-        " spcode 开发工具箱 — 提供实用开发工具：code_check（Python / C-C++ 合并 lint）\n"
-        "es_search、file_remove、file_comare、todo_list，并整合codegraph MCP\n"
-        "部分实现基于Irmia DevKit插件。"
+        "spcode 开发工具箱 — 提供实用开发工具, 部分实现基于Irmia DevKit插件。"
     ),
-    "2.1.0",
+    "2.9.0",
 )
 class SPCodeToolkit(star.Star):
     def __init__(self, context: star.Context, config: dict = None) -> None:
@@ -2539,10 +2537,10 @@ class SPCodeToolkit(star.Star):
     async def _file_remove_inject_guidance(
         self, event: AstrMessageEvent, req: ProviderRequest
     ):
-        """astrbot_file_remove_tool 启用时,把"优先使用 file_remove"指引注入到 system_prompt 末尾。
+        """astrbot_file_remove 启用时,把"优先使用 file_remove"指引注入到 system_prompt 末尾。
 
         触发条件(全部满足):
-        - `astrbot_file_remove_tool` 在 self._tool_names 中(说明用户已启用)
+        - `astrbot_file_remove` 在 self._tool_names 中(说明用户已启用)
         - 同 req.system_prompt 中尚未包含 marker(防重复注入)
 
         设计要点(对照 _project_inject_codegraph_guidance):
@@ -2550,7 +2548,7 @@ class SPCodeToolkit(star.Star):
         2. system_prompt = None 时用 lstrip("\\n") 避免前置空行
         3. 已存在 system_prompt 时追加在末尾
         """
-        if "astrbot_file_remove_tool" not in self._tool_names:
+        if "astrbot_file_remove" not in self._tool_names:
             return
         if _FILE_REMOVE_GUIDANCE_MARKER in (req.system_prompt or ""):
             return
