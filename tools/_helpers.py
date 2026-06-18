@@ -281,9 +281,18 @@ def _validate_worktree_param(
     if not os.path.isabs(stripped):
         return None, "worktree_invalid"
 
-    # Step 4: no hidden directory components (e.g. .git, .cache)
+    # Step 4: block only the .git directory itself, NOT arbitrary dotfile
+    # directories. Git's official worktree convention is to place linked
+    # worktrees under `<repo>/.worktrees/<name>/` (e.g. `git worktree add
+    # .worktrees/feature-x`). A blanket "no dot-prefixed component" rule
+    # wrongly rejects that legitimate layout, breaking the standard
+    # `.worktrees/*` deployment pattern. Cross-repo path attacks are
+    # already blocked by step 6 (git-common-dir equality), so this check
+    # only needs to defend against attempts to read .git internals
+    # directly. A nested form like ".git/foo" is also caught by the
+    # equality check below.
     parts = Path(stripped).parts
-    if any(part.startswith(".") and part not in (os.sep, "/", "\\") for part in parts):
+    if any(part == ".git" for part in parts):
         return None, "worktree_invalid"
 
     # Step 5: symlink defense — realpath must match

@@ -269,3 +269,59 @@ async def test_worktree_nonexistent_path_rejected(plugin, tmp_path, monkeypatch)
     data = result["data"]
     assert data["loaded"] is False
     assert data["reason"] in {"worktree_invalid", "feature_disabled"}
+
+
+# ─── Regression: .worktrees/ subdirectory layout (git's official convention) ─
+
+async def test_worktree_param_accepts_dotworktrees_subdir(
+    plugin, tmp_path, monkeypatch
+):
+    """Git stores linked worktrees under `<repo>/.worktrees/<name>/` by default.
+
+    The 6-step defense must NOT reject this layout. Earlier step 4 wrongly
+    treated any dot-prefixed path component as hostile, breaking the standard
+    `git worktree add .worktrees/<name>` pattern that real users rely on.
+    """
+    _init_git_repo(tmp_path)
+    # Create a linked worktree under .worktrees/ (the official convention).
+    wt_path = tmp_path / ".worktrees" / "feature-x"
+    subprocess.run(
+        [
+            "git", "-C", str(tmp_path), "worktree", "add",
+            str(wt_path), "-b", "feature-x",
+        ],
+        check=True,
+    )
+    (wt_path / "feat.txt").write_text("x", encoding="utf-8")
+    subprocess.run(["git", "add", "-N", "feat.txt"], cwd=wt_path, check=True)
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    _mock_query(monkeypatch, worktree=str(wt_path), umo="test:umo")
+    result = await plugin.handle_get_git_diff()
+    data = result["data"]
+    # Pre-fix bug: data.reason == "worktree_invalid", data.loaded == False.
+    # Post-fix:    data.loaded is True and feat.txt is in files_changed.
+    assert data["loaded"] is True, (
+        f".worktrees/ layout wrongly rejected: reason={data.get('reason')!r}"
+    )
+    paths = [f["path"] for f in data["files_changed"]]
+    assert "feat.txt" in paths
+
+
+async def test_worktree_param_still_rejects_dotgit(
+    plugin, tmp_path, monkeypatch
+):
+    """Step 4 must still defend against direct .git access.
+
+    This test guards against an over-correction that would also delete
+    the .git directory block (relying solely on step 6 for that defense).
+    """
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "test:umo", str(tmp_path))
+    # Path with a `.git` component — should still be rejected by step 4.
+    bad_path = str(tmp_path / ".git" / "config")
+    _mock_query(monkeypatch, worktree=bad_path, umo="test:umo")
+    result = await plugin.handle_get_git_diff()
+    data = result["data"]
+    assert data["loaded"] is False
+    assert data["reason"] == "worktree_invalid"
