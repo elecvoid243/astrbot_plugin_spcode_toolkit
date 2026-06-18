@@ -1233,6 +1233,18 @@ class SPCodeToolkit(star.Star):
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(f"注册 spcode git-diff web API 失败: {exc!s}")
 
+        # 注册 /spcode/git-worktrees(v3.0 worktree 切换器):
+        # dashboard 读取此端点填充 GitDiffSidebar 的 worktree 下拉。
+        try:
+            self.context.register_web_api(
+                route="/spcode/git-worktrees",
+                view_handler=self.handle_get_git_worktrees,
+                methods=["GET"],
+                desc="获取 spcode 当前会话已载入项目的 git worktree 列表（供 dashboard 调用）",
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"注册 spcode git-worktrees web API 失败: {exc!s}")
+
         cfg = self._inta_shell_cfg
         component = LocalInteractiveShellComponent(
             max_sessions=cfg["max_sessions"],
