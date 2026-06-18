@@ -8,7 +8,7 @@
 - **项目绝对路径**: `F:\github\astrbot_plugin_spcode_toolkit`
 - **项目类型**: AstrBot 插件(Python)
 - **Python 版本**: 3.10+(建议;用到 `list[str]` 等内置泛型)
-- **依赖管理**: `requirements.txt`(仅含 lint 工具,运行时依赖由 AstrBot 宿主提供)
+- **依赖管理**: `requirements.txt`(含 lint 工具与运行时依赖,如 `send2trash`;AstrBot 宿主环境装运行时依赖)
 - **测试框架**: pytest
 - **目标平台**: 以 Windows 为首选(es.exe / PowerShell 路径);Linux/macOS 有 fallback
 
@@ -84,7 +84,7 @@ astrbot_plugin_spcode_toolkit/
 ├── main.py                       # 插件入口:注册工具/命令/事件
 ├── metadata.yaml                 # 插件元信息(AstrBot 加载识别)
 ├── _conf_schema.json             # 配置 schema
-├── requirements.txt              # lint 依赖:ruff, cpplint
+├── requirements.txt              # lint + 运行时依赖:ruff, cpplint, send2trash
 ├── README.md                     # 项目说明
 │
 ├── data/                         # 数据/资源(随插件分发)
