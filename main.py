@@ -2536,6 +2536,31 @@ class SPCodeToolkit(star.Star):
         logger.debug(f"[project] 已向会话 {umo} 的 system_prompt 注入 codegraph 指引")
 
     @filter.on_llm_request()
+    async def _file_remove_inject_guidance(
+        self, event: AstrMessageEvent, req: ProviderRequest
+    ):
+        """astrbot_file_remove_tool 启用时,把"优先使用 file_remove"指引注入到 system_prompt 末尾。
+
+        触发条件(全部满足):
+        - `astrbot_file_remove_tool` 在 self._tool_names 中(说明用户已启用)
+        - 同 req.system_prompt 中尚未包含 marker(防重复注入)
+
+        设计要点(对照 _project_inject_codegraph_guidance):
+        1. 无 session state / 无 feature flag——_tool_names 即 gate
+        2. system_prompt = None 时用 lstrip("\\n") 避免前置空行
+        3. 已存在 system_prompt 时追加在末尾
+        """
+        if "astrbot_file_remove_tool" not in self._tool_names:
+            return
+        if _FILE_REMOVE_GUIDANCE_MARKER in (req.system_prompt or ""):
+            return
+        if req.system_prompt is None or req.system_prompt == "":
+            req.system_prompt = _FILE_REMOVE_GUIDANCE.lstrip("\n")
+        else:
+            req.system_prompt = req.system_prompt + _FILE_REMOVE_GUIDANCE
+        logger.debug("[file_remove] 已向 system_prompt 注入优先使用指引")
+
+    @filter.on_llm_request()
     async def _auth_guard(self, event, req: ProviderRequest):
         """L1 鉴权：非管理员从工具列表中移除本插件工具。"""
         if not req.func_tool:
