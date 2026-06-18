@@ -337,7 +337,8 @@ class FileRemoveTool(FunctionTool):
         "If a directory contains more than max_items files, the call returns a "
         "proposal asking for batch confirmation INSTEAD of deleting — read the "
         "proposal/options, then retry with confirm=true. "
-        "Single files are deleted without confirm."
+        "Single files are deleted without confirm. "
+        "Items are sent to the system recycle bin (recoverable), not permanently deleted."
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -1124,6 +1125,7 @@ class SPCodeToolkit(star.Star):
         # reason="git_unavailable" 的结构化响应。
         try:
             import subprocess as _sp
+
             _git_probe = _sp.run(
                 [self._git_binary(), "--version"],
                 capture_output=True,
@@ -1133,7 +1135,11 @@ class SPCodeToolkit(star.Star):
                 errors="replace",
             )
             if _git_probe.returncode == 0:
-                _first_line = (_git_probe.stdout or "").splitlines()[0] if _git_probe.stdout else "unknown"
+                _first_line = (
+                    (_git_probe.stdout or "").splitlines()[0]
+                    if _git_probe.stdout
+                    else "unknown"
+                )
                 logger.info(f"[git-diff] detected: {_first_line}")
             else:
                 logger.warning(
@@ -1231,7 +1237,7 @@ class SPCodeToolkit(star.Star):
         Returns:
             git 可执行文件名或绝对路径。
         """
-        raw = (self._config.get("git_path") or "git")
+        raw = self._config.get("git_path") or "git"
         return raw.strip() or "git"
 
     @staticmethod
@@ -1543,9 +1549,7 @@ class SPCodeToolkit(star.Star):
             else "未知"
         )
         yield event.plain_result(
-            f"📂 当前已加载项目\n"
-            f"路径: {directory}\n"
-            f"加载于: {loaded_at_str}\n"
+            f"📂 当前已加载项目\n路径: {directory}\n加载于: {loaded_at_str}\n"
         )
 
     def get_loaded_project(self, umo: str) -> dict | None:
@@ -1679,6 +1683,7 @@ class SPCodeToolkit(star.Star):
         """
         t0 = _time.time()
         from astrbot.api import web
+
         umo: str | None = None
         try:
             umo = web.request.query.get("umo") or None
@@ -1691,10 +1696,13 @@ class SPCodeToolkit(star.Star):
             return int((_time.time() - t0) * 1000)
 
         # 1. Feature flag 校验
-        if not (self._config.get("agentsmd_enabled", True)
-                and self._config.get("codegraph_enabled", True)):
+        if not (
+            self._config.get("agentsmd_enabled", True)
+            and self._config.get("codegraph_enabled", True)
+        ):
             return _make_git_diff_empty_envelope(
-                umo=umo, reason="feature_disabled", elapsed_ms=_elapsed())
+                umo=umo, reason="feature_disabled", elapsed_ms=_elapsed()
+            )
 
         # 2. umo 解析与回退
         if umo:
@@ -1703,20 +1711,26 @@ class SPCodeToolkit(star.Star):
             if not self._loaded_projects:
                 info = None
             else:
-                _, info = max(self._loaded_projects.items(),
-                              key=lambda kv: kv[1].get("loaded_at", 0))
+                _, info = max(
+                    self._loaded_projects.items(),
+                    key=lambda kv: kv[1].get("loaded_at", 0),
+                )
 
         if info is None:
             return _make_git_diff_empty_envelope(
-                umo=umo, reason="no_project_loaded", elapsed_ms=_elapsed())
+                umo=umo, reason="no_project_loaded", elapsed_ms=_elapsed()
+            )
 
         directory = info.get("directory", "")
 
         # 3. 目录存在性
         if not Path(directory).is_dir():
             return _make_git_diff_empty_envelope(
-                umo=umo, reason="directory_missing", directory=directory,
-                elapsed_ms=_elapsed())
+                umo=umo,
+                reason="directory_missing",
+                directory=directory,
+                elapsed_ms=_elapsed(),
+            )
 
         # 4. Git repository probe — git outputs UTF-8 on every platform,
         # so we always decode with utf-8 regardless of the Windows console
@@ -1731,23 +1745,37 @@ class SPCodeToolkit(star.Star):
             combined = (probe.get("stderr", "") + probe.get("error", "")).lower()
             if "not a git repository" in combined:
                 return _make_git_diff_empty_envelope(
-                    umo=umo, reason="not_a_git_repo", directory=directory,
-                    elapsed_ms=_elapsed())
+                    umo=umo,
+                    reason="not_a_git_repo",
+                    directory=directory,
+                    elapsed_ms=_elapsed(),
+                )
             if "未安装" in probe.get("error", ""):
                 return _make_git_diff_empty_envelope(
-                    umo=umo, reason="git_unavailable", directory=directory,
-                    elapsed_ms=_elapsed())
+                    umo=umo,
+                    reason="git_unavailable",
+                    directory=directory,
+                    elapsed_ms=_elapsed(),
+                )
             return _make_git_diff_empty_envelope(
-                umo=umo, reason="git_error", directory=directory,
+                umo=umo,
+                reason="git_error",
+                directory=directory,
                 stderr=probe.get("stderr", "") or probe.get("error", ""),
-                elapsed_ms=_elapsed())
+                elapsed_ms=_elapsed(),
+            )
 
         # 5. Concurrently collect the raw diff + three auxiliary listings.
         # All four git invocations output UTF-8, so we decode with utf-8
         # to avoid mojibake when changed lines contain non-ASCII characters
         # (e.g. Chinese comments / strings) on a cp936 Windows host.
         git_prefix = [git_bin, "-C", directory, "-c", "color.ui=never"]
-        raw_result, name_status_result, numstat_result, stat_result = await asyncio.gather(
+        (
+            raw_result,
+            name_status_result,
+            numstat_result,
+            stat_result,
+        ) = await asyncio.gather(
             run_sync(run_cmd, git_prefix + ["diff"], encoding="utf-8"),
             run_sync(run_cmd, git_prefix + ["diff", "--name-status"], encoding="utf-8"),
             run_sync(run_cmd, git_prefix + ["diff", "--numstat"], encoding="utf-8"),
@@ -1756,9 +1784,12 @@ class SPCodeToolkit(star.Star):
 
         if not raw_result["ok"]:
             return _make_git_diff_empty_envelope(
-                umo=umo, reason="git_error", directory=directory,
+                umo=umo,
+                reason="git_error",
+                directory=directory,
                 stderr=raw_result.get("stderr", ""),
-                elapsed_ms=_elapsed())
+                elapsed_ms=_elapsed(),
+            )
 
         # 6. 截断与解析
         raw = raw_result["stdout"]
