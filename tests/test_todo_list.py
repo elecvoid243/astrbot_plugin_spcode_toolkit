@@ -1383,3 +1383,72 @@ def test_import_from_path_happy_path(tmp_path: Path):
     # notes 解析正确
     assert items[1]["notes"] == "已完成 README"
     assert items[2]["notes"] == "进行中"
+
+
+def test_import_from_path_none_returns_error(tmp_path: Path):
+    items, title, err = todo_list.import_from_path(None)  # type: ignore[arg-type]
+    assert items == []
+    assert title == ""
+    assert "from_path 必须是字符串路径" in err
+
+
+def test_import_from_path_relative_path_returns_error(tmp_path: Path):
+    items, _, err = todo_list.import_from_path("plans/sprint.md")
+    assert items == []
+    assert "路径必须是绝对路径" in err
+
+
+def test_import_from_path_not_exists(tmp_path: Path):
+    items, _, err = todo_list.import_from_path(str(tmp_path / "no_such.md"))
+    assert items == []
+    assert "文件不存在" in err
+
+
+def test_import_from_path_directory_not_file(tmp_path: Path):
+    d = tmp_path / "subdir"
+    d.mkdir()
+    items, _, err = todo_list.import_from_path(str(d))
+    assert items == []
+    assert "不是文件" in err
+
+
+def test_import_from_path_oversize(tmp_path: Path):
+    """1.1 MB 文件 → 拒绝(MAX_IMPORT_BYTES = 1MB)。"""
+    big = tmp_path / "big.md"
+    big.write_bytes(b"- [ ] x\n" * (1024 * 1024 // 6 + 1))  # 略大于 1MB
+    items, _, err = todo_list.import_from_path(str(big))
+    assert items == []
+    assert "文件过大" in err
+
+
+def test_import_from_path_frontmatter_only_no_items(tmp_path: Path):
+    """只有 frontmatter 没有 checkbox item → '未找到任何 item'。"""
+    p = _write_md(tmp_path, "---\nsender_key: x:1\ntitle: empty\n---\n\n# empty\n")
+    items, _, err = todo_list.import_from_path(str(p))
+    assert items == []
+    assert "未找到任何 item" in err
+
+
+def test_import_from_path_h1_only_no_items(tmp_path: Path):
+    """只有 H1 标题,没有任何 checkbox。"""
+    p = _write_md(tmp_path, "# 仅标题\n\n没有 checkbox 列表。\n")
+    items, _, err = todo_list.import_from_path(str(p))
+    assert items == []
+    assert "未找到任何 item" in err
+
+
+def test_import_from_path_empty_file(tmp_path: Path):
+    """0 字节文件 → '未找到任何 item'(不是 size error)。"""
+    p = _write_md(tmp_path, "")
+    items, _, err = todo_list.import_from_path(str(p))
+    assert items == []
+    assert "未找到任何 item" in err
+
+
+def test_import_from_path_non_utf8_bytes(tmp_path: Path):
+    """非 UTF-8 字节 → 读取失败。"""
+    p = tmp_path / "binary.md"
+    p.write_bytes(b"\xff\xfe\xfd  bad encoding")
+    items, _, err = todo_list.import_from_path(str(p))
+    assert items == []
+    assert "读取失败" in err
