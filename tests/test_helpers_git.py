@@ -23,7 +23,7 @@ if str(_PROJECT_PARENT) not in sys.path:
 if str(_PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(_PROJECT_DIR))
 
-from tools._helpers import _resolve_git_common_dir  # noqa: F401
+from tools._helpers import _resolve_git_common_dir, _parse_git_worktree_porcelain  # noqa: E402
 
 
 def _make_repo(parent: Path, name: str) -> Path:
@@ -83,3 +83,61 @@ def test_resolve_case_insensitive_on_windows(two_repos):
     r1 = _resolve_git_common_dir("git", str(a))
     r2 = _resolve_git_common_dir("git", str(a).upper())
     assert r1 == r2
+
+
+# ─── _parse_git_worktree_porcelain tests (Task 1.2) ─────────────────────
+
+def test_parse_single_main_worktree():
+    text = "worktree /r/main\nHEAD abc1234\nbranch refs/heads/main\n"
+    result = _parse_git_worktree_porcelain(text)
+    assert len(result) == 1
+    assert result[0] == {
+        "path": "/r/main",
+        "branch": "main",
+        "head_sha": "abc1234",
+        "is_main": True,
+    }
+
+
+def test_parse_multiple_worktrees():
+    text = (
+        "worktree /r/main\n"
+        "HEAD 1111111\n"
+        "branch refs/heads/main\n"
+        "\n"
+        "worktree /r/feat\n"
+        "HEAD 2222222\n"
+        "branch refs/heads/feat/x\n"
+    )
+    result = _parse_git_worktree_porcelain(text)
+    assert len(result) == 2
+    assert result[0]["path"] == "/r/main"
+    assert result[0]["is_main"] is True
+    assert result[1]["path"] == "/r/feat"
+    assert result[1]["branch"] == "feat/x"
+    assert result[1]["is_main"] is False
+
+
+def test_parse_detached_worktree():
+    text = (
+        "worktree /r/main\n"
+        "HEAD 1111111\n"
+        "branch refs/heads/main\n"
+        "\n"
+        "worktree /r/detached\n"
+        "HEAD 2222222\n"
+        "detached\n"
+    )
+    result = _parse_git_worktree_porcelain(text)
+    assert result[1]["branch"] is None
+    assert result[1]["is_main"] is False
+
+
+def test_parse_empty_returns_empty_list():
+    assert _parse_git_worktree_porcelain("") == []
+
+
+def test_parse_malformed_raises():
+    """Unrecognized records should raise rather than silently corrupt."""
+    with pytest.raises(ValueError, match="Unknown porcelain record"):
+        _parse_git_worktree_porcelain("worktree /r/main\nWAT abc\n")

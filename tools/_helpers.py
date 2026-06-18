@@ -196,3 +196,53 @@ def _resolve_git_common_dir(git_bin: str, worktree_path: str) -> str:
         timeout=10,
     ).stdout.strip()
     return os.path.normcase(os.path.abspath(os.path.join(worktree_path, raw)))
+
+
+def _parse_git_worktree_porcelain(text: str) -> list[dict]:
+    """Parse `git worktree list --porcelain` output.
+
+    Returns a list of dicts with keys: path, branch, head_sha, is_main.
+    The first worktree in the output is always the main worktree (is_main=True).
+    Raises ValueError on unrecognized records.
+    """
+    worktrees: list[dict] = []
+    current: dict | None = None
+
+    for raw_line in text.splitlines():
+        if not raw_line:
+            if current is not None:
+                worktrees.append(current)
+                current = None
+            continue
+
+        if raw_line.startswith("worktree "):
+            if current is not None:
+                worktrees.append(current)
+            current = {
+                "path": raw_line[len("worktree "):],
+                "branch": None,
+                "head_sha": "",
+                "is_main": False,
+            }
+        elif current is None:
+            raise ValueError(
+                f"Unexpected record outside worktree block: {raw_line!r}"
+            )
+        elif raw_line.startswith("HEAD "):
+            current["head_sha"] = raw_line[len("HEAD "):]
+        elif raw_line.startswith("branch "):
+            ref = raw_line[len("branch "):]
+            prefix = "refs/heads/"
+            current["branch"] = ref[len(prefix):] if ref.startswith(prefix) else ref
+        elif raw_line == "detached":
+            current["branch"] = None
+        else:
+            raise ValueError(f"Unknown porcelain record: {raw_line!r}")
+
+    if current is not None:
+        worktrees.append(current)
+
+    for i, wt in enumerate(worktrees):
+        wt["is_main"] = i == 0
+
+    return worktrees
