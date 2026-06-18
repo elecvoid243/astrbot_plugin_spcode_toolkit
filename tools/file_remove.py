@@ -6,6 +6,7 @@ file_remove — 文件/目录删除工具。
 from __future__ import annotations
 
 import os
+import send2trash
 from pathlib import Path
 
 from ._helpers import proposal_reply
@@ -103,7 +104,7 @@ def remove(
       3. 系统目录黑名单（在 exists 检查之前，避免 LLM 试错发现受保护路径）
       4. 用户自定义黑名单（从插件配置注入，None/[] 表示未配置）
       5. 路径存在性
-      6. 单文件 → 直接删除
+      6. 单文件 → 送入回收站
       7. 目录 → confirm → 批量阈值 → 执行
 
     协议：返回的 proposal 字段意味着需要 LLM 在下一轮调用中以
@@ -157,9 +158,15 @@ def remove(
     if p.is_file():
         try:
             size = p.stat().st_size
-            os.remove(p)
+            send2trash.send2trash(str(p))
             return {"ok": True, "deleted": 1, "freed": _human_size(size)}
+        except FileNotFoundError:
+            return {"ok": False, "error": f"路径不存在: {path}"}
+        except PermissionError:
+            return {"ok": False, "error": f"无权限移入回收站: {path}"}
         except OSError as e:
+            return {"ok": False, "error": f"回收站不可用: {e}。请确认系统已安装 trash-cli (Linux) 或回收站服务可用。"}
+        except Exception as e:
             return {"ok": False, "error": str(e)}
 
     # ── 6. 目录删除 ──

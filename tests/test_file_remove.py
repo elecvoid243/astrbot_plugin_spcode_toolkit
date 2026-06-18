@@ -8,6 +8,9 @@ from __future__ import annotations
 import platform
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
 
 # 把项目根加入 sys.path，便于直接 `from tools import file_remove`
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,16 +20,28 @@ if str(ROOT) not in sys.path:
 from tools import file_remove  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _mock_send2trash(monkeypatch):
+    """默认对所有用例 monkeypatch send2trash,避免污染真实回收站。
+
+    单文件/目录删除的成功路径用例可直接读取 `mock_send2trash` 做断言。
+    失败/拦截路径用例默认不被调用(`mock_send2trash.send2trash.assert_not_called()`)。
+    """
+    mock_send2trash = MagicMock()
+    monkeypatch.setattr(file_remove, "send2trash", mock_send2trash)
+    return mock_send2trash
+
+
 # ── 1. 单文件删除 ────────────────────────────────────
 
 
-def test_remove_single_file(tmp_path: Path):
+def test_remove_single_file(tmp_path: Path, _mock_send2trash):
     f = tmp_path / "a.txt"
     f.write_text("hi", encoding="utf-8")
     r = file_remove.remove(str(f))
     assert r["ok"] is True
     assert r["deleted"] == 1
-    assert f.exists() is False
+    _mock_send2trash.send2trash.assert_called_once_with(str(f))
 
 
 # ── 2. 目录删除未确认 → proposal ──────────────────────
