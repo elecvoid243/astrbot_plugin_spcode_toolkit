@@ -8,8 +8,10 @@ from __future__ import annotations
 import asyncio
 import json
 import locale
+import os
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 
@@ -174,8 +176,6 @@ def proposal_reply(
 # Author: elecvoid243 @ 2026-06-18
 # Spec: docs/superpowers/specs/2026-06-18-git-worktree-switcher-design.md
 
-import os  # noqa: E402  (kept here to keep diff minimal)
-
 
 def _resolve_git_common_dir(git_bin: str, worktree_path: str) -> str:
     """Resolve `git rev-parse --git-common-dir` to an absolute, case-normalized path.
@@ -246,3 +246,64 @@ def _parse_git_worktree_porcelain(text: str) -> list[dict]:
         wt["is_main"] = i == 0
 
     return worktrees
+
+
+def _validate_worktree_param(
+    git_bin: str,
+    loaded_dir: str,
+    candidate: str | None,
+) -> tuple[str | None, str | None]:
+    """6-step defense for the ``?worktree=`` query parameter.
+
+    Returns ``(validated_path, error_reason)``:
+      - On success: ``(absolute_path, None)`` — safe to use as the ``-C`` arg.
+      - On rejection: ``(None, "worktree_invalid")``.
+
+    Spec: docs/superpowers/specs/2026-06-18-git-worktree-switcher-design.md §2.3
+
+    The 6 steps:
+      1. Empty / whitespace → reject
+      2. Path-traversal chars (`..`, `\\`, `//`) → reject
+      3. Not an absolute path → reject
+      4. Any path component starts with `.` (hidden dir like ``.git``) → reject
+      5. Symlink resolution: realpath must equal original → reject
+      6. ``git rev-parse --git-common-dir`` must match the loaded project → reject
+    """
+    if candidate is None:
+        return None, "worktree_invalid"
+    stripped = candidate.strip()
+    if not stripped:
+        return None, "worktree_invalid"
+    if ".." in stripped:
+        return None, "worktree_invalid"
+
+    # Step 3: must be absolute
+    if not os.path.isabs(stripped):
+        return None, "worktree_invalid"
+
+    # Step 4: no hidden directory components (e.g. .git, .cache)
+    parts = Path(stripped).parts
+    if any(part.startswith(".") and part not in (os.sep, "/", "\\") for part in parts):
+        return None, "worktree_invalid"
+
+    # Step 5: symlink defense — realpath must match
+    try:
+        real = os.path.realpath(stripped)
+    except OSError:
+        return None, "worktree_invalid"
+    if os.path.normcase(real) != os.path.normcase(stripped):
+        return None, "worktree_invalid"
+
+    if not os.path.isdir(real):
+        return None, "worktree_invalid"
+
+    # Step 6: cross-repo defense (git-common-dir must match loaded project)
+    try:
+        candidate_common = _resolve_git_common_dir(git_bin, real)
+        loaded_common = _resolve_git_common_dir(git_bin, loaded_dir)
+    except Exception:
+        return None, "worktree_invalid"
+    if candidate_common != loaded_common:
+        return None, "worktree_invalid"
+
+    return real, None

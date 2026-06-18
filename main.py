@@ -42,6 +42,7 @@ from .tools._helpers import (  # noqa: E401
     err_json,
     detect_console_encoding,
     _parse_git_worktree_porcelain,
+    _validate_worktree_param,
 )  # run_cmd: 供 /spcode/git-diff & git-worktrees handler 使用
 from .tools._config_filter import ALL_TOOL_NAMES, filter_enabled_tools
 from .tools._codegraph_mcp import (
@@ -1870,10 +1871,16 @@ class SPCodeToolkit(star.Star):
         from astrbot.api import web
 
         umo: str | None = None
+        worktree_param: str | None = None
         try:
-            umo = web.request.query.get("umo") or None
+            umo_raw = web.request.query.get("umo")
+            umo = umo_raw if umo_raw else None
+            # worktree: 保留空字符串以触发 6-step 校验(不要 ``or None``)
+            wt_raw = web.request.query.get("worktree")
+            worktree_param = wt_raw if wt_raw is not None else None
         except Exception:
             umo = None
+            worktree_param = None
 
         git_bin = self._git_binary()
 
@@ -1907,6 +1914,26 @@ class SPCodeToolkit(star.Star):
             )
 
         directory = info.get("directory", "")
+
+        # 2.5 ?worktree= 参数校验(6-step defense;spec §2.3)
+        # 规则:只有 key 完全缺失才视为"未提供"。空字符串/纯空白/任何非法值
+        # 都必须被校验器拒绝并返回 worktree_invalid。
+        if worktree_param is not None:
+            validated_wt, wt_err = _validate_worktree_param(
+                git_bin, directory, worktree_param
+            )
+            if wt_err is not None:
+                logger.warning(
+                    f"[git-diff] rejected ?worktree={worktree_param!r} "
+                    f"(loaded={directory!r})"
+                )
+                return _make_git_diff_empty_envelope(
+                    umo=umo,
+                    reason=wt_err,
+                    directory=directory,
+                    elapsed_ms=_elapsed(),
+                )
+            directory = validated_wt  # use the validated worktree path
 
         # 3. 目录存在性
         if not Path(directory).is_dir():
