@@ -154,7 +154,13 @@
 | `umo` | 可选 | 不变 |
 | `worktree` | — | **新增**，可选；缺省/空 → 行为与今天完全一致（用 primary） |
 
-**Response — 变化**: 响应结构**完全兼容 v1**，仅多一个 `data.worktree` 字段（实际生效的 worktree 路径）:
+**Response — 变化**: 响应结构**完全兼容 v1**，仅多一个 `data.worktree` 字段（实际生效的 worktree 路径）。
+
+> **为什么 `data.directory` 与 `data.worktree` 值相同？**
+> 保留双字段是为了:
+> 1. **v1 客户端兼容** — 旧 dashboard 仍可读 `data.directory` 不受影响
+> 2. **语义清晰** — `directory` 在 v1 是"项目根目录"，新加 `worktree` 是"实际生效的 worktree"，未来可能发散（例如某个 diff 模式按 staged / HEAD 比对时，directory 仍是 primary，worktree 才是请求的工作树）
+> 3. **API 演进安全** — 未来可独立改两个字段语义而不破坏 client
 
 ```json
 {
@@ -192,23 +198,49 @@
 不走"必须在 worktree list 中"的白名单路线（那要每次 diff 多跑一次 `worktree list`），改为**内禀校验**:
 
 ```python
-# primary 的 common dir（所有 worktree 共享的 .git 父目录）
-common_primary = subprocess.run(
-    [git_bin, "-C", primary, "rev-parse", "--git-common-dir"], ...
-)
-# 请求的 worktree 的 common dir
-common_requested = subprocess.run(
-    [git_bin, "-C", requested, "rev-parse", "--git-common-dir"], ...
-)
+import os
+
+def _resolve_git_common_dir(git_bin: str, worktree_path: str) -> str:
+    """Resolve --git-common-dir to an absolute, case-normalized path.
+
+    CRITICAL: `git rev-parse --git-common-dir` returns a RELATIVE path
+    (e.g. ".git") regardless of the input. Two completely unrelated
+    repos both return ".git" as a string, so a naive equality check
+    would falsely match them. We must resolve to an absolute path
+    and normcase for Windows.
+    """
+    raw = subprocess.run(
+        [git_bin, "-C", worktree_path, "rev-parse", "--git-common-dir"],
+        capture_output=True, text=True, encoding="utf-8"
+    ).stdout.strip()
+    return os.path.normcase(os.path.abspath(os.path.join(worktree_path, raw)))
+
+
+# Use it:
+common_primary = _resolve_git_common_dir(git_bin, primary)
+common_requested = _resolve_git_common_dir(git_bin, requested_worktree)
 if common_primary != common_requested:
-    return "worktree_not_in_repo"   # 是别的 repo，拒绝
+    return _make_git_diff_empty_envelope(
+        umo=umo, reason="worktree_not_in_repo", directory=requested_worktree,
+        elapsed_ms=_elapsed(),
+    )
 ```
 
-**理由**:
+**验证**: spec review 阶段已用 git 2.43.0 (Windows) 实测：
+- 两个不相关 repo `repoA` / `repoB`：`--git-common-dir` 都返回 `.git`（相对路径，字符串相同 → 朴素 `==` 会误判放行）
+- 加 `abspath + normcase` 后：`c:\...\repoa\.git` ≠ `c:\...\repob\.git`（正确拒绝）
+- 同一 repo 的主 worktree 与 linked worktree：均解析到 `c:\...\主目录\.git`（正确放行）
+
+**为什么这样设计（理由）**:
 - 1 个 git 调用替代 1 次 `worktree list` 调用（同样 1 个 subprocess）
 - 不需要 cache、不需要 list 上下文
 - 即使 frontend 被人为篡改 / 写错路径，**后端仍能拦截跨 repo 读取**
 - 与 `_is_path_safe` 互为补充：前者防"跨 repo"，后者防"系统目录/黑名单"
+
+**已知陷阱（实现时必须注意）**:
+- ❌ **不能**用朴素 `==` 比较 `rev-parse --git-common-dir` 的原始输出（会误判放行跨 repo）
+- ❌ **不能**依赖 `--absolute-git-common-dir`（仅 git ≥ 2.45 支持，2026-06 当前 git 2.43 仍会回显 flag 名本身）
+- ✅ 必须用 `os.path.normcase(os.path.abspath(os.path.join(path, raw)))` 三步组合
 
 ### 2.4 `handle_get_git_diff` 修改后流程
 
@@ -218,16 +250,21 @@ if common_primary != common_requested:
 3. primary Path.is_dir() 检查
 4. primary git probe (rev-parse --is-inside-work-tree)
    ↓
-5. 读 ?worktree query param
+5. 读 ?worktree query param（trim 后空 → 视同缺省）
    ↓
 6. 若 worktree 提供：
-   - trim 后空 → 视同缺省
-   - length & format 检查（≤4096 字符；不含 `..`）
-   - _is_path_safe 黑名单检查
-   - Path.is_dir() 检查
-   - git-common-dir 与 primary 比对
-   - 全过则 resolved_worktree = worktree
-   - 否则返回对应 reason 的空 envelope
+   ① length & format 检查（≤4096 字符；不含 `..`）
+      失败 → reason="worktree_path_invalid"
+   ② Path.resolve() 解析 symlink（防御 §5.2 row 9）
+   ③ _is_path_safe 黑名单检查
+      失败 → reason="worktree_path_unsafe"
+   ④ Path.is_dir() 检查
+      失败 → reason="worktree_missing"
+   ⑤ git rev-parse --is-inside-work-tree (在 worktree 上)
+      失败 → reason="not_a_git_repo"
+   ⑥ git-common-dir 解析后与 primary 比对（§2.3 的 abs-path 算法）
+      不一致 → reason="worktree_not_in_repo"
+   全过则 resolved_worktree = worktree
    ↓
 7. resolved_worktree 缺省 → 用 primary
 8. git_prefix = [git_bin, "-C", resolved_worktree, "-c", "color.ui=never"]
@@ -282,10 +319,12 @@ async function refresh(): Promise<void> {
   // ... existing parse / state assignment
 }
 
-// ★ 新增：worktree 变化时自动 refresh（Q5=A：只 poll 激活的）
+// ★ 新增：worktree 变化时自动 refresh（Q5=A：只 poll 激活的）。
+// flush: 'post' 避免在同一 tick 内多次状态更新引发的 cascade；
+// immediate: false（默认）确保首次 mount 时不重复 fetch（首次由 modelValue watch 触发）。
 watch(worktreeRef, () => {
   if (isMounted) void refresh()
-})
+}, { flush: 'post' })
 ```
 
 **关键不变量**:
@@ -347,6 +386,11 @@ export function useSpcodeWorktrees(): UseSpcodeWorktrees {
 }
 ```
 
+**已知行为（实现时保留）**: `useSpcodeWorktrees` **不**主动监听 `umo` 变化。理由：
+- 变化频率极低（只在 `/project load` / umo 切换时）
+- 调用方（`GitDiffSidebar`）已经在监听 `spcodeStatus.status.value.directory`（§3.4），会主动调用 `wt.refresh()`
+- 加 `watch(umo)` 会引入双重 fetch（自身 watch + 父组件 watch）
+
 **与 `useSpcodeProjectStatus` / `useSpcodeGitDiff` 完全对称的形状**，方便后续维护。
 
 ### 3.4 `GitDiffSidebar.vue` 的状态机
@@ -367,22 +411,34 @@ watch(
   },
 )
 
-// 首次打开 sidebar 时：拉 worktree + diff
+// 首次打开 sidebar 时：先拉 worktree 列表（顺序），再选 primary，最后拉 diff
+//   顺序而非并行的原因：避免"先 diff primary (worktree=null) 再 diff primary (worktree=path)"
+//   的重复请求——后者是前者的同内容重发，浪费一次 RTT
 watch(() => props.modelValue, async (open) => {
   if (open) {
-    await Promise.all([wt.refresh(), composable.refresh()])
-    if (wt.worktrees.value.length > 0 && selectedWorktree.value === null) {
-      const primary = wt.worktrees.value.find(w => w.is_main)
-      if (primary) selectedWorktree.value = primary.path
+    await wt.refresh()                                        // 1) 拉 worktrees
+    if (wt.worktrees.value.length > 0) {
+      const primary = wt.worktrees.value.find(w => w.is_main) ?? wt.worktrees.value[0]
+      selectedWorktree.value = primary.path                    // 2) 默认 = primary (Q3=A)
     }
+    await composable.refresh()                                // 3) 拉 primary diff（1 次）
     if (props.modelValue) composable.startPolling(10_000)
   } else {
     composable.stopPolling()
   }
 }, { immediate: true })
-```
 
-**首次打开接受 1 次重复 fetch**（先 `null`→primary diff，再 `primary.path`→primary diff，幂等但浪费 1 次）。accept 原因：换来"tabs 立即显示主 worktree 选中态"的可视化清晰。
+// 用户手动 Refresh 按钮：同时刷新 worktree list + diff
+async function onManualRefresh(): Promise<void> {
+  if (isFetching.value) return
+  isFetching.value = true
+  try {
+    await Promise.all([wt.refresh(), composable.refresh()])
+  } finally {
+    isFetching.value = false
+  }
+}
+```
 
 ### 3.5 `parseSpcodeGitDiff.ts` 新增类型
 
@@ -414,7 +470,7 @@ export interface SpcodeGitWorktreesRawResponse {
 |----------|------------------|-----------|------|
 | Sidebar 首次打开 | `null` → primary.path | 已加载 | 1 次额外 fetch（accept） |
 | 用户切到 worktree B | B | 不变 | watch → composable 自动 fetch B |
-| 用户按 Refresh 按钮 | 不变 | reload | 2 个 endpoint 都打 |
+| 用户按 Refresh 按钮 | 不变 | reload | `onManualRefresh` 并行打 2 个 endpoint（见 §3.4） |
 | `/project load newPath` | `null` → newPrimary | reload | directory watch 触发 |
 | `/project unload` | `null` | `[]` | sidebar 自动关闭（沿用现有行为） |
 | umo 变化（罕见） | `null` | reload | directory watch 触发 |
@@ -472,7 +528,7 @@ DOM 位置：在现有 `<div class="git-diff-sidebar-warning">` 之后、`<div c
 
 | Worktree 状态 | 图标 | 含义 |
 |---------------|------|------|
-| `is_main: true` | `mdi-home` (12px) | 用户 `/project load` 的主 worktree |
+| `is_main: true` | `mdi-home` (desktop 12px / mobile 14px) | 用户 `/project load` 的主 worktree |
 | `is_main: false`，有 branch | `mdi-source-branch` (12px) | 普通 linked worktree |
 | `is_main: false`，detached | `mdi-source-branch` (12px) | detached HEAD worktree |
 
@@ -539,7 +595,13 @@ function onSelectWorktree(path: string | null) {
 }
 ```
 
-（仅 1 个键，4 种 locale 同步。detached SHA 的 tooltip 不需要 i18n——是技术数据。）
+**4 个 locale 文件**（实现时必须全部更新）:
+- `dashboard/src/i18n/locales/zh-CN/features/chat.json`
+- `dashboard/src/i18n/locales/en-US/features/chat.json`
+- `dashboard/src/i18n/locales/ru-RU/features/chat.json`
+- `dashboard/src/i18n/locales/ja-JP/features/chat.json`
+
+detached SHA 的 tooltip 不需要 i18n——是技术数据。
 
 ---
 
@@ -578,7 +640,7 @@ function onSelectWorktree(path: string | null) {
 | 6 | `?worktree=/path/that/was/once/a/worktree` | `worktree_missing` |
 | 7 | `?worktree=/path/to/totally/different/repo` | `worktree_not_in_repo`（git-common-dir 不一致） |
 | 8 | `?worktree=/path/with/中文/dir` | 正常返回（依赖 utf-8，**已回归**） |
-| 9 | `?worktree` 在 path 上是 symlink | `Path.resolve()` 后再校验 |
+| 9 | `?worktree` 在 path 上是 symlink | `Path.resolve()` 后再校验（§2.4 步骤 ②） |
 | 10 | 同一 umo 并发 2 个不同 worktree 的 diff 请求 | 各自独立，互不干扰（无共享 mutable state） |
 
 #### 前端（dashboard）
@@ -625,26 +687,29 @@ i18n 文本（4 locale × 4 键 = 16 条）:
 
 ```
   Frontend                                          Backend
-                                                   
-  Tab 点击 ─→ selectedWorktree = path               
-                    │                               
-                    │   HTTP GET ?worktree=path      
-                    └──────────────────────────────→ 1. length & format check
-                                                     2. _is_path_safe(path)
-                                                     3. Path.is_dir()
-                                                     4. git rev-parse --is-inside-work-tree
-                                                     5. git rev-parse --git-common-dir
-                                                        对比 primary 的 common-dir
+
+  Tab 点击 ─→ selectedWorktree = path
+                    │
+                    │   HTTP GET ?worktree=path
+                    └──────────────────────────────→ ① length & format check
+                                                     ② Path.resolve() 解析 symlink
+                                                     ③ _is_path_safe(path)
+                                                     ④ Path.is_dir()
+                                                     ⑤ git rev-parse --is-inside-work-tree
+                                                     ⑥ _resolve_git_common_dir(...)
+                                                        与 primary 的 common-dir 比对
+                                                        (绝对路径 + normcase，见 §2.3)
                                                      ↓
                                                   ✓ 全部通过才执行 git diff
 ```
 
-**为什么 5 道关**:
+**为什么 6 道关**:
 1. **format** — 防协议级误用（空串、`..`、超长）
-2. **safety** — 复用现有黑名单，与 AGENTS.md / codegraph 行为对齐
-3. **is_dir** — 路径存在性，避免把"路径已删"的请求继续往下传
-4. **is-inside-work-tree** — 确认是 git worktree
-5. **git-common-dir** — 核心防越权：跨 repo 的 worktree 路径必须被拒
+2. **symlink resolve** — 防止通过 symlink 绕过黑名单（`/safe` 是 symlink → `/unsafe`）
+3. **safety** — 复用现有黑名单，与 AGENTS.md / codegraph 行为对齐
+4. **is_dir** — 路径存在性，避免把"路径已删"的请求继续往下传
+5. **is-inside-work-tree** — 确认是 git worktree
+6. **git-common-dir (abs-path + normcase)** — 核心防越权：跨 repo 的 worktree 路径必须被拒
 
 后端**不信任**前端传的任何 `?worktree` 值，每条路径都重新校验。Frontend 拿到拒绝 → 显示错误态（**不**自动回弹，per §5.1 决策）。
 
@@ -665,6 +730,8 @@ i18n 文本（4 locale × 4 键 = 16 条）:
 |------|------|------------|
 | **旧 dashboard × 新 backend** | dashboard 请求 `/spcode/git-diff`（无 `?worktree`）→ backend 视同 `worktree=null` → 返回 primary diff；dashboard 永远不调 `/spcode/git-worktrees` | ✅ 完全兼容 |
 | **新 dashboard × 旧 backend** | dashboard 请求 `/spcode/git-worktrees` → backend 路由不存在 → 404 → 前端 `wt.error` 非空 → **tabs 隐藏**；diff 请求 `/spcode/git-diff?worktree=...` → 旧 backend 忽略未知 query param → 返回 primary diff | ✅ 降级但不报错 |
+
+**降级路径必须测试**: 附录 A §前端测试 增补 `it('hides tabs when /spcode/git-worktrees returns 404 (legacy backend)')` 验证 `useSpcodeWorktrees` 正确把 404 归类为 `error='unknown'`、tabs 不渲染、diff 仍按 v1 正常显示。
 | **新 dashboard × 新 backend** | 完整功能 | ✅ 目标状态 |
 
 **结论**: **两个 repo 独立部署无顺序依赖**。任意一边先上线都不破坏另一边。
@@ -720,7 +787,8 @@ i18n 文本（4 locale × 4 键 = 16 条）:
 |------|------|------|
 | 设计 spec | `astrbot_plugin_spcode_toolkit/docs/superpowers/specs/2026-06-18-git-worktree-switcher-design.md` | 本设计全文 |
 | 实现 plan | `astrbot_plugin_spcode_toolkit/docs/superpowers/plans/2026-06-18-git-worktree-switcher-impl.md` | writing-plans 阶段产出 |
-| spcode `_conf_schema.json` | 注释 + API 文档 | 1-2 行：新增 `/spcode/git-worktrees`，`/spcode/git-diff` 新增 `?worktree` |
+| spcode `README.md` (主 README) | 修改 | 1-2 行：API 表格新增 `/spcode/git-worktrees`，`/spcode/git-diff` 新增 `?worktree` |
+| spcode `_conf_schema.json` | **不修改** | 纯 endpoint 不需新 config 字段；feature flag 已 §6.5 论证不加 |
 | dashboard AGENTS.md | `dashboard/AGENTS.md` | `## Worktree Switcher` 章节：API 路径、composable、tab UI 规则 |
 | 注释 | 各源文件 | 已在本设计 §3 / §4 中明确 |
 
@@ -750,12 +818,39 @@ i18n 文本（4 locale × 4 键 = 16 条）:
 
 **核心不变量**（再次强调，避免实现时漂移）:
 1. `_loaded_projects` 永不被新代码修改（Q1=A）
-2. `_GIT_DIFF_ENCODING = "utf-8"`（上轮 fix 的边界不能再退回去）
+2. **`handle_get_git_diff` 内所有 git subprocess 调用都用 `encoding="utf-8"`**（覆盖上一轮 fix 改动的 5 处：line 1750 探测 + line 1796-1799 四个 diff 调用）。**模块级 `_GIT_DIFF_ENCODING = detect_console_encoding()` 常量保持不变**（仅被 `__init__` 启动期 `git --version` 探测使用，输出 ASCII 不受影响）。注意不要在本次实现中"顺手"删常量或改默认值
 3. worktree list 永远从 **primary 的 git dir** 派生（保证同一份 git 仓库的工作树集合）
 4. diff 永远只 poll **激活的** worktree（Q5=A）
 5. 默认选中 = **primary**（Q3=A，无持久化）
+6. **`_resolve_git_common_dir` 必须用 abs-path + normcase 比较**（§2.3），不能直接比较 `rev-parse` 的原始输出（跨 repo 误判）
 
 ---
+
+
+
+---
+
+## 附录 C: Spec Review Q&A（v1 决策的明确化）
+
+> 此节回应 spec reviewer 子代理提出的 5 个问题。**所有 v1 答案**已在前面章节落实，此处集中显式记录以便未来 review 时不必重新讨论。
+
+| # | Reviewer 问题 | v1 决策 | 落实位置 |
+|---|---------------|---------|----------|
+| 1 | Q5=A（只 poll 激活的）vs Q5=C（hover-to-refresh）哪个更好？ | **A**: Q5=A 维持 v1 决策。理由：(a) 复杂 tab 交互引入新的 bug 维度；(b) 当前 `refresh()` 1 RTT 已够快；(c) 用户主动按 Refresh 按钮可获得即时刷新 | §3.2 §3.4 |
+| 2 | localStorage 持久化 `selectedWorktree` (Q3=B) 是显式拒绝还是没提？ | **显式拒绝**。理由：(a) 跨 umo/浏览器/隐私模式不一致；(b) stale state 需要额外失效逻辑；(c) Q3=A 是"项目切换时重置到 primary"的最简心智模型 | §3.1 |
+| 3 | 外部 `git worktree add` 后 sidebar 不会自动感知（要按 Refresh）是有意的吗？ | **有意**。理由：(a) worktree list 变化频率极低；(b) Q5=A + 列表无 polling 是设计选择；(c) 不引入新的"auto-refresh on focus"机制，保持 polling 行为可预测 | §3.4 §3.6 |
+| 4 | 为什么不用 `/spcode/project-status` 加 `worktrees: [...]` 字段而要新建 endpoint？ | Q2=A 决策：(a) 职责分离（project-status 关心 session state，git-worktrees 关心 git repo state）；(b) worktree list 极低频，独立 endpoint 便于懒加载/缓存；(c) project-status 与 git 强耦合会污染其语义 | §2.1 |
+| 5 | `?worktree` 将来会变成必选吗（破坏性变更）？ | **不会**。Q1=A + 5 关防御要求 `?worktree` 始终可选。v1/v2 保持纯 additive | §2.2 §5.1 |
+
+**Reviewer 在 v1 中提出的"Suggestions"处理记录**：
+- S1 ✅: §2.2 补充 `directory` 与 `worktree` 双字段的演进理由
+- S2 ✅: §4.4 主 worktree 图标在 mobile 上 14px（与 v1 desktop 12px 共用 `v-icon`，仅 mobile CSS 覆盖）
+- S3 ✅: §3.3 显式说明 `useSpcodeWorktrees` 不监听 umo
+- S4 ✅: §2.4 步骤 ② 增加 `Path.resolve()` symlink 处理
+- S5 ✅: §3.2 worktree watcher 加 `flush: 'post'`
+- S6 ✅: §6.1 增补"新 dashboard × 旧 backend"404 降级测试
+- S7 ✅: §6.6 文档目标改为 `README.md`，删除 `_conf_schema.json` 行（无新 config 字段）
+- S8 ✅: §4.10 显式列出 4 个 locale（zh-CN, en-US, ru-RU, ja-JP）作为实现 checklist 必备项
 
 ## 附录 A: 测试计划
 
