@@ -33,17 +33,17 @@
 | Status | Path | Responsibility |
 |--------|------|----------------|
 | **Create** | `src/composables/useSpcodeWorktrees.ts` | Worktree list fetching + state |
-| **Create** | `tests/composables/useSpcodeWorktrees.test.ts` | Composable tests |
+| **Create** | `tests/composables/useSpcodeWorktrees.test.ts` | Composable tests (new — no existing test file for this) |
 | **Modify** | `src/composables/parseSpcodeGitDiff.ts` | Add `SpcodeWorktree`, `SpcodeGitWorktreesRawResponse` types; add `worktree` field to `SpcodeGitDiffRawResponse` |
 | **Modify** | `src/composables/useSpcodeGitDiff.ts` | Accept `worktreeRef: MaybeRef<string\|null>`; add `watch` on it |
 | **Modify** | `src/components/chat/GitDiffSidebar.vue` | Add `selectedWorktree` ref, `useSpcodeWorktrees`, tabs UI, sequential fetch flow, multi-row wrap CSS |
 | **Modify** | `src/components/chat/message_list_comps/GitDiffBodyContent.vue` | Extend `REASON_I18N_KEYS` with 4 worktree reasons |
-| **Modify** | `src/i18n/locales/zh-CN/features/chat.json` | Add `worktreeTabs.ariaLabel` |
+| **Modify** | `src/i18n/locales/zh-CN/features/chat.json` | Add `worktreeTabs.ariaLabel` + 4 reason keys |
 | **Modify** | `src/i18n/locales/en-US/features/chat.json` | Same |
 | **Modify** | `src/i18n/locales/ru-RU/features/chat.json` | Same |
 | **Modify** | `src/i18n/locales/ja-JP/features/chat.json` | Same |
-| **Modify** | `tests/composables/useSpcodeGitDiff.test.ts` | Add worktree ref test cases |
-| **Modify** | `tests/components/GitDiffSidebar.test.ts` | Add tabs test cases |
+| **Create** | `tests/composables/useSpcodeGitDiff.test.ts` | NEW FILE — composable tests including worktree ref cases |
+| **Create** | `tests/components/GitDiffSidebar.test.ts` | NEW FILE — sidebar component tests including tabs cases |
 | **Modify** | `AGENTS.md` | New "## Worktree Switcher" section |
 
 ---
@@ -1485,9 +1485,9 @@ Dispatch plan-document-reviewer. Continue to Chunk 7 only after APPROVED.
 ## Task 7.1: Frontend tests
 
 **Files:**
-- Create: `tests/composables/useSpcodeWorktrees.test.ts`
-- Modify: `tests/composables/useSpcodeGitDiff.test.ts`
-- Modify: `tests/components/GitDiffSidebar.test.ts`
+- Create: `tests/composables/useSpcodeWorktrees.test.ts` (new — no existing test file)
+- Create: `tests/composables/useSpcodeGitDiff.test.ts` (new — no existing test file)
+- Create: `tests/components/GitDiffSidebar.test.ts` (new — no existing test file)
 
 - [ ] **Step 1: Create `useSpcodeWorktrees.test.ts`**
 
