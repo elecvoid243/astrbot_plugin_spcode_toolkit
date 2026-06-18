@@ -245,3 +245,30 @@ def test_remove_user_blacklist_error_message(tmp_path: Path):
     )
     assert r["ok"] is False
     assert "用户" in r["error"] or "用户配置" in r["proposal"]
+
+
+def test_remove_returns_error_when_trash_fails(tmp_path: Path, _mock_send2trash):
+    """send2trash 抛 OSError(常见:Linux 缺 trash-cli) → 返回结构化错误,不 fallback 到物理删除。"""
+    f = tmp_path / "a.txt"
+    f.write_text("hi", encoding="utf-8")
+    _mock_send2trash.send2trash.side_effect = OSError("trash-cli not found")
+
+    r = file_remove.remove(str(f))
+
+    assert r["ok"] is False
+    assert "回收站不可用" in r["error"]
+    assert "trash-cli" in r["error"]
+    # 文件仍在原路径(没有 fallback 到 os.remove)
+    assert f.exists() is True
+
+
+def test_remove_returns_error_on_permission_denied(tmp_path: Path, _mock_send2trash):
+    """send2trash 抛 PermissionError → 明确提示权限,不走 OSError 兜底。"""
+    f = tmp_path / "locked.txt"
+    f.write_text("x", encoding="utf-8")
+    _mock_send2trash.send2trash.side_effect = PermissionError("Access denied")
+
+    r = file_remove.remove(str(f))
+
+    assert r["ok"] is False
+    assert "无权限移入回收站" in r["error"]
