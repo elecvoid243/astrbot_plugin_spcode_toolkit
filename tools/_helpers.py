@@ -168,3 +168,31 @@ def proposal_reply(
     if next_call:
         result["next_call"] = next_call
     return result
+
+
+# ─── Git worktree helpers (spec §2.3) ───────────────────────────────────
+# Author: elecvoid243 @ 2026-06-18
+# Spec: docs/superpowers/specs/2026-06-18-git-worktree-switcher-design.md
+
+import os  # noqa: E402  (kept here to keep diff minimal)
+
+
+def _resolve_git_common_dir(git_bin: str, worktree_path: str) -> str:
+    """Resolve `git rev-parse --git-common-dir` to an absolute, case-normalized path.
+
+    `git rev-parse --git-common-dir` returns a RELATIVE path (e.g. ".git")
+    regardless of the input directory. Two completely unrelated repos both
+    return ".git" as a string, so a naive equality check would falsely match
+    them — enabling a cross-repo data leak. We must resolve to an absolute
+    path and normcase for Windows before comparing.
+
+    See spec §2.3 for the empirical verification.
+    """
+    raw = subprocess.run(
+        [git_bin, "-C", worktree_path, "rev-parse", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=10,
+    ).stdout.strip()
+    return os.path.normcase(os.path.abspath(os.path.join(worktree_path, raw)))
