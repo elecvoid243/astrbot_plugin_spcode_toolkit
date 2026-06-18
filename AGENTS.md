@@ -246,6 +246,36 @@ astrbot_plugin_spcode_toolkit/
 7. **变更前**可参考 `docs/` 下的评审记录(如 `file_remove_review_2026-06-07.md`)
 8. **不要**修改 `_conf_schema.json` 的字段名而不迁移既有用户配置
 9. **路径安全**:任何涉及用户输入路径的代码,先调用 `_path_safety` 校验,**不要**自己实现路径判断
+10. **Web API 参数安全**:`?worktree=` 等用户控制的路径参数,必须经过 `_validate_worktree_param`
+    (位于 `tools/_helpers.py`)的 6 步防御链:**关键不变量 — git-common-dir 不匹配 = 直接拒绝**
+
+## Web API 端点(供 Dashboard 消费)
+
+`main.py` 暴露的 Web 路由(注册在 `_register_routes` 中,挂载前缀 `/spcode`):
+
+| 端点 | 方法 | 用途 | 关键参数 |
+|------|------|------|---------|
+| `/spcode/project-status` | GET | 当前加载项目状态 | `umo?` |
+| `/spcode/git-diff` | GET | 工作区 diff | `umo`, `worktree?` |
+| `/spcode/git-worktrees` | GET | 列出 worktree | `umo` |
+
+**`?worktree=` 参数(2026-06-18 引入)**:
+- 完全可选,缺省 = primary worktree,行为与 v1 完全一致
+- 6 步防御链(`_validate_worktree_param`):
+  1. 长度 & `..` 段检查
+  2. `Path.resolve()` symlink 解析
+  3. `os.path.isdir()` 存在性
+  4. 隐藏目录组件(`.git/...`)拒绝
+  5. `realpath != 原路径` → 拒绝 symlink 越界
+  6. **`git-common-dir` 与 primary 匹配**(最后兜底)
+- 即便前 5 步全部误配,跨仓库攻击仍会被步骤 6 拦下
+
+**相关测试**:
+- `tests/test_git_diff_worktree.py` — 10 个 `?worktree=` 攻击向量
+- `tests/test_git_worktrees.py` — `git-worktrees` endpoint
+- `tests/test_helpers_git.py` — `_resolve_git_common_dir` / `_parse_git_worktree_porcelain`
+
+设计依据见 `docs/superpowers/specs/2026-06-18-git-worktree-switcher-design.md`。
 
 ## pytest 速查
 
