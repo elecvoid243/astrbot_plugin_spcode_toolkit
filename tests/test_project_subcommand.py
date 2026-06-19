@@ -56,7 +56,12 @@ def _make_plugin():
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # WHY: 早期用 ``asyncio.get_event_loop().run_until_complete(coro)``,在
+    # 第一个测试用 ``asyncio.run()``(即 ``_collect_async_gen``) 后,事件循环
+    # 会被关闭, ``get_event_loop()`` 在 strict mode 下会抛
+    # "There is no current event loop"。改用 ``asyncio.run()`` 隔离每个测试
+    # 的事件循环,避免 suite 内的相互污染。
+    return asyncio.run(coro)
 
 
 async def _drive(plugin, event, sub_command, *args):
@@ -67,14 +72,55 @@ async def _drive(plugin, event, sub_command, *args):
     return msgs
 
 
+# WHY: 本文件的旧测试用 ``/tmp/...`` 之类的真实路径触发 ``/project load``,
+# 依赖旧版"无条件记录 _loaded_projects" 的 bug 行为 — bug 修了之后
+# 路径不存在导致子步骤失败, load 正确中止, 测试就 fail。
+# (v2.7.1 修复: 子步骤 yield ❌ 即中止)
+# 修法: 用 mock 模拟 4 个子步骤全部成功,让测试聚焦于 _project_router 的
+# 分发逻辑和 _loaded_projects 的状态机,而不是子步骤的副作用。
+def _patch_substeps_success(plugin):
+    """Mock 4 个子步骤为成功路径 — yield 单一 OK 消息后结束。"""
+
+    async def _ok(*args, **kwargs):
+        yield "mock-substep-ok"
+
+    for name in (
+        "_agentsmd_init",
+        "_agentsmd_load",
+        "_codegraph_init_or_uninit",
+        "_codegraph_set_project",
+    ):
+        m = MagicMock()
+        m.side_effect = _ok
+        setattr(plugin, name, m)
+    # _agentsmd_unload 是同步方法
+    plugin._agentsmd_unload = MagicMock(return_value="mock-unload-ok")
+
+
+@pytest.fixture
+def plugin_with_mocks():
+    """提供 plugin 实例并已 mock 4 个子步骤为成功路径。
+
+    适用于需要触发 ``/project load`` 成功路径的测试。
+    """
+    p = _make_plugin()
+    _patch_substeps_success(p)
+    return p
+
+
 @pytest.fixture
 def plugin():
     return _make_plugin()
 
 
-def test_project_load_registers_loaded_directory(plugin):
+def test_project_load_registers_loaded_directory(plugin_with_mocks):
     """``/project load <dir>`` should register the directory under the
-    event's umo so subsequent ``status`` queries succeed."""
+    event's umo so subsequent ``status`` queries succeed.
+
+    v2.7.1: 改用 mock 子步骤,避免依赖真实文件系统(原版用 /tmp/some/repo,
+    但路径不存在时子步骤会失败,新版会正确中止而非假成功)。
+    """
+    plugin = plugin_with_mocks
     event = _make_event()
     path = "/tmp/some/repo"
     msgs = _run(_drive(plugin, event, "load", path))
@@ -95,9 +141,13 @@ def test_project_load_without_directory_arg_reports_error(plugin):
     assert event.unified_msg_origin not in plugin._loaded_projects
 
 
-def test_project_unload_clears_directory(plugin):
+def test_project_unload_clears_directory(plugin_with_mocks):
     """``/project unload`` should remove the entry so ``status`` reports
-    nothing loaded."""
+    nothing loaded.
+
+    v2.7.1: 改用 mock 子步骤,见 ``test_project_load_registers_loaded_directory``。
+    """
+    plugin = plugin_with_mocks
     event = _make_event()
     _run(_drive(plugin, event, "load", "/tmp/x"))
     assert event.unified_msg_origin in plugin._loaded_projects
@@ -105,8 +155,12 @@ def test_project_unload_clears_directory(plugin):
     assert event.unified_msg_origin not in plugin._loaded_projects
 
 
-def test_project_status_reports_loaded_project(plugin):
-    """``/project status`` should mention the directory when one is loaded."""
+def test_project_status_reports_loaded_project(plugin_with_mocks):
+    """``/project status`` should mention the directory when one is loaded.
+
+    v2.7.1: 改用 mock 子步骤,见 ``test_project_load_registers_loaded_directory``。
+    """
+    plugin = plugin_with_mocks
     event = _make_event()
     _run(_drive(plugin, event, "load", "/tmp/y"))
     msgs = _run(_drive(plugin, event, "status"))

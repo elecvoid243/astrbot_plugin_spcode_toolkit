@@ -60,7 +60,18 @@ async def _drain(agen):
     return out
 
 
-def _patch_internal_methods(plugin, *, agentsmd_md_exists=False):
+def _make_error_gen(error_msg: str = "❌ 模拟失败:原因"):
+    """工厂:返回一个 async generator 函数,被调时 yield 一条错误消息后结束。
+
+    用作测试夹具 — 模拟子方法返回错误但优雅退出的场景
+    (即 _project_load_impl 期望"yield 错误 + return" 而不是抛异常)。
+    """
+    async def _gen(*args, **kwargs):
+        yield error_msg
+    return _gen
+
+
+def _patch_internal_methods(plugin, *, agentsmd_md_exists=False, custom_async_gens=None):
     """把 plugin 的 5 个内部方法替换为 mock,返回可观察的 mock 实例。
 
     重要:这里要区分两类方法:
@@ -72,10 +83,19 @@ def _patch_internal_methods(plugin, *, agentsmd_md_exists=False):
 
     注意:不能对 async generator 方法用 AsyncMock——
     AsyncMock 调用返回 coroutine(需 await),而 `async for` 需要 async generator。
+
+    Args:
+        plugin: 目标 plugin 实例。
+        agentsmd_md_exists: 保留参数(早期 API,目前未使用)。
+        custom_async_gens: 可选 dict,key=async gen 方法名,value=自定义 side_effect
+            (一个 async generator 函数)。未指定的 method 仍用默认的 _async_gen_ok。
+            例如: ``{"_agentsmd_init": _make_error_gen("❌ ...")}`` 可让 init
+            调用返回错误消息,其它方法保持成功。
     """
+    custom_async_gens = custom_async_gens or {}
 
     async def _async_gen_ok(*args, **kwargs):
-        """通用 async generator,被所有 async gen 方法复用。"""
+        """通用 async generator,被所有未自定义的 async gen 方法复用。"""
         yield "mock-async-gen-ok"
 
     # 异步生成器方法
@@ -93,7 +113,7 @@ def _patch_internal_methods(plugin, *, agentsmd_md_exists=False):
     mocks = {}
     for name in async_gen_methods:
         m = MagicMock()
-        m.side_effect = _async_gen_ok  # 调用时返回 async generator
+        m.side_effect = custom_async_gens.get(name, _async_gen_ok)
         setattr(plugin, name, m)
         mocks[name] = m
     for name in sync_methods:
@@ -299,6 +319,197 @@ def test_project_load_happy_path_calls_all_steps(tmp_path):
 
     # 汇总消息
     assert any("项目已加载" in m for m in msgs)
+
+
+# ── 5.5 子步骤失败 → 中止(回归测试 v2.7.1)───────────────
+#
+# 背景: 之前 _project_load_impl 透传子方法的 yield 消息但没追踪错误,
+# 导致 AGENTS.md init/load 或 codegraph init/set 任一失败时,
+# 仍会无条件 yield "✅ 项目已加载" 并把假成功登记到 _loaded_projects。
+# 这些测试验证修复:子方法 yield "❌" 即立刻中止,不再继续后续步骤。
+# "⚠️" 不算失败(_codegraph_init_or_uninit 内部 retry 路径会用到)。
+
+
+def test_project_load_aborts_on_agentsmd_init_error(tmp_path):
+    """agentsmd_init yield ❌ → 立刻中止,不调后续方法,不登记 _loaded_projects。
+
+    验证:
+    - 错误消息被转发
+    - 后续 3 个子方法(agentsmd_load / codegraph_init / codegraph_set)**未被调**
+    - "✅ 项目已加载" 不出现
+    - _loaded_projects[umo] 未被填充
+    - 中止总结消息出现
+    """
+    p = tmp_path / "proj"
+    p.mkdir()
+    plugin = _make_plugin()
+    mocks = _patch_internal_methods(
+        plugin,
+        custom_async_gens={
+            "_agentsmd_init": _make_error_gen("❌ 模拟:目录无代码文件"),
+        },
+    )
+    event = _make_event(umo="test:umo")
+
+    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+
+    # 1. 失败消息被原样转发
+    assert any("❌ 模拟:目录无代码文件" in m for m in msgs), (
+        f"应转发 init 错误消息,实际: {msgs}"
+    )
+    # 2. init 确实被调了一次
+    mocks["_agentsmd_init"].assert_called_once()
+    # 3. 后续 3 个子方法**未被调**(stop at first error)
+    mocks["_agentsmd_load"].assert_not_called()
+    mocks["_codegraph_init_or_uninit"].assert_not_called()
+    mocks["_codegraph_set_project"].assert_not_called()
+    # 4. 中止总结消息出现
+    assert any("失败" in m and "中止" in m for m in msgs), (
+        f"应出现 abort 总结消息,实际: {msgs}"
+    )
+    # 5. 成功消息不出现
+    assert not any("项目已加载" in m for m in msgs), (
+        f"不应出现成功消息,实际: {msgs}"
+    )
+    # 6. 状态未登记
+    assert "test:umo" not in plugin._loaded_projects, (
+        '失败时 _loaded_projects 不应被填充,避免幽灵 load 阻塞后续 /project load'
+    )
+
+
+def test_project_load_aborts_on_agentsmd_load_error(tmp_path):
+    """agentsmd_init 成功,agentsmd_load 失败 → 中止,codegraph 方法不被调。"""
+    p = tmp_path / "proj"
+    p.mkdir()
+    plugin = _make_plugin()
+    mocks = _patch_internal_methods(
+        plugin,
+        custom_async_gens={
+            "_agentsmd_load": _make_error_gen("❌ 模拟:AGENTS.md 加载失败"),
+        },
+    )
+    event = _make_event(umo="test:umo")
+
+    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+
+    # init 仍被调(load 之前 init 完成)
+    mocks["_agentsmd_init"].assert_called_once()
+    # load 被调了一次
+    mocks["_agentsmd_load"].assert_called_once()
+    # codegraph 步骤**未启动**
+    mocks["_codegraph_init_or_uninit"].assert_not_called()
+    mocks["_codegraph_set_project"].assert_not_called()
+    # 错误消息 + 中止总结
+    assert any("❌ 模拟:AGENTS.md 加载失败" in m for m in msgs)
+    assert any("失败" in m and "中止" in m for m in msgs)
+    # 无成功消息
+    assert not any("项目已加载" in m for m in msgs)
+    # 状态未登记
+    assert "test:umo" not in plugin._loaded_projects
+
+
+def test_project_load_aborts_on_codegraph_init_error(tmp_path):
+    """agentsmd init+load 都成功,codegraph_init 失败 → 中止,set 不被调。"""
+    p = tmp_path / "proj"
+    p.mkdir()
+    plugin = _make_plugin()
+    mocks = _patch_internal_methods(
+        plugin,
+        custom_async_gens={
+            "_codegraph_init_or_uninit": _make_error_gen(
+                "❌ 模拟:codegraph CLI 找不到"
+            ),
+        },
+    )
+    event = _make_event(umo="test:umo")
+
+    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+
+    # 前 3 步都被调
+    mocks["_agentsmd_init"].assert_called_once()
+    mocks["_agentsmd_load"].assert_called_once()
+    mocks["_codegraph_init_or_uninit"].assert_called_once()
+    # 最后一步 set **未被调**
+    mocks["_codegraph_set_project"].assert_not_called()
+    # 错误消息 + 中止总结
+    assert any("❌ 模拟:codegraph CLI 找不到" in m for m in msgs)
+    assert any("失败" in m and "中止" in m for m in msgs)
+    # 无成功消息
+    assert not any("项目已加载" in m for m in msgs)
+    # 状态未登记
+    assert "test:umo" not in plugin._loaded_projects
+
+
+def test_project_load_aborts_on_codegraph_set_error(tmp_path):
+    """前 3 步都成功,codegraph_set 失败 → 中止,状态不登记。
+
+    验证 _codegraph_set_project 是最后一道关卡,它的失败也能被正确捕获。
+    """
+    p = tmp_path / "proj"
+    p.mkdir()
+    plugin = _make_plugin()
+    mocks = _patch_internal_methods(
+        plugin,
+        custom_async_gens={
+            "_codegraph_set_project": _make_error_gen("❌ 模拟:MCP 重启失败"),
+        },
+    )
+    event = _make_event(umo="test:umo")
+
+    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+
+    # 前 3 步都被调
+    mocks["_agentsmd_init"].assert_called_once()
+    mocks["_agentsmd_load"].assert_called_once()
+    mocks["_codegraph_init_or_uninit"].assert_called_once()
+    mocks["_codegraph_set_project"].assert_called_once()
+    # 错误消息 + 中止总结
+    assert any("❌ 模拟:MCP 重启失败" in m for m in msgs)
+    assert any("失败" in m and "中止" in m for m in msgs)
+    # 无成功消息
+    assert not any("项目已加载" in m for m in msgs)
+    # 状态未登记(关键 — 假成功绝不能登记)
+    assert "test:umo" not in plugin._loaded_projects
+
+
+def test_project_load_does_not_abort_on_warning(tmp_path):
+    """⚠️ 不触发中止 — _codegraph_init_or_uninit 内部 retry 路径会用到。
+
+    _codegraph_init_or_uninit 在 "目标已初始化 → 自动 --force 重试" 路径上
+    以 "⚠️ ..." 起头,但最终会成功(返回 ✅)。这期间不能被误判为失败。
+    """
+    p = tmp_path / "proj"
+    p.mkdir()
+
+    async def _warning_gen(*args, **kwargs):
+        yield "⚠️ 模拟:目标已初始化,自动用 --force 重试..."
+
+    plugin = _make_plugin()
+    mocks = _patch_internal_methods(
+        plugin,
+        custom_async_gens={
+            "_codegraph_init_or_uninit": _warning_gen,
+        },
+    )
+    event = _make_event(umo="test:umo")
+
+    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+
+    # 后续方法**全部被调**(warning 不中止)
+    mocks["_agentsmd_init"].assert_called_once()
+    mocks["_agentsmd_load"].assert_called_once()
+    mocks["_codegraph_init_or_uninit"].assert_called_once()
+    mocks["_codegraph_set_project"].assert_called_once()
+    # 状态已登记
+    assert "test:umo" in plugin._loaded_projects
+    # 成功消息
+    assert any("项目已加载" in m for m in msgs)
+    # warning 消息被透传
+    assert any("⚠️" in m and "重试" in m for m in msgs)
+    # 不应出现 abort 总结
+    assert not any("失败" in m and "中止" in m for m in msgs), (
+        f"⚠️ 不应触发中止,实际: {msgs}"
+    )
 
 
 def test_project_load_skips_agentsmd_init_if_md_exists(tmp_path):

@@ -171,6 +171,27 @@ _DEFAULT_CONFIG = {
 # 方便单元测试直接 import（避免 main.py 顶层依赖 astrbot.api）
 
 
+# ── /project 命令组(v2.7) ─────────────────────
+
+
+class _ProjectLoadAbort(BaseException):
+    """私有信号异常 — ``_project_load_step`` 用以中止 ``_project_load_impl``。
+
+    为什么用 ``BaseException`` 而非 ``Exception``?
+        子方法(``_agentsmd_init`` 等)和 helpers 内部有大量
+        ``except Exception`` 兜底(见 ``_codegraph_set_project`` 等)。
+        用 ``BaseException`` 可避免该异常被这些 ``except`` 误吞,
+        确保中止信号一定能传到 :meth:`_project_load_impl` 顶层。
+
+    捕获方: :meth:`_project_load_impl` 的 ``try/except _ProjectLoadAbort``
+    块,捕获后 ``return`` 即可。
+    """
+
+    def __init__(self, step_label: str) -> None:
+        self.step_label = step_label
+        super().__init__(step_label)
+
+
 # ── /project 命令注入文本常量(v2.7) ─────────────────────
 # 注入到 system_prompt 的防重复 marker。
 # 与 _agentsmd_mod.INJECTION_MARKER 同等用途——同一请求多次走钩子时不重复追加。
@@ -1429,6 +1450,55 @@ class SPCodeToolkit(star.Star):
             yield msg
         return
 
+    async def _project_load_step(self, event, sub_gen, step_label: str):
+        """Forward messages from a sub-step; abort on first "❌" message.
+
+        用作 :meth:`_project_load_impl` 中所有 4 个子步骤的统一包装层:
+
+        - **透传**: ``sub_gen`` 产出的每条消息都原样 ``yield`` 出去
+        - **检测**: 任何以 ``"❌"`` 开头的消息视为失败
+        - **中止**: 失败时 yield 一条总结消息,然后抛 :class:`_ProjectLoadAbort`
+          终止整个 ``_project_load_impl`` 流程(stop at first error)
+
+        为什么用异常而不是 flag?
+            ``_project_load_impl`` 自己也是 async generator, ``return`` 只能
+            终止自身;无法从 ``async for`` 循环内部跳出整个流。抛出一个私有
+            异常是最干净的方式 — 父函数用 ``try/except _ProjectLoadAbort``
+            接住后直接 ``return`` 即可。
+
+        为什么"❌"而不是返回值?
+            子方法(``_agentsmd_init`` / ``_agentsmd_load`` /
+            ``_codegraph_init_or_uninit`` / ``_codegraph_set_project``)都
+            遵循 "yield 错误消息 + return" 模式,从不抛异常。``❌`` 前缀是
+            它们的统一约定(见 :data:`tools.agentsmd`)。``⚠️`` 不算失败 —
+            ``_codegraph_init_or_uninit`` 在 "已初始化 → 自动 --force 重试"
+            路径上以 ``⚠️`` 起头但最终可能成功。
+
+        Args:
+            event: AstrBot 事件对象(用于 yield abort 总结消息)。
+            sub_gen: 子方法返回的 async generator,**不消耗**,只在这里转发。
+            step_label: 本步的人类可读标签,如 ``"[1/3] AGENTS.md 加载"``。
+
+        Yields:
+            ``sub_gen`` 的全部消息 + (若失败) 一条 abort 总结消息。
+
+        Raises:
+            _ProjectLoadAbort: ``sub_gen`` 至少 yield 过一次以 ``"❌"``
+                开头的消息。调用方应捕获并 ``return``。
+        """
+        failed = False
+        async for msg in sub_gen:
+            yield msg
+            # msg是MessageEventResult类型
+            if isinstance(msg.chain[0].text, str) and msg.chain[0].text.startswith("❌"):
+                failed = True
+        if failed:
+            yield event.plain_result(
+                f"❌ {step_label} 失败,/project load 中止。"
+                "请根据上方错误信息修复后,重试 /project load <directory>。"
+            )
+            raise _ProjectLoadAbort(step_label)
+
     async def _project_load_impl(self, event, directory: str):
         """Implementation of :meth:`project_load`.
 
@@ -1437,12 +1507,17 @@ class SPCodeToolkit(star.Star):
         records the load into ``self._loaded_projects[umo]``, and finally
         yields a summary message.
 
+        任一子步骤失败(yield 任何以 ``❌`` 开头的消息)→ 立即中止整个 load:
+        后续子方法不会被调用, ``_loaded_projects[umo]`` 不会被填充,
+        也不会 yield "✅ 项目已加载"。``⚠️`` 不算失败
+        (见 :meth:`_project_load_step`)。
+
         Args:
             event: AstrBot 事件对象。
             directory: 用户提供的项目目录路径。
 
         Yields:
-            Plain text messages for the user.
+            Plain text messages for the user。
         """
         umo = event.unified_msg_origin
         # 1. Feature flag 校验
@@ -1474,30 +1549,52 @@ class SPCodeToolkit(star.Star):
             yield event.plain_result(f"❌ 路径不允许: {reason}")
             return
 
-        # 4. 步骤 1/3: agentsmd(init 条件性 + load)
-        agents_md_path = target / "AGENTS.md"
-        if not agents_md_path.exists():
-            yield event.plain_result(f"⏳ [1/3] AGENTS.md 不存在,正在 init: {target}")
-            async for msg in self._agentsmd_init(event, str(target)):
+        # 4. 多步加载(任一子步骤失败 → 立即中止,不再登记 _loaded_projects)
+        try:
+            # 步骤 1/3: agentsmd(init 条件性 + load)
+            agents_md_path = target / "AGENTS.md"
+            if not agents_md_path.exists():
+                yield event.plain_result(
+                    f"⏳ [1/3] AGENTS.md 不存在,正在 init: {target}"
+                )
+                async for msg in self._project_load_step(
+                    event,
+                    self._agentsmd_init(event, str(target)),
+                    "[1/3] AGENTS.md 初始化",
+                ):
+                    yield msg
+            else:
+                yield event.plain_result(
+                    f"ℹ️ [1/3] AGENTS.md 已存在,跳过 init: {agents_md_path}"
+                )
+            yield event.plain_result(f"⏳ [1/3] 正在 load AGENTS.md: {target}")
+            async for msg in self._project_load_step(
+                event,
+                self._agentsmd_load(event, str(target)),
+                "[1/3] AGENTS.md 加载",
+            ):
                 yield msg
-        else:
-            yield event.plain_result(
-                f"ℹ️ [1/3] AGENTS.md 已存在,跳过 init: {agents_md_path}"
-            )
-        yield event.plain_result(f"⏳ [1/3] 正在 load AGENTS.md: {target}")
-        async for msg in self._agentsmd_load(event, str(target)):
-            yield msg
 
-        # 5. 步骤 2/3: codegraph init + set
-        yield event.plain_result(f"⏳ [2/3] codegraph init: {target}")
-        async for msg in self._codegraph_init_or_uninit(event, str(target), init=True):
-            yield msg
+            # 步骤 2/3: codegraph init + set
+            yield event.plain_result(f"⏳ [2/3] codegraph init: {target}")
+            async for msg in self._project_load_step(
+                event,
+                self._codegraph_init_or_uninit(event, str(target), init=True),
+                "[2/3] codegraph init",
+            ):
+                yield msg
 
-        yield event.plain_result(f"⏳ [2/3] codegraph set: {target}")
-        async for msg in self._codegraph_set_project(event, str(target)):
-            yield msg
+            yield event.plain_result(f"⏳ [2/3] codegraph set: {target}")
+            async for msg in self._project_load_step(
+                event,
+                self._codegraph_set_project(event, str(target)),
+                "[2/3] codegraph set",
+            ):
+                yield msg
+        except _ProjectLoadAbort:
+            return
 
-        # 6. 记录状态(必须最后,即使前面步骤失败也记录以便 unload 清理)
+        # 5. 记录状态(仅在所有子步骤都成功后才登记)
         loaded_at_ts = _time.time()
         self._loaded_projects[umo] = {
             "directory": str(target),
