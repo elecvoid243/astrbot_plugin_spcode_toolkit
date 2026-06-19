@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
+
 # main.py 用相对导入 (from .tools import ...),需把项目父目录加到 sys.path
 # 然后以包形式导入 main。这样 `from .tools import` 才能 resolve。
 _PROJECT_PARENT = Path(__file__).resolve().parent.parent.parent
@@ -149,9 +150,7 @@ def _run(agen) -> list:
 
 def test_plan_activates_mode():
     """plan 激活模式 + 重置 reminder 标记。"""
-    plugin = _make_plugin(
-        {"plan_mode_blocked_tools": ["astrbot_file_remove"]}
-    )
+    plugin = _make_plugin({"plan_mode_blocked_tools": ["astrbot_file_remove"]})
     event = _make_mock_event()
     msgs = _run(plugin.plan(event))
     text = "".join(str(m) for m in msgs)
@@ -176,9 +175,7 @@ def test_plan_warns_when_blocked_empty():
 
 def test_plan_reactivation_resets_reminded():
     """plan 模式已激活时再次输入,重置 reminded 标记。"""
-    plugin = _make_plugin(
-        {"plan_mode_blocked_tools": ["astrbot_file_remove"]}
-    )
+    plugin = _make_plugin({"plan_mode_blocked_tools": ["astrbot_file_remove"]})
     event = _make_mock_event()
     plugin._plan_mode[event.unified_msg_origin] = True
     plugin._plan_reminded[event.unified_msg_origin] = True
@@ -195,9 +192,7 @@ def test_plan_reactivation_resets_reminded():
 
 def test_build_clears_plan_when_active():
     """build 在 plan 激活时清除状态(等价于"退出 plan 模式")。"""
-    plugin = _make_plugin(
-        {"plan_mode_blocked_tools": ["astrbot_file_remove"]}
-    )
+    plugin = _make_plugin({"plan_mode_blocked_tools": ["astrbot_file_remove"]})
     event = _make_mock_event()
     plugin._plan_mode[event.unified_msg_origin] = True
     plugin._plan_reminded[event.unified_msg_origin] = True
@@ -210,9 +205,7 @@ def test_build_clears_plan_when_active():
 
 def test_build_idempotent_when_not_in_plan():
     """build 在 build 模式(默认)下给提示但不报错。"""
-    plugin = _make_plugin(
-        {"plan_mode_blocked_tools": ["astrbot_file_remove"]}
-    )
+    plugin = _make_plugin({"plan_mode_blocked_tools": ["astrbot_file_remove"]})
     event = _make_mock_event()
     msgs = _run(plugin.build(event))
     text = "".join(str(m) for m in msgs)
@@ -224,9 +217,7 @@ def test_build_idempotent_when_not_in_plan():
 
 def test_plan_state_isolated_per_umo():
     """不同 umo 的 plan 状态互相隔离。"""
-    plugin = _make_plugin(
-        {"plan_mode_blocked_tools": ["astrbot_file_remove"]}
-    )
+    plugin = _make_plugin({"plan_mode_blocked_tools": ["astrbot_file_remove"]})
     plugin._plan_mode["umo:A"] = True
     plugin._plan_mode["umo:B"] = False
     assert plugin._plan_mode["umo:A"] is True
@@ -311,9 +302,7 @@ def test_filter_func_tool_all_filtered_yields_empty_toolset():
 
 def test_plan_hook_noop_when_build_mode():
     """build 模式(默认)下钩子完全 no-op,不动 func_tool 和 contexts。"""
-    plugin = _make_plugin(
-        {"plan_mode_blocked_tools": ["astrbot_file_remove"]}
-    )
+    plugin = _make_plugin({"plan_mode_blocked_tools": ["astrbot_file_remove"]})
     event = _make_mock_event()
     req = _make_mock_request(
         ["astrbot_file_remove", "read"],
@@ -353,7 +342,7 @@ def test_plan_hook_injects_reminder_on_first_call():
     plugin = _make_plugin(
         {
             "plan_mode_blocked_tools": ["astrbot_file_remove"],
-            "plan_mode_reminder": "Plan mode active. Blocked: {blocked}"
+            "plan_mode_reminder": "Plan mode active. Blocked: {blocked}",
         }
     )
     event = _make_mock_event()
@@ -381,7 +370,7 @@ def test_plan_hook_skips_reminder_on_subsequent_calls():
     plugin = _make_plugin(
         {
             "plan_mode_blocked_tools": ["astrbot_file_remove"],
-            "plan_mode_reminder": "Plan mode active."
+            "plan_mode_reminder": "Plan mode active.",
         }
     )
     event = _make_mock_event()
@@ -403,7 +392,7 @@ def test_plan_hook_no_user_message_no_reminder():
     plugin = _make_plugin(
         {
             "plan_mode_blocked_tools": ["astrbot_file_remove"],
-            "plan_mode_reminder": "Plan mode active."
+            "plan_mode_reminder": "Plan mode active.",
         }
     )
     event = _make_mock_event()
@@ -421,10 +410,7 @@ def test_plan_hook_no_user_message_no_reminder():
 def test_plan_hook_empty_reminder_skips_but_marks():
     """reminder 配置为空时,不注入但标记为已注入。"""
     plugin = _make_plugin(
-        {
-            "plan_mode_blocked_tools": ["astrbot_file_remove"],
-            "plan_mode_reminder": ""
-        }
+        {"plan_mode_blocked_tools": ["astrbot_file_remove"], "plan_mode_reminder": ""}
     )
     event = _make_mock_event()
     plugin._plan_mode[event.unified_msg_origin] = True
@@ -456,7 +442,7 @@ def test_plan_hook_reminder_wraps_in_system_reminder_tag():
     plugin = _make_plugin(
         {
             "plan_mode_blocked_tools": ["astrbot_file_remove"],
-            "plan_mode_reminder": "Plan mode active. Blocked: {blocked}"
+            "plan_mode_reminder": "Plan mode active. Blocked: {blocked}",
         }
     )
     event = _make_mock_event()
@@ -478,9 +464,7 @@ def test_plan_hook_skips_when_no_func_tool():
     的提醒,没有工具被过滤时不需要提醒,也不应标记为已注入——
     下次 func_tool 变为非空时,reminder 仍可被注入(此时才有意义)。
     """
-    plugin = _make_plugin(
-        {"plan_mode_blocked_tools": ["astrbot_file_remove"]}
-    )
+    plugin = _make_plugin({"plan_mode_blocked_tools": ["astrbot_file_remove"]})
     event = _make_mock_event()
     plugin._plan_mode[event.unified_msg_origin] = True
     req = MagicMock()
@@ -497,7 +481,7 @@ def test_plan_hook_reenabled_resets_reminded():
     plugin = _make_plugin(
         {
             "plan_mode_blocked_tools": ["astrbot_file_remove"],
-            "plan_mode_reminder": "Plan mode active."
+            "plan_mode_reminder": "Plan mode active.",
         }
     )
     event = _make_mock_event()
@@ -532,9 +516,7 @@ def test_schema_default_strict_blocked_tools():
     schema_path = Path(__file__).resolve().parent.parent / "_conf_schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
 
-    actual = (
-        schema["plan_mode"]["items"]["plan_mode_blocked_tools"]["default"]
-    )
+    actual = schema["plan_mode"]["items"]["plan_mode_blocked_tools"]["default"]
     expected = [
         "astrbot_file_remove",
         "todo_create",
@@ -566,9 +548,7 @@ def test_config_keys_must_be_flat_not_nested():
     那种写法会让 `self._config.get("plan_mode_blocked_tools")` 永远拿不到值。
     """
     # 正确形式:顶层键 plan_mode_blocked_tools
-    plugin = _make_plugin(
-        {"plan_mode_blocked_tools": ["astrbot_file_remove"]}
-    )
+    plugin = _make_plugin({"plan_mode_blocked_tools": ["astrbot_file_remove"]})
     assert plugin._config.get("plan_mode_blocked_tools") == ["astrbot_file_remove"]
 
     # 错误形式(嵌套)不会生效 —— 此测试文档化这一约束
@@ -584,7 +564,7 @@ def test_plan_hook_does_not_modify_system_prompt():
     plugin = _make_plugin(
         {
             "plan_mode_blocked_tools": ["astrbot_file_remove"],
-            "plan_mode_reminder": "Plan mode active."
+            "plan_mode_reminder": "Plan mode active.",
         }
     )
     event = _make_mock_event()
@@ -597,3 +577,196 @@ def test_plan_hook_does_not_modify_system_prompt():
     asyncio.run(plugin._plan_filter_tools(event, req))
     # system_prompt 完全没动(prefix cache 友好)
     assert req.system_prompt == "You are a helpful assistant."
+
+
+# ── 6. /spcode/plan-mode web API 端点(dashboard 查询用) ───────────
+#
+# 覆盖:
+# - _plan_mode_active 辅助方法
+# - _plan_mode_active_count 辅助方法
+# - handle_get_plan_mode:无 umo / 未知 umo / plan 激活 / build 默认 /
+#   跨 umo 计数 / web.request query 注入等
+#
+# Author: AstrBot Agent Harness 开发专家
+# Created: 2026-06-19
+
+
+def _patch_web_request_query(monkeypatch, values: dict) -> None:
+    """Mock ``astrbot.api.web.request.query.get`` to return provided values.
+
+    Mirrors the helper used in :mod:`test_git_diff_worktree` so the
+    plan-mode tests share the same contract: the handler reads umo
+    via ``web.request.query.get("umo")``, so we install a ``query``
+    object whose ``.get(key, default)`` returns ``values[key]`` or
+    the default.
+    """
+    from astrbot.api import web
+
+    mock_query = MagicMock()
+    mock_query.get = lambda key, default=None: values.get(key, default)
+    monkeypatch.setattr(web, "request", MagicMock(query=mock_query))
+
+
+# --- 6.1 helper methods -------------------------------------------------
+
+
+def test_plan_mode_active_helper_unknown_umo_returns_false():
+    """未记录的 umo 应被视为 build 模式(_plan_mode.get 默认 False)。"""
+    plugin = _make_plugin()
+    assert plugin._plan_mode_active("never:seen:umo") is False
+
+
+def test_plan_mode_active_helper_explicit_false_returns_false():
+    """key 存在但显式为 False 同样视为 build(与 on_llm_request 钩子一致)。"""
+    plugin = _make_plugin()
+    plugin._plan_mode["umo:explicit-build"] = False
+    assert plugin._plan_mode_active("umo:explicit-build") is False
+
+
+def test_plan_mode_active_helper_true_returns_true():
+    plugin = _make_plugin()
+    plugin._plan_mode["umo:plan"] = True
+    assert plugin._plan_mode_active("umo:plan") is True
+
+
+def test_plan_mode_active_helper_none_or_empty_returns_false():
+    """umo 为 None 或空字符串时直接返回 False(防止误把"未传参"当 plan 激活)。"""
+    plugin = _make_plugin()
+    plugin._plan_mode["umo:plan"] = True
+    assert plugin._plan_mode_active(None) is False
+    assert plugin._plan_mode_active("") is False
+
+
+def test_plan_mode_active_count_only_counts_true():
+    """``False`` 值不应计入激活数(避免在 build→plan 状态切换时把历史污染留下)。"""
+    plugin = _make_plugin()
+    plugin._plan_mode["umo:a"] = True
+    plugin._plan_mode["umo:b"] = False  # 显式 build
+    plugin._plan_mode["umo:c"] = True
+    assert plugin._plan_mode_active_count() == 2
+
+
+def test_plan_mode_active_count_empty_returns_zero():
+    plugin = _make_plugin()
+    assert plugin._plan_mode_active_count() == 0
+
+
+# --- 6.2 handler: no umo / unknown umo ---------------------------------
+
+
+def test_handle_get_plan_mode_no_umo_returns_build(monkeypatch):
+    """未传 umo 时,handler 返回 active=False(默认 build)+ umo=None。
+
+    与 /spcode/project-status 不同,我们**不**fallback 到"最近的
+    plan 模式 session"——plan/build 是严格 per-session,继承其他
+    session 的模式会造成用户混淆。
+    """
+    _patch_web_request_query(monkeypatch, {})
+    plugin = _make_plugin()
+    payload = asyncio.run(plugin.handle_get_plan_mode())
+    assert payload["status"] == "ok"
+    assert payload["data"]["active"] is False
+    assert payload["data"]["umo"] is None
+    assert payload["data"]["all_active_count"] == 0
+
+
+def test_handle_get_plan_mode_unknown_umo_returns_build(monkeypatch):
+    """查询未在 _plan_mode 中登记的 umo → active=False。"""
+    _patch_web_request_query(monkeypatch, {"umo": "ghost:umo:42"})
+    plugin = _make_plugin()
+    payload = asyncio.run(plugin.handle_get_plan_mode())
+    assert payload["data"]["active"] is False
+    assert payload["data"]["umo"] == "ghost:umo:42"
+    assert payload["data"]["all_active_count"] == 0
+
+
+# --- 6.3 handler: known umo in plan / build ----------------------------
+
+
+def test_handle_get_plan_mode_known_umo_active_returns_plan(monkeypatch):
+    """umo 在 _plan_mode[True] 时,handler 返回 active=True。"""
+    _patch_web_request_query(monkeypatch, {"umo": "webchat:FriendMessage:u!s1"})
+    plugin = _make_plugin()
+    plugin._plan_mode["webchat:FriendMessage:u!s1"] = True
+    payload = asyncio.run(plugin.handle_get_plan_mode())
+    assert payload["data"]["active"] is True
+    assert payload["data"]["umo"] == "webchat:FriendMessage:u!s1"
+
+
+def test_handle_get_plan_mode_known_umo_build_default_returns_build(monkeypatch):
+    """umo 未登记时按 build 处理(与 _plan_mode_active 行为一致)。"""
+    _patch_web_request_query(monkeypatch, {"umo": "webchat:FriendMessage:u!s2"})
+    plugin = _make_plugin()
+    # 该 umo 完全没碰过 → default
+    payload = asyncio.run(plugin.handle_get_plan_mode())
+    assert payload["data"]["active"] is False
+
+
+def test_handle_get_plan_mode_explicit_false_returns_build(monkeypatch):
+    """umo 存在但显式设为 False 也算 build(与钩子行为一致)。"""
+    _patch_web_request_query(monkeypatch, {"umo": "umo:explicit-build"})
+    plugin = _make_plugin()
+    plugin._plan_mode["umo:explicit-build"] = False
+    payload = asyncio.run(plugin.handle_get_plan_mode())
+    assert payload["data"]["active"] is False
+
+
+# --- 6.4 handler: cross-umo counts -------------------------------------
+
+
+def test_handle_get_plan_mode_counts_active_across_umos(monkeypatch):
+    """all_active_count 应反映全实例的 plan 激活数,与查询的 umo 无关。"""
+    _patch_web_request_query(monkeypatch, {"umo": "umo:queried"})
+    plugin = _make_plugin()
+    plugin._plan_mode["umo:1"] = True
+    plugin._plan_mode["umo:2"] = True
+    plugin._plan_mode["umo:3"] = False
+    plugin._plan_mode["umo:queried"] = True
+    payload = asyncio.run(plugin.handle_get_plan_mode())
+    # 3 个 umo 处于 plan 模式(1, 2, queried);3 是 build
+    assert payload["data"]["all_active_count"] == 3
+    assert payload["data"]["active"] is True  # queried 自己也算
+
+
+# --- 6.5 handler: web.request unavailable ------------------------------
+
+
+def test_handle_get_plan_mode_web_request_unavailable_returns_build():
+    """当 ``astrbot.api.web`` 不可用(web.request 抛异常)时,handler
+    应静默回退到 ``umo=None, active=False``,不向 dashboard 抛 500。
+
+    行为对齐 :meth:`handle_get_project_status`:测试环境不挂 web 上下文
+    是常见情况,handler 必须自包含。
+    """
+    # 不 patch web.request,直接用主 mock 后的 web 触发 import 异常
+    plugin = _make_plugin()
+    # 默认 _make_plugin 没碰 _plan_mode,直接调
+    payload = asyncio.run(plugin.handle_get_plan_mode())
+    assert payload["status"] == "ok"
+    # web.request 不存在 → except 分支 → umo 保持 None
+    assert payload["data"]["umo"] is None
+    assert payload["data"]["active"] is False
+
+
+# --- 6.6 toggle path integration: /plan → /build round-trip ------------
+
+
+def test_plan_then_build_reflected_by_handler(monkeypatch):
+    """端到端:发送 /plan 后 handler 返回 active=True;/build 后回到 False。"""
+    _patch_web_request_query(monkeypatch, {"umo": "test:umo:integration"})
+    plugin = _make_plugin({"plan_mode_blocked_tools": ["astrbot_file_remove"]})
+    event = _make_mock_event("test:umo:integration")
+
+    # 初始:build
+    payload = asyncio.run(plugin.handle_get_plan_mode())
+    assert payload["data"]["active"] is False
+
+    # 激活 plan
+    _run(plugin.plan(event))
+    payload = asyncio.run(plugin.handle_get_plan_mode())
+    assert payload["data"]["active"] is True
+
+    # 退出 plan
+    _run(plugin.build(event))
+    payload = asyncio.run(plugin.handle_get_plan_mode())
+    assert payload["data"]["active"] is False

@@ -1062,9 +1062,7 @@ def _build_allowed_ids(context, config: dict) -> set[str]:
 @register(
     "astrbot_plugin_spcode_toolkit",
     "elecvoid243",
-    (
-        "spcode 开发工具箱 — 提供实用开发工具, 部分实现基于Irmia DevKit插件。"
-    ),
+    ("spcode 开发工具箱 — 提供实用开发工具, 部分实现基于Irmia DevKit插件。"),
     "2.9.0",
 )
 class SPCodeToolkit(star.Star):
@@ -1245,6 +1243,20 @@ class SPCodeToolkit(star.Star):
             )
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(f"注册 spcode git-worktrees web API 失败: {exc!s}")
+
+        # v2.8.1: 注册 /spcode/plan-mode —
+        # dashboard 读取此端点驱动 SpcodePlanModeChip 的状态显示与切换。
+        # 与 /spcode/project-status 平行的查询端点,只读,POST 切换走聊天命令
+        # (发送 /plan 或 /build,与 /project load 走同一条路径)。
+        try:
+            self.context.register_web_api(
+                route="/spcode/plan-mode",
+                view_handler=self.handle_get_plan_mode,
+                methods=["GET"],
+                desc="获取 spcode 当前会话的 plan/build 模式状态（供 dashboard 调用）",
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"注册 spcode plan-mode web API 失败: {exc!s}")
 
         cfg = self._inta_shell_cfg
         component = LocalInteractiveShellComponent(
@@ -1708,6 +1720,80 @@ class SPCodeToolkit(star.Star):
             },
         }
 
+    def _plan_mode_active(self, umo: str | None) -> bool:
+        """Return whether the given umo is currently in plan mode.
+
+        Centralizes the ``self._plan_mode`` lookup so the web API
+        handler and any future internal callers agree on the
+        "build == not plan" semantics (a key that is present but
+        ``False`` is treated as **build** mode, the same way the
+        ``@filter.on_llm_request`` hook does).
+
+        Args:
+            umo: Unified message origin to query, or ``None``.
+
+        Returns:
+            ``True`` if the umo is currently in plan mode,
+            ``False`` otherwise (including unknown umo / ``None``).
+        """
+        if not umo:
+            return False
+        return bool(self._plan_mode.get(umo, False))
+
+    def _plan_mode_active_count(self) -> int:
+        """Count how many umos currently have plan mode active.
+
+        The dashboard can use this for telemetry / "X sessions are in
+        plan mode" indicators. Iterates the full dict because the
+        per-umo map is expected to stay small (one entry per active
+        session).
+        """
+        return sum(1 for active in self._plan_mode.values() if active)
+
+    async def handle_get_plan_mode(self) -> dict:
+        """Web API handler for ``GET /spcode/plan-mode``.
+
+        Query params:
+            umo (optional): the unified message origin to query. When
+                omitted the endpoint returns ``active=false`` (the
+                default build state) and the umo as ``None`` —
+                callers that don't know their umo should pass it
+                explicitly. Unlike ``/spcode/project-status`` we do
+                **not** fall back to "most recent plan-mode session"
+                because the plan/build switch is strictly per-session
+                and silently inheriting another session's mode would
+                be confusing.
+
+        Returns:
+            A JSON envelope of the form::
+
+                {
+                    "status": "ok",
+                    "data": {
+                        "active": bool,        # True == plan, False == build
+                        "umo": str | None,
+                        "all_active_count": int  # number of umos in plan mode
+                    }
+                }
+        """
+        # Late import to avoid circular issues with the plugin module.
+        from astrbot.api import web
+
+        umo: str | None = None
+        try:
+            umo = web.request.query.get("umo") or None
+        except Exception:
+            umo = None
+
+        return {
+            "status": "ok",
+            "data": {
+                "active": self._plan_mode_active(umo),
+                "umo": umo,
+                "all_active_count": self._plan_mode_active_count(),
+            },
+        }
+
     async def handle_get_git_worktrees(self) -> dict:
         """Web API handler for ``GET /spcode/git-worktrees``.
 
@@ -1718,6 +1804,7 @@ class SPCodeToolkit(star.Star):
         Spec: docs/superpowers/specs/2026-06-18-git-worktree-switcher-design.md §2.2
         """
         import time as _time
+
         t0 = _time.time()
 
         def _elapsed() -> int:
@@ -1727,6 +1814,7 @@ class SPCodeToolkit(star.Star):
         umo: str | None = None
         try:
             from astrbot.api import web
+
             umo = web.request.query.get("umo") or None
         except Exception:
             umo = None
@@ -1766,14 +1854,18 @@ class SPCodeToolkit(star.Star):
             and self._config.get("codegraph_enabled", True)
         ):
             return _make_git_worktrees_empty_envelope(
-                umo=umo, directory=directory, reason="feature_disabled",
+                umo=umo,
+                directory=directory,
+                reason="feature_disabled",
                 elapsed_ms=_elapsed(),
             )
 
         # 4. 目录存在性
         if not Path(directory).is_dir():
             return _make_git_worktrees_empty_envelope(
-                umo=umo, directory=directory, reason="directory_missing",
+                umo=umo,
+                directory=directory,
+                reason="directory_missing",
                 elapsed_ms=_elapsed(),
             )
 
@@ -1787,16 +1879,22 @@ class SPCodeToolkit(star.Star):
             combined = (probe.get("stderr", "") + probe.get("error", "")).lower()
             if "not a git repository" in combined:
                 return _make_git_worktrees_empty_envelope(
-                    umo=umo, directory=directory, reason="not_a_git_repo",
+                    umo=umo,
+                    directory=directory,
+                    reason="not_a_git_repo",
                     elapsed_ms=_elapsed(),
                 )
             if "未安装" in probe.get("error", ""):
                 return _make_git_worktrees_empty_envelope(
-                    umo=umo, directory=directory, reason="git_unavailable",
+                    umo=umo,
+                    directory=directory,
+                    reason="git_unavailable",
                     elapsed_ms=_elapsed(),
                 )
             return _make_git_worktrees_empty_envelope(
-                umo=umo, directory=directory, reason="git_error",
+                umo=umo,
+                directory=directory,
+                reason="git_error",
                 stderr=probe.get("stderr", "") or probe.get("error", ""),
                 elapsed_ms=_elapsed(),
             )
@@ -1808,7 +1906,9 @@ class SPCodeToolkit(star.Star):
         )
         if not list_result["ok"]:
             return _make_git_worktrees_empty_envelope(
-                umo=umo, directory=directory, reason="git_error",
+                umo=umo,
+                directory=directory,
+                reason="git_error",
                 stderr=list_result.get("stderr", "") or list_result.get("error", ""),
                 elapsed_ms=_elapsed(),
             )
@@ -1818,8 +1918,11 @@ class SPCodeToolkit(star.Star):
         except ValueError as e:
             logger.warning(f"[git-worktrees] porcelain parse failed: {e}")
             return _make_git_worktrees_empty_envelope(
-                umo=umo, directory=directory, reason="git_error",
-                stderr=str(e), elapsed_ms=_elapsed(),
+                umo=umo,
+                directory=directory,
+                reason="git_error",
+                stderr=str(e),
+                elapsed_ms=_elapsed(),
             )
 
         elapsed = _elapsed()
