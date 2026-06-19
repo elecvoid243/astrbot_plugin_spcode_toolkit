@@ -1489,8 +1489,18 @@ class SPCodeToolkit(star.Star):
         failed = False
         async for msg in sub_gen:
             yield msg
-            # msg是MessageEventResult类型
-            if isinstance(msg.chain[0].text, str) and msg.chain[0].text.startswith("❌"):
+            # msg 在生产里是 ``MessageEventResult``(由 ``event.plain_result()``
+            # 返回),在单元测试里 mock 可能直接 yield 字符串。这里做"防御式"
+            # 抽取,主路径(MER)走 ``.chain[0].text``;测试/mock 路径走 str。
+            text: str | None = None
+            if isinstance(msg, str):
+                text = msg
+            else:
+                chain = getattr(msg, "chain", None)
+                if chain:
+                    first = chain[0]
+                    text = getattr(first, "text", None)
+            if isinstance(text, str) and text.startswith("❌"):
                 failed = True
         if failed:
             yield event.plain_result(
@@ -2951,7 +2961,11 @@ class SPCodeToolkit(star.Star):
         2. system_prompt = None 时用 lstrip("\\n") 避免前置空行
         3. 已存在 system_prompt 时追加在末尾
         """
-        if "astrbot_file_remove" not in self._tool_names:
+        # 同时接受新旧两个工具名,避免单点失败
+        if not (
+            "astrbot_file_remove" in self._tool_names
+            or "astrbot_file_remove_tool" in self._tool_names
+        ):
             return
         if _FILE_REMOVE_GUIDANCE_MARKER in (req.system_prompt or ""):
             return
