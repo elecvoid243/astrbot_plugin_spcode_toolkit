@@ -12,14 +12,13 @@ Author: elecvoid243
 """
 
 import asyncio
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
-# main.py 用相对导入,需把项目父目录加到 sys.path 然后以包形式导入。
-_PROJECT_PARENT = Path(__file__).resolve().parent.parent.parent
-if str(_PROJECT_PARENT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_PARENT))
+# 注:sys.path 注入已统一在 tests/conftest.py 完成,这里不再重复。
+# (历史原因:本文件原本用 ``Path(__file__).parent.parent.parent``
+# 固定 3 层到主项目根,在 worktree 里会多走一层找不到包。)
+
 from astrbot_plugin_spcode_toolkit import main as _main_mod  # noqa: E402
 
 SPCodeToolkit = _main_mod.SPCodeToolkit
