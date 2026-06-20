@@ -1,7 +1,7 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: 2.9.0
+version: 2.10.0
 description: |
   spcode 开发工具箱 — 13 个工具，5 个命令组。
   code_check / es_search / file_remove / file_compare / inta_shell_*(5个)
@@ -21,5 +21,12 @@ description: |
   v2.9 todo_create 新增 from_path 参数:从 .md 文件领养(adopt)todo 列表;
     与 items 参数互斥,需绝对路径,1MB 上限,保留 status/notes 但重排 ID 从 1、
     改写 sender_key 为当前用户、updated_at = now()。
+  v2.10 新增 GET /spcode/file-browser 端点 — 供 Dashboard 文件浏览器使用。
+    三态判别: type=null 真错误 / type!=null && reason!=null 部分结果 / 否则成功。
+    7 个 reason: path_not_found / permission_denied / special_file(真错误);
+    file_too_large / binary_file(file 部分结果);
+    directory_listing_truncated(directory 部分结果)。
+    5 MiB / 1000 项硬上限;UTF-8 文本直读、二进制嗅探前 8 KB 含 NUL、隐藏 . 项过滤、
+    不跟随 symlink 用 lstat。详见 docs/api/web-api.md §3.5 与 docs/superpowers/specs/2026-06-20。
   部分实现基于Irmia DevKit插件。
 repo: https://github.com/elecvoid243/astrbot_plugin_spcode_toolkit
