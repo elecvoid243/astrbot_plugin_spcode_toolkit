@@ -9,8 +9,9 @@ from pathlib import Path
 """
 todo_list — LLM Agent 自我管理的 todo list 工具。
 
-按用户 sender_id 隔离，每个用户 1 个 active list，持久化到 .md 文件。
-详见 docs/superpowers/specs/2026-06-06-todo-list-tool-design.md
+按 umo (unified_msg_origin) 隔离,每个会话通道(私聊/群聊)1 个 active list,持久化到 .md 文件。
+v2.11 起:隔离粒度从 sender_key (platform:sender_id) 切到 umo,以切断跨私聊/群聊的"会话接力"。
+详见 docs/superpowers/specs/2026-06-20-todo-per-umo-design.md
 """
 
 
@@ -42,24 +43,30 @@ MARK_STATUS = {v: k for k, v in STATUS_MARK.items()}
 UNSET_NOTES: None = None
 
 
-# ── sender_key & filename ───────────────────────────
+# ── umo & filename ──────────────────────────────────
 
 
-def extract_sender_key(event) -> str:
-    """从 AstrMessageEvent 提取 sender_key = platform:sender_id。"""
-    platform = ""
-    sender_id = ""
-    if hasattr(event, "get_platform_name"):
-        try:
-            platform = str(event.get_platform_name() or "").strip()
-        except Exception:
-            pass
-    if hasattr(event, "get_sender_id"):
-        try:
-            sender_id = str(event.get_sender_id() or "").strip()
-        except Exception:
-            pass
-    return f"{platform or 'unknown'}:{sender_id}"
+def extract_umo(event) -> str:
+    """从 AstrMessageEvent 提取 umo (unified_msg_origin)。
+
+    v2.11 起:todo_list 的隔离粒度由 sender_key (platform:sender_id) 切到 umo。
+    umo 是 AstrBot 给每个会话通道(私聊/群聊/不同群)的全局唯一 ID,
+    典型格式:
+      - 私聊: ``webchat:FriendMessage:astrbot``
+      - 群聊: ``telegram:GroupMessage:123456:group_xxxx``
+      - QQ 私聊: ``aiocqhttp:PrivateMessage:987654``
+
+    同一 sender 在私聊/群聊/不同群有不同 umo → 天然切断"会话接力"。
+
+    兜底:event 为 None / 没有 unified_msg_origin / umo 是空字符串时,
+    返回占位符 ``unknown:unknown:unknown:unknown``,避免下游路径生成失败。
+    """
+    if event is None:
+        return "unknown:unknown:unknown:unknown"
+    umo = getattr(event, "unified_msg_origin", None)
+    if not umo:
+        return "unknown:unknown:unknown:unknown"
+    return str(umo).strip() or "unknown:unknown:unknown:unknown"
 
 
 def import_from_path(path: str) -> tuple[list[dict], str, str]:
@@ -79,7 +86,7 @@ def import_from_path(path: str) -> tuple[list[dict], str, str]:
     8. 解析      → parse_md(text)
     9. 非空      → data["items"] 至少 1 个
 
-    Note: 不做 sender_key 重写 / ID 重排 / title 覆盖 — 全部透传给 TodoStore.create()。
+    Note: 不做 umo 重写 / ID 重排 / title 覆盖 — 全部透传给 TodoStore.create()。
     """
     # 1. 类型
     if not isinstance(path, str):
@@ -139,26 +146,28 @@ def import_from_path(path: str) -> tuple[list[dict], str, str]:
     return items, data.get("title", ""), ""
 
 
-def build_filename(sender_key: str, when: datetime | None = None) -> str:
-    """Build a .md filename for the given sender_key at the given timestamp.
+def build_filename(umo: str, when: datetime | None = None) -> str:
+    """Build a .md filename for the given umo at the given timestamp.
 
-    Format: {platform}_{sender_id}_{YYYYMMDDhhmm}.md (minute precision)
-    Fallback: sha256(sender_key)[:16]_{YYYYMMDDhhmm}.md
+    v2.11: 输入从 sender_key (platform:sender_id) 切到 umo (unified_msg_origin)。
+    umo 形如 ``webchat:FriendMessage:astrbot`` 含多段 `:`,
+    Windows 文件名不能含 `:` → 把所有 `:` 替换为 `_` 后拼上时间戳。
+
+    Format: {umo_清洗后}_{YYYYMMDDhhmm}.md (minute precision)
+    Fallback: sha256(umo)[:16]_{YYYYMMDDhhmm}.md
     """
     when = when or datetime.now()
     ts = when.strftime("%Y%m%d%H%M")
-    if ":" in sender_key:
-        platform, _, sid = sender_key.partition(":")
-        candidate = f"{platform}_{sid}_{ts}.md"
-    else:
-        candidate = f"{sender_key}_{ts}.md"
+    # umo 含多个 `:`(如 webchat:FriendMessage:astrbot),把所有分隔符替换为 `_`
+    safe = umo.replace(":", "_")
+    candidate = f"{safe}_{ts}.md"
 
     if len(candidate) <= MAX_FILENAME_LEN and not ILLEGAL_FILENAME_CHARS.search(
         candidate
     ):
         return candidate
 
-    h = hashlib.sha256(sender_key.encode("utf-8")).hexdigest()[:16]
+    h = hashlib.sha256(umo.encode("utf-8")).hexdigest()[:16]
     return f"{h}_{ts}.md"
 
 
@@ -191,11 +200,10 @@ def render_md(data: dict) -> str:
     """把 list dict 渲染为 .md 文本。"""
     lines: list[str] = []
     # YAML frontmatter
+    # v2.11: 由 sender_key/platform/sender_id 三字段简化为单字段 umo。
+    # umo 已包含 platform/msg_type/sender_id/session_id 信息,无冗余。
     lines.append("---")
-    lines.append(f"sender_key: {data['sender_key']}")
-    lines.append(f"platform: {data['platform']}")
-    # sender_id 可能是数字，加引号防 YAML 解析歧义
-    lines.append(f'sender_id: "{data["sender_id"]}"')
+    lines.append(f"umo: {data['umo']}")
     lines.append(f"title: {data['title']}")
     lines.append(f"created_at: {data['created_at']}")
     lines.append(f"updated_at: {data['updated_at']}")
@@ -357,10 +365,17 @@ def parse_md(text: str) -> dict:
             next_id = parsed["id"] + 1
         items.append(parsed)
 
+    # v2.11: 优先读 umo 字段;旧文件(无 umo 但有 sender_key/platform/sender_id)按
+    # 旧值合成一个伪 umo 挂 ``legacy:`` 前缀,这样旧文件至少能 query 出来(不会因缺
+    # 字段崩),后续写入/覆盖则一律走 umo 路径 —— 旧文件被"冻结"在原地。
+    # 用户已决定:不做主动迁移(2026-06-20 决策),旧文件自然淘汰。
+    # NOTE: ``meta.get("sender_key", ...)`` 的 key 是 YAML 字段字面量,固定不动。
+    umo = meta.get("umo")
+    if not umo:
+        _old_umo = meta.get("sender_key", "unknown:unknown")
+        umo = f"legacy:{_old_umo}"
     return {
-        "sender_key": meta.get("sender_key", "unknown:unknown"),
-        "platform": meta.get("platform", "unknown"),
-        "sender_id": meta.get("sender_id", "unknown"),
+        "umo": umo,
         "title": title,
         "created_at": meta.get("created_at", ""),
         "updated_at": meta.get("updated_at", ""),
@@ -477,8 +492,8 @@ class TodoStore:
         self._dir = Path(base_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
 
-    def _path_for(self, sender_key: str, when: datetime | None = None) -> Path:
-        return self._dir / build_filename(sender_key, when)
+    def _path_for(self, umo: str, when: datetime | None = None) -> Path:
+        return self._dir / build_filename(umo, when)
 
     def _atomic_write(self, path: Path, content: str) -> None:
         """先写 tmp 文件，再 os.replace 原子替换。
@@ -499,30 +514,31 @@ class TodoStore:
                 pass
             raise
 
-    def _existing_path(self, sender_key: str) -> Path | None:
-        """查找该 sender_key 的现有文件（日期不固定）。"""
-        if ":" in sender_key:
-            platform, _, sid = sender_key.partition(":")
-            prefix = f"{platform}_{sid}_"
-        else:
-            prefix = f"{sender_key}_"
+    def _existing_path(self, umo: str) -> Path | None:
+        """查找该 umo 的现有文件(日期不固定)。
+
+        v2.11: 输入从 sender_key 切到 umo(可能含多 `:`)。
+        文件名里 `:` 已被替换为 `_`,前缀匹配也按 umo 清洗后的字符串来。
+        """
+        safe = umo.replace(":", "_")
+        prefix = f"{safe}_"
         for p in sorted(self._dir.glob(f"{prefix}*.md"), reverse=True):
             return p
         # 哈希回退形式
-        h = hashlib.sha256(sender_key.encode("utf-8")).hexdigest()[:16]
+        h = hashlib.sha256(umo.encode("utf-8")).hexdigest()[:16]
         for p in sorted(self._dir.glob(f"{h}_*.md"), reverse=True):
             return p
         return None
 
-    def _load(self, sender_key: str) -> tuple[Path | None, dict]:
-        path = self._existing_path(sender_key)
+    def _load(self, umo: str) -> tuple[Path | None, dict]:
+        path = self._existing_path(umo)
         if not path:
             return None, {}
         return path, parse_md(path.read_text(encoding="utf-8"))
 
     def create(
         self,
-        sender_key: str,
+        umo: str,
         title: str = "",
         items: list[dict] | None = None,
     ) -> dict:
@@ -549,7 +565,7 @@ class TodoStore:
 
         # --- Compute previous_item_count from any existing same-minute file ---
         previous_count = 0
-        old_path, _ = self._load(sender_key)
+        old_path, _ = self._load(umo)
         if old_path:
             try:
                 old_data = parse_md(old_path.read_text(encoding="utf-8"))
@@ -560,15 +576,13 @@ class TodoStore:
 
         # --- Title resolution ---
         if not title:
-            title = sender_key
+            title = umo
 
         # --- Build new data ---
-        platform, _, sid = sender_key.partition(":")
+        # v2.11: 删除 platform/sender_id 拆分,umo 已是完整标识(含 platform/msg_type/sid/session_id)。
         now_iso = datetime.now().isoformat(timespec="seconds")
         data = {
-            "sender_key": sender_key,
-            "platform": platform or "unknown",
-            "sender_id": sid or "unknown",
+            "umo": umo,
             "title": title,
             "created_at": now_iso,
             "updated_at": now_iso,
@@ -584,7 +598,7 @@ class TodoStore:
                 for i, it in enumerate(items)
             ],
         }
-        new_path = self._path_for(sender_key)
+        new_path = self._path_for(umo)
         try:
             self._atomic_write(new_path, render_md(data))
         except OSError as e:
@@ -600,9 +614,9 @@ class TodoStore:
         result.update(self._build_list_state(data, new_path))
         return result
 
-    def query(self, sender_key: str) -> dict:
+    def query(self, umo: str) -> dict:
         """读取 list，返回结构化数据。"""
-        path, data = self._load(sender_key)
+        path, data = self._load(umo)
         if not path:
             return {
                 "ok": False,
@@ -637,7 +651,7 @@ class TodoStore:
             "attention_items": attention_ids,
         }
 
-    def add(self, sender_key: str, items: dict | list[dict]) -> dict:
+    def add(self, umo: str, items: dict | list[dict]) -> dict:
         """追加一个或多个 item。
 
         `items` 接受:
@@ -655,7 +669,7 @@ class TodoStore:
         except ValueError as e:
             return {"ok": False, "error": str(e)}
 
-        path, data = self._load(sender_key)
+        path, data = self._load(umo)
         if not path:
             return {
                 "ok": False,
@@ -718,7 +732,7 @@ class TodoStore:
 
     def update(
         self,
-        sender_key: str,
+        umo: str,
         item_ids: int | list[int],
         status: str = "",
         notes: str = "",
@@ -738,7 +752,7 @@ class TodoStore:
         except ValueError as e:
             return {"ok": False, "error": str(e)}
 
-        path, data = self._load(sender_key)
+        path, data = self._load(umo)
         if not path:
             return {
                 "ok": False,
@@ -790,7 +804,7 @@ class TodoStore:
         result.update(self._build_list_state(data, path))
         return result
 
-    def delete(self, sender_key: str, item_ids: int | list[int]) -> dict:
+    def delete(self, umo: str, item_ids: int | list[int]) -> dict:
         """删一个或多个 item。
 
         `item_ids` 接受:
@@ -816,7 +830,7 @@ class TodoStore:
         except ValueError as e:
             return {"ok": False, "error": str(e)}
 
-        path, data = self._load(sender_key)
+        path, data = self._load(umo)
         if not path:
             return {
                 "ok": False,
@@ -857,7 +871,7 @@ class TodoStore:
 
     def modify(
         self,
-        sender_key: str,
+        umo: str,
         mode: str,
         items: list[dict] | None = None,
         item_ids: int | list[int] | None = None,
@@ -877,7 +891,7 @@ class TodoStore:
         - "xxx" → 覆盖 notes
         """
         if mode == "add":
-            return self.add(sender_key, items)
+            return self.add(umo, items)
         if mode == "update":
             # notes 三态桥接到 update() 的 (notes, clear_notes) 二元:
             #   None (未传)  →  保留旧值   → clear_notes=False, notes=""
@@ -895,28 +909,28 @@ class TodoStore:
                 actual_notes = notes
                 actual_clear = False
             return self.update(
-                sender_key,
+                umo,
                 item_ids,
                 status=status,
                 notes=actual_notes,
                 clear_notes=actual_clear,
             )
         if mode == "delete":
-            return self.delete(sender_key, item_ids)
+            return self.delete(umo, item_ids)
         return {
             "ok": False,
             "error": f"未知 mode: {mode}",
             "proposal": "可选: add/update/delete",
         }
 
-    def clear(self, sender_key: str) -> dict:
+    def clear(self, umo: str) -> dict:
         """删整个 todo list(文件 unlink)。
 
         v2.2.0: 不再是 delete(0) 的别名,而是独立实现。delete() 已拒绝 ID=0,
         所以本方法直接 unlink 文件,语义保持不变以让 main.py 的 action=='clear'
         继续可用。未来 todo_clear 工具可能进一步封装此方法。
         """
-        path, data = self._load(sender_key)
+        path, data = self._load(umo)
         if not path:
             return {
                 "ok": False,

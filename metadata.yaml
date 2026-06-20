@@ -1,7 +1,7 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: 2.10.0
+version: 2.11.0
 description: |
   spcode 开发工具箱 — 13 个工具，5 个命令组。
   code_check / es_search / file_remove / file_compare / inta_shell_*(5个)
@@ -29,4 +29,8 @@ description: |
     5 MiB / 1000 项硬上限;UTF-8 文本直读、二进制嗅探前 8 KB 含 NUL、隐藏 . 项过滤、
     不跟随 symlink 用 lstat。详见 docs/api/web-api.md §3.5 与 docs/superpowers/specs/2026-06-20。
   部分实现基于Irmia DevKit插件。
+  v2.11 todo_list 落盘粒度从 sender_key (platform:sender_id) 改为 umo (unified_msg_origin):
+    每个会话通道(私聊/群聊/不同群)各自独立的 todo list,切断跨私聊/群聊的"会话接力"。
+    frontmatter 由 sender_key/platform/sender_id 三字段简化为 umo 单字段;
+    文件名 umo 中的 `:` 替换为 `_`;旧文件(无 umo 字段)按 legacy:<sender_key> 优雅退化,不做主动迁移。
 repo: https://github.com/elecvoid243/astrbot_plugin_spcode_toolkit

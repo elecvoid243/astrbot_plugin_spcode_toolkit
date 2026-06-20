@@ -28,7 +28,7 @@ from astrbot_plugin_spcode_toolkit import main as main_mod  # noqa: E402
 
 from tools import todo_list  # noqa: E402
 
-SENDER = "test:user-a"
+UMO = "test:user-a:PrivateMessage:test-user-a"
 
 # v2.9: 测试 fixture 路径
 FIXTURE_PATH = ROOT / "tests" / "fixtures" / "webchat_todo_fixture.md"
@@ -49,7 +49,7 @@ def test_create_returns_full_list_and_stats(tmp_path: Path):
         {"title": "写后端", "status": "in_progress", "notes": "等评审"},
         {"title": "写前端", "status": "pending"},
     ]
-    r = store.create(SENDER, title="重构 todo_list", items=items)
+    r = store.create(UMO, title="重构 todo_list", items=items)
 
     assert r["ok"] is True
     assert r["list_title"] == "重构 todo_list"
@@ -84,9 +84,9 @@ def test_create_returns_full_list_and_stats(tmp_path: Path):
 
 def test_create_overwrite_previous_count(tmp_path: Path):
     store = _new_store(tmp_path)
-    store.create(SENDER, title="旧", items=[{"title": "a"}, {"title": "b"}])
+    store.create(UMO, title="旧", items=[{"title": "a"}, {"title": "b"}])
 
-    r = store.create(SENDER, title="新", items=[{"title": "x"}])
+    r = store.create(UMO, title="新", items=[{"title": "x"}])
     assert r["ok"] is True
     assert r["previous_item_count"] == 2
     assert r["item_count"] == 1
@@ -112,7 +112,7 @@ def test_create_no_longer_accepts_from_file(tmp_path: Path):
 def test_create_result_has_no_source_file_field(tmp_path: Path):
     """v2.2.0: 移除 from_file 后,创建结果不应含 source_file / loaded_from 字段。"""
     store = _new_store(tmp_path)
-    r = store.create(SENDER, title="t", items=[{"title": "a"}])
+    r = store.create(UMO, title="t", items=[{"title": "a"}])
     assert r["ok"] is True
     assert "source_file" not in r
     assert "loaded_from" not in r
@@ -122,14 +122,14 @@ def test_create_empty_items_returns_error(tmp_path: Path):
     """v2.2.0: items 为空(None / []) 时 create 应返回 error,不再 auto-discover。"""
     store = _new_store(tmp_path)
     # 先 seed 一个文件证明它不该被 auto-discover 加载
-    seed = store.create(SENDER, title="old", items=[{"title": "x"}])
+    seed = store.create(UMO, title="old", items=[{"title": "x"}])
 
-    r_none = store.create(SENDER)
+    r_none = store.create(UMO)
     assert r_none["ok"] is False
     assert "error" in r_none
     assert "list" not in r_none
 
-    r_empty = store.create(SENDER, items=[])
+    r_empty = store.create(UMO, items=[])
     assert r_empty["ok"] is False
     assert "error" in r_empty
     assert "list" not in r_empty
@@ -143,9 +143,9 @@ def test_create_empty_items_returns_error(tmp_path: Path):
 
 def test_add_returns_full_list_and_stats(tmp_path: Path):
     store = _new_store(tmp_path)
-    store.create(SENDER, title="计划", items=[{"title": "task1"}])
+    store.create(UMO, title="计划", items=[{"title": "task1"}])
 
-    r = store.add(SENDER, [{"title": "task2", "status": "in_progress"}])
+    r = store.add(UMO, [{"title": "task2", "status": "in_progress"}])
     assert r["ok"] is True
     # v2.2.0: 单条时仍返回 list 形式
     assert r["item_ids"] == [2]
@@ -165,7 +165,7 @@ def test_add_returns_full_list_and_stats(tmp_path: Path):
 
 def test_add_when_no_list_returns_proposal(tmp_path: Path):
     store = _new_store(tmp_path)
-    r = store.add(SENDER, {"title": "x"})
+    r = store.add(UMO, {"title": "x"})
     assert r["ok"] is False
     assert "proposal" in r
     # 失败路径不需要回传 list
@@ -178,7 +178,7 @@ def test_add_when_no_list_returns_proposal(tmp_path: Path):
 def test_update_returns_full_list_and_stats(tmp_path: Path):
     store = _new_store(tmp_path)
     store.create(
-        SENDER,
+        UMO,
         title="计划",
         items=[
             {"title": "a", "status": "pending"},
@@ -188,7 +188,7 @@ def test_update_returns_full_list_and_stats(tmp_path: Path):
     )
 
     # 把 #2 标记为 done
-    r = store.update(SENDER, item_ids=2, status="done")
+    r = store.update(UMO, item_ids=2, status="done")
     assert r["ok"] is True
     # v2.2.0: 单条时仍返回 list 形式,无 item_id (int) / item (dict) 兼容字段
     assert r["item_ids"] == [2]
@@ -210,9 +210,9 @@ def test_update_returns_full_list_and_stats(tmp_path: Path):
 
 def test_update_marks_attention(tmp_path: Path):
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "x"}])
+    store.create(UMO, items=[{"title": "x"}])
 
-    r = store.update(SENDER, item_ids=1, status="in_progress", notes="被外部阻塞")
+    r = store.update(UMO, item_ids=1, status="in_progress", notes="被外部阻塞")
     assert r["ok"] is True
     # attention_items 应包含 #1
     assert r["attention_items"] == [1]
@@ -225,9 +225,9 @@ def test_update_marks_attention(tmp_path: Path):
 
 def test_update_invalid_id_returns_proposal(tmp_path: Path):
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "x"}])
+    store.create(UMO, items=[{"title": "x"}])
 
-    r = store.update(SENDER, item_ids=999, status="done")
+    r = store.update(UMO, item_ids=999, status="done")
     assert r["ok"] is False
     assert "proposal" in r
     assert "list" not in r
@@ -239,11 +239,11 @@ def test_update_invalid_id_returns_proposal(tmp_path: Path):
 def test_query_unchanged(tmp_path: Path):
     store = _new_store(tmp_path)
     store.create(
-        SENDER,
+        UMO,
         title="回归",
         items=[{"title": "a", "status": "done"}],
     )
-    r = store.query(SENDER)
+    r = store.query(UMO)
     assert r["ok"] is True
     assert r["list"]["title"] == "回归"
     assert r["stats"]["done"] == 1
@@ -256,7 +256,7 @@ def test_delete_single_includes_list_and_stats(tmp_path: Path):
     """delete(item_id>0) 删单条后列表还在，应回传完整 list/stats/attention_items。"""
     store = _new_store(tmp_path)
     store.create(
-        SENDER,
+        UMO,
         title="计划",
         items=[
             {"title": "a", "status": "pending"},
@@ -265,7 +265,7 @@ def test_delete_single_includes_list_and_stats(tmp_path: Path):
         ],
     )
 
-    r = store.delete(SENDER, item_ids=2)
+    r = store.delete(UMO, item_ids=2)
     assert r["ok"] is True
     assert r["deleted"] == 1
     assert r["item_count"] == 2
@@ -289,14 +289,14 @@ def test_delete_in_progress_with_notes_refreshes_attention(tmp_path: Path):
     """删除 in_progress+notes 项后 attention_items 应即时更新。"""
     store = _new_store(tmp_path)
     store.create(
-        SENDER,
+        UMO,
         items=[
             {"title": "x", "status": "in_progress", "notes": "blocker"},
             {"title": "y", "status": "pending"},
         ],
     )
     # 删掉唯一 in_progress 项
-    r = store.delete(SENDER, item_ids=1)
+    r = store.delete(UMO, item_ids=1)
     assert r["ok"] is True
     # attention_items 应为空（in_progress 项已删）
     assert r["attention_items"] == []
@@ -310,9 +310,9 @@ def test_delete_in_progress_with_notes_refreshes_attention(tmp_path: Path):
 def test_clear_does_not_include_list(tmp_path: Path):
     """clear() = delete(item_id=0)，整个列表被删，无 list 可回传。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "a"}, {"title": "b"}])
+    store.create(UMO, items=[{"title": "a"}, {"title": "b"}])
 
-    r = store.clear(SENDER)
+    r = store.clear(UMO)
     assert r["ok"] is True
     assert r["deleted"] == "list"
     # clear 整个列表没了，保持精简，不回传 list
@@ -326,9 +326,9 @@ def test_clear_does_not_include_list(tmp_path: Path):
 
 def test_delete_nonexistent_id_returns_error_without_list(tmp_path: Path):
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "a"}])
+    store.create(UMO, items=[{"title": "a"}])
 
-    r = store.delete(SENDER, item_ids=999)
+    r = store.delete(UMO, item_ids=999)
     assert r["ok"] is False
     assert "error" in r
     assert "list" not in r
@@ -336,7 +336,7 @@ def test_delete_nonexistent_id_returns_error_without_list(tmp_path: Path):
 
 def test_delete_no_list_returns_proposal(tmp_path: Path):
     store = _new_store(tmp_path)
-    r = store.delete(SENDER, item_ids=1)
+    r = store.delete(UMO, item_ids=1)
     assert r["ok"] is False
     assert "proposal" in r
     assert "list" not in r
@@ -428,7 +428,7 @@ def test_update_batch_with_list_of_ids(tmp_path: Path):
     """update(item_id=[...]) 一次更新多条,共用同一个 status。"""
     store = _new_store(tmp_path)
     store.create(
-        SENDER,
+        UMO,
         title="计划",
         items=[
             {"title": "a", "status": "pending"},
@@ -438,7 +438,7 @@ def test_update_batch_with_list_of_ids(tmp_path: Path):
         ],
     )
 
-    r = store.update(SENDER, item_ids=[1, 3], status="done")
+    r = store.update(UMO, item_ids=[1, 3], status="done")
     assert r["ok"] is True
     # 批量永远返回 item_ids(list)
     assert r["item_ids"] == [1, 3]
@@ -459,14 +459,14 @@ def test_update_batch_with_notes(tmp_path: Path):
     """批量 update + notes:所有目标 item 写同一段 notes。"""
     store = _new_store(tmp_path)
     store.create(
-        SENDER,
+        UMO,
         items=[
             {"title": "a", "status": "in_progress"},
             {"title": "b", "status": "in_progress"},
         ],
     )
 
-    r = store.update(SENDER, item_ids=[1, 2], notes="等待外部依赖")
+    r = store.update(UMO, item_ids=[1, 2], notes="等待外部依赖")
     assert r["ok"] is True
     # 两个 item 都带 attention(in_progress + notes)
     assert r["attention_items"] == [1, 2]
@@ -477,17 +477,17 @@ def test_update_batch_clear_notes(tmp_path: Path):
     """批量 clear_notes=True 清掉所有目标的 notes。"""
     store = _new_store(tmp_path)
     store.create(
-        SENDER,
+        UMO,
         items=[
             {"title": "a", "status": "in_progress", "notes": "blocker1"},
             {"title": "b", "status": "in_progress", "notes": "blocker2"},
         ],
     )
     # 先确认 attention 存在
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["attention_items"] == [1, 2]
 
-    r = store.update(SENDER, item_ids=[1, 2], clear_notes=True)
+    r = store.update(UMO, item_ids=[1, 2], clear_notes=True)
     assert r["ok"] is True
     # notes 被清掉,attention_items 也归零
     assert r["attention_items"] == []
@@ -498,14 +498,14 @@ def test_update_batch_empty_notes_preserves_old_value(tmp_path: Path):
     """批量 update 时 notes='' 仍视为'保留旧值'。"""
     store = _new_store(tmp_path)
     store.create(
-        SENDER,
+        UMO,
         items=[
             {"title": "a", "status": "in_progress", "notes": "原值1"},
             {"title": "b", "status": "in_progress", "notes": "原值2"},
         ],
     )
 
-    r = store.update(SENDER, item_ids=[1, 2], status="done")
+    r = store.update(UMO, item_ids=[1, 2], status="done")
     assert r["ok"] is True
     # notes 没传,旧值保留
     assert r["items"][0]["notes"] == "原值1"
@@ -519,11 +519,11 @@ def test_update_batch_with_missing_id_returns_error(tmp_path: Path):
     """批量 update 含不存在的 ID 必须全量回滚,不让 LLM 拿到残缺结果。"""
     store = _new_store(tmp_path)
     store.create(
-        SENDER,
+        UMO,
         items=[{"title": "a"}, {"title": "b"}, {"title": "c"}],
     )
 
-    r = store.update(SENDER, item_ids=[1, 999, 3], status="done")
+    r = store.update(UMO, item_ids=[1, 999, 3], status="done")
     assert r["ok"] is False
     assert "error" in r
     assert "proposal" in r
@@ -532,7 +532,7 @@ def test_update_batch_with_missing_id_returns_error(tmp_path: Path):
     # 错误信息里要能看出哪些 ID 缺失
     assert "999" in r["error"]
     # 验证状态确实没改
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["stats"]["done"] == 0
     assert q["stats"]["pending"] == 3
 
@@ -540,27 +540,27 @@ def test_update_batch_with_missing_id_returns_error(tmp_path: Path):
 def test_update_batch_with_invalid_status_returns_error(tmp_path: Path):
     """批量 update 给了非法 status 必须在动数据前就 fail。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "a"}, {"title": "b"}])
+    store.create(UMO, items=[{"title": "a"}, {"title": "b"}])
 
-    r = store.update(SENDER, item_ids=[1, 2], status="bogus")
+    r = store.update(UMO, item_ids=[1, 2], status="bogus")
     assert r["ok"] is False
     assert "bogus" in r["error"]
     assert "list" not in r
     # 数据原封不动
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["stats"]["pending"] == 2
 
 
 def test_update_batch_with_empty_list_returns_error(tmp_path: Path):
     """item_id=[] 是错误,不允许 silently no-op。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "a"}])
+    store.create(UMO, items=[{"title": "a"}])
 
-    r = store.update(SENDER, item_ids=[], status="done")
+    r = store.update(UMO, item_ids=[], status="done")
     assert r["ok"] is False
     assert "error" in r
     # 数据未动
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["stats"]["pending"] == 1
 
 
@@ -571,7 +571,7 @@ def test_delete_batch_with_list_of_ids(tmp_path: Path):
     """delete(item_id=[...]) 一次删多条。"""
     store = _new_store(tmp_path)
     store.create(
-        SENDER,
+        UMO,
         title="计划",
         items=[
             {"title": "a", "status": "pending"},
@@ -581,7 +581,7 @@ def test_delete_batch_with_list_of_ids(tmp_path: Path):
         ],
     )
 
-    r = store.delete(SENDER, item_ids=[2, 4])
+    r = store.delete(UMO, item_ids=[2, 4])
     assert r["ok"] is True
     assert r["deleted"] == 2
     assert r["item_ids"] == [2, 4]
@@ -603,41 +603,41 @@ def test_delete_batch_with_list_of_ids(tmp_path: Path):
 def test_delete_batch_with_missing_id_returns_error(tmp_path: Path):
     """批量 delete 含不存在的 ID → 全量回滚,数据不被动。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "a"}, {"title": "b"}])
+    store.create(UMO, items=[{"title": "a"}, {"title": "b"}])
 
-    r = store.delete(SENDER, item_ids=[1, 999])
+    r = store.delete(UMO, item_ids=[1, 999])
     assert r["ok"] is False
     assert "999" in r["error"]
     assert "proposal" in r
     # 关键:不返回 list(避免误导 LLM 认为部分成功)
     assert "list" not in r
     # 验证数据没动
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["stats"]["total"] == 2
 
 
 def test_delete_batch_with_zero_in_list_returns_error(tmp_path: Path):
     """list 里塞 0 必须报错——v2.2.0 后 delete 不再接受 0(单项或批量)。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "a"}])
+    store.create(UMO, items=[{"title": "a"}])
 
-    r = store.delete(SENDER, item_ids=[1, 0])
+    r = store.delete(UMO, item_ids=[1, 0])
     assert r["ok"] is False
     assert "error" in r
     # 列表必须还在(没被 clear 误触发)
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["ok"] is True
 
 
 def test_delete_batch_with_empty_list_returns_error(tmp_path: Path):
     """item_id=[] 是错误。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "a"}])
+    store.create(UMO, items=[{"title": "a"}])
 
-    r = store.delete(SENDER, item_ids=[])
+    r = store.delete(UMO, item_ids=[])
     assert r["ok"] is False
     assert "error" in r
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["stats"]["total"] == 1
 
 
@@ -648,16 +648,16 @@ def test_delete_batch_with_empty_list_returns_error(tmp_path: Path):
 
 def test_update_with_string_item_id_returns_error(tmp_path: Path):
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "a"}])
-    r = store.update(SENDER, item_ids="1", status="done")  # type: ignore[arg-type]
+    store.create(UMO, items=[{"title": "a"}])
+    r = store.update(UMO, item_ids="1", status="done")  # type: ignore[arg-type]
     assert r["ok"] is False
     assert "error" in r
 
 
 def test_delete_with_dict_item_id_returns_error(tmp_path: Path):
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "a"}])
-    r = store.delete(SENDER, item_ids={"id": 1})  # type: ignore[arg-type]
+    store.create(UMO, items=[{"title": "a"}])
+    r = store.delete(UMO, item_ids={"id": 1})  # type: ignore[arg-type]
     assert r["ok"] is False
     assert "error" in r
 
@@ -669,17 +669,17 @@ def test_update_batch_refreshes_attention_list(tmp_path: Path):
     """批量把 in_progress+notes 项标 done,attention_items 应清空。"""
     store = _new_store(tmp_path)
     store.create(
-        SENDER,
+        UMO,
         items=[
             {"title": "a", "status": "in_progress", "notes": "blocker"},
             {"title": "b", "status": "in_progress", "notes": "blocker"},
             {"title": "c", "status": "pending"},
         ],
     )
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert sorted(q["attention_items"]) == [1, 2]
 
-    r = store.update(SENDER, item_ids=[1, 2], status="done")
+    r = store.update(UMO, item_ids=[1, 2], status="done")
     assert r["ok"] is True
     assert r["attention_items"] == []
     assert r["stats"]["done"] == 2
@@ -690,7 +690,7 @@ def test_delete_batch_preserves_unrelated_attention(tmp_path: Path):
     """批量 delete 部分 in_progress+notes 项时,剩余的 attention_items 仍存在。"""
     store = _new_store(tmp_path)
     store.create(
-        SENDER,
+        UMO,
         items=[
             {"title": "a", "status": "in_progress", "notes": "blocker"},
             {"title": "b", "status": "in_progress", "notes": "blocker"},
@@ -699,7 +699,7 @@ def test_delete_batch_preserves_unrelated_attention(tmp_path: Path):
     )
 
     # 只删 #1,保留 #2 的 attention
-    r = store.delete(SENDER, item_ids=[1])
+    r = store.delete(UMO, item_ids=[1])
     assert r["ok"] is True
     assert r["attention_items"] == [2]
     # #1 不在 list 中,#2 还在且 attention=True
@@ -718,10 +718,10 @@ def test_delete_no_longer_handles_zero_sentinel(tmp_path: Path):
     新实现:item_ids=0 → ValueError,返回 ok=False,文件原封不动
     """
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "x"}])
+    store.create(UMO, title="t", items=[{"title": "x"}])
 
     # delete(item_ids=0) 应返回错误而不是清空
-    r = store.delete(SENDER, item_ids=0)
+    r = store.delete(UMO, item_ids=0)
     assert r["ok"] is False, f"item_ids=0 should be rejected, got {r}"
     assert "error" in r
     assert "0" in r["error"]
@@ -731,7 +731,7 @@ def test_delete_no_longer_handles_zero_sentinel(tmp_path: Path):
     assert len(files) == 1, f"file should still exist, got {files}"
 
     # list 内容也未被动
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["ok"] is True
     assert q["stats"]["total"] == 1
 
@@ -744,13 +744,13 @@ def test_delete_result_has_no_legacy_item_id_field(tmp_path: Path):
     """
     store = _new_store(tmp_path)
     store.create(
-        SENDER,
+        UMO,
         title="t",
         items=[{"title": "a"}, {"title": "b"}, {"title": "c"}],
     )
 
     # 单条删除
-    r = store.delete(SENDER, item_ids=2)
+    r = store.delete(UMO, item_ids=2)
     assert r["ok"] is True
     assert "item_ids" in r
     assert r["item_ids"] == [2]
@@ -760,7 +760,7 @@ def test_delete_result_has_no_legacy_item_id_field(tmp_path: Path):
     )
 
     # 批量删除同样不带 item_id
-    r2 = store.delete(SENDER, item_ids=[1, 3])
+    r2 = store.delete(UMO, item_ids=[1, 3])
     assert r2["ok"] is True
     assert "item_id" not in r2, (
         f"batch delete 应不再返回 legacy item_id, got keys={list(r2.keys())}"
@@ -773,9 +773,9 @@ def test_clear_method_still_works_independently(tmp_path: Path):
     main.py 的 action=='clear' 仍需可用,所以 clear() 保留并直接 unlink 文件。
     """
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "a"}])
+    store.create(UMO, title="t", items=[{"title": "a"}])
 
-    r = store.clear(SENDER)
+    r = store.clear(UMO)
     assert r["ok"] is True
     assert r["deleted"] == "list"
     # 文件被删
@@ -783,7 +783,7 @@ def test_clear_method_still_works_independently(tmp_path: Path):
     assert files == [], f"files should be gone, got {files}"
 
     # 二次 clear 应返回 proposal (no list)
-    r2 = store.clear(SENDER)
+    r2 = store.clear(UMO)
     assert r2["ok"] is False
     assert "proposal" in r2
 
@@ -841,10 +841,10 @@ def test_normalize_items_list_with_non_dict_raises():
 def test_add_batch_with_list_of_dicts(tmp_path: Path):
     """add(item=[...]) 一次追加多条,各自带 title/status/notes。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, title="计划", items=[{"title": "first"}])
+    store.create(UMO, title="计划", items=[{"title": "first"}])
 
     r = store.add(
-        SENDER,
+        UMO,
         [
             {"title": "a", "status": "in_progress", "notes": "blocker"},
             {"title": "b", "status": "pending"},
@@ -870,10 +870,10 @@ def test_add_batch_with_list_of_dicts(tmp_path: Path):
 def test_add_batch_preserves_mixed_statuses(tmp_path: Path):
     """批量 add 每个 item 可独立指定 status,不会被强制成同一个。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "x"}])
+    store.create(UMO, items=[{"title": "x"}])
 
     r = store.add(
-        SENDER,
+        UMO,
         [
             {"title": "a", "status": "done"},
             {"title": "b", "status": "cancelled"},
@@ -894,16 +894,16 @@ def test_add_batch_preserves_mixed_statuses(tmp_path: Path):
 def test_add_batch_ids_are_contiguous(tmp_path: Path):
     """批量 add 必须分配连续自增 ID,不出现跳号。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "x"}, {"title": "y"}])
+    store.create(UMO, items=[{"title": "x"}, {"title": "y"}])
 
     r = store.add(
-        SENDER,
+        UMO,
         [{"title": "a"}, {"title": "b"}, {"title": "c"}],
     )
     assert r["ok"] is True
     assert r["item_ids"] == [3, 4, 5]
     # 持久化到文件后,query 看到的 ID 也是连续的
-    q = store.query(SENDER)
+    q = store.query(UMO)
     file_ids = [it["id"] for it in q["list"]["items"]]
     assert file_ids == [1, 2, 3, 4, 5]
 
@@ -911,9 +911,9 @@ def test_add_batch_ids_are_contiguous(tmp_path: Path):
 def test_add_batch_default_status_is_pending(tmp_path: Path):
     """没指定 status 的 item 默认为 pending(与单条 add 语义一致)。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "x"}])  # 已有 1 个 pending
+    store.create(UMO, items=[{"title": "x"}])  # 已有 1 个 pending
 
-    r = store.add(SENDER, [{"title": "a"}, {"title": "b"}])
+    r = store.add(UMO, [{"title": "a"}, {"title": "b"}])
     assert r["ok"] is True
     # 新加的两条都是 pending(默认)
     assert all(it["status"] == "pending" for it in r["items"])
@@ -927,23 +927,23 @@ def test_add_batch_default_status_is_pending(tmp_path: Path):
 def test_add_batch_with_empty_list_returns_error(tmp_path: Path):
     """item=[] 报错,不允许 silently no-op。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "x"}])
+    store.create(UMO, items=[{"title": "x"}])
 
-    r = store.add(SENDER, [])
+    r = store.add(UMO, [])
     assert r["ok"] is False
     assert "error" in r
     # 列表不能动
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["stats"]["total"] == 1
 
 
 def test_add_batch_with_invalid_status_rolls_back(tmp_path: Path):
     """任一 item 含非法 status → 全量回滚,不能留半改数据。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "x"}])
+    store.create(UMO, items=[{"title": "x"}])
 
     r = store.add(
-        SENDER,
+        UMO,
         [
             {"title": "a", "status": "pending"},
             {"title": "b", "status": "bogus"},  # 这条非法
@@ -956,7 +956,7 @@ def test_add_batch_with_invalid_status_rolls_back(tmp_path: Path):
     # list 字段不回传(避免误导 LLM 部分成功)
     assert "list" not in r
     # 列表原封不动
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["stats"]["total"] == 1
     assert [it["title"] for it in q["list"]["items"]] == ["x"]
 
@@ -966,23 +966,23 @@ def test_add_batch_exceeds_max_items_returns_error(tmp_path: Path):
     store = _new_store(tmp_path)
     # 先造一个几乎满的 list(MAX_ITEMS - 1 = 99 条)
     seed_items = [{"title": f"t{i}"} for i in range(1, todo_list.MAX_ITEMS)]
-    store.create(SENDER, items=seed_items)
-    q = store.query(SENDER)
+    store.create(UMO, items=seed_items)
+    q = store.query(UMO)
     assert q["stats"]["total"] == todo_list.MAX_ITEMS - 1
 
     # 一次加 2 条会超 100
-    r = store.add(SENDER, [{"title": "x"}, {"title": "y"}])
+    r = store.add(UMO, [{"title": "x"}, {"title": "y"}])
     assert r["ok"] is False
     assert "MAX_ITEMS" in r["error"].upper() or "上限" in r["error"]
     # 数据原封不动
-    q2 = store.query(SENDER)
+    q2 = store.query(UMO)
     assert q2["stats"]["total"] == todo_list.MAX_ITEMS - 1
 
 
 def test_add_batch_when_no_list_returns_proposal(tmp_path: Path):
     """没有 list 时批量 add 同样返回 proposal(与单条 add 一致)。"""
     store = _new_store(tmp_path)
-    r = store.add(SENDER, [{"title": "a"}, {"title": "b"}])
+    r = store.add(UMO, [{"title": "a"}, {"title": "b"}])
     assert r["ok"] is False
     assert "proposal" in r
     assert "list" not in r
@@ -991,8 +991,8 @@ def test_add_batch_when_no_list_returns_proposal(tmp_path: Path):
 def test_add_with_string_item_returns_error(tmp_path: Path):
     """item='...' 直接拒绝(单条 / 批量列表里都该拒绝)。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "x"}])
-    r = store.add(SENDER, "not a dict")  # type: ignore[arg-type]
+    store.create(UMO, items=[{"title": "x"}])
+    r = store.add(UMO, "not a dict")  # type: ignore[arg-type]
     assert r["ok"] is False
     assert "error" in r
 
@@ -1000,15 +1000,15 @@ def test_add_with_string_item_returns_error(tmp_path: Path):
 def test_add_batch_with_mixed_types_in_list_rolls_back(tmp_path: Path):
     """list 含非 dict 元素 → 报错,不动数据。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, items=[{"title": "x"}])
+    store.create(UMO, items=[{"title": "x"}])
 
     r = store.add(
-        SENDER,
+        UMO,
         [{"title": "a"}, "bad", {"title": "c"}],  # type: ignore[list-item]
     )
     assert r["ok"] is False
     assert "error" in r
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["stats"]["total"] == 1
 
 
@@ -1019,7 +1019,7 @@ def test_filename_uses_minute_precision(tmp_path: Path):
     """Filenames use %Y%m%d%H%M (12-digit timestamp), not %Y%m%d (8-digit).
 
     给定固定 datetime(带秒=30),验证文件名:
-    1. 拼成 {platform}_{sender_id}_{ts}.md 格式(partition ":" 分隔)
+    1. 拼成 {umo_清洗后}_{ts}.md 格式(`:` 全部替换为 `_`,v2.11)
     2. 秒被截断 → 仅 12 位 YYYYMMDDhhmm
     """
     fixed_dt = datetime(2026, 6, 7, 15, 45, 30)
@@ -1034,21 +1034,22 @@ def test_filename_uses_minute_precision(tmp_path: Path):
     assert ts_part == "202606071545"
 
 
-def test_build_filename_sha256_fallback_for_long_sender_key(tmp_path: Path):
-    """sender_key 拼出 > MAX_FILENAME_LEN(200) → 回退到 sha256[:16]_{ts}.md。
+def test_build_filename_sha256_fallback_for_long_umo(tmp_path: Path):
+    """umo 拼出 > MAX_FILENAME_LEN(200) → 回退到 sha256[:16]_{ts}.md。
 
-    超长 sender_id 常见于 platform id + uuid 拼接;若仍然试图用 plaintext 拼文件名,
+    v2.11: 输入从 sender_key 切到 umo 后,`:` 全部替换为 `_` 再拼 ts。
+    超长 umo 常见于 session id + uuid 拼接;若仍然试图用 plaintext 拼文件名,
     会超出 200 字符限制,触发 sha256 fallback。
     """
     fixed_dt = datetime(2026, 6, 13, 12, 1)
     long_sid = "x" * 250
-    sender_key = f"wechat:{long_sid}"
-    fname = todo_list.build_filename(sender_key, when=fixed_dt)
+    umo = f"webchat:PrivateMessage:{long_sid}"
+    fname = todo_list.build_filename(umo, when=fixed_dt)
 
-    expected_hash = hashlib.sha256(sender_key.encode("utf-8")).hexdigest()[:16]
+    expected_hash = hashlib.sha256(umo.encode("utf-8")).hexdigest()[:16]
     expected = f"{expected_hash}_202606131201.md"
     assert fname == expected, (
-        f"Expected sha256 fallback for long sender_key, got {fname!r}"
+        f"Expected sha256 fallback for long umo, got {fname!r}"
     )
     # Sanity: fallback 路径应 < MAX_FILENAME_LEN
     assert len(fname) <= todo_list.MAX_FILENAME_LEN
@@ -1057,17 +1058,17 @@ def test_build_filename_sha256_fallback_for_long_sender_key(tmp_path: Path):
 
 
 def test_build_filename_sha256_fallback_for_unsafe_chars(tmp_path: Path):
-    """sender_key 含 OS 非法字符(如 <>"/\\|?*)→ 回退到 sha256[:16]_{ts}.md。
+    """umo 含 OS 非法字符(如 <>"/\\|?*)→ 回退到 sha256[:16]_{ts}.md。
 
-    partition(":") 先拆分 platform / sid,但 sid 内部若含非法字符,
+    v2.11: umo 的 `:` 全部替换为 `_`,但若清洗后仍含 <>"|?* 等字符,
     ILLEGAL_FILENAME_CHARS.search 仍会命中 → 触发 fallback。
     """
     fixed_dt = datetime(2026, 6, 13, 12, 1)
-    # 用带 < > 的 sender_key,确保 ILLEGAL_FILENAME_CHARS 命中
-    sender_key = "wechat:<user:bad>"
-    fname = todo_list.build_filename(sender_key, when=fixed_dt)
+    # 用带 < > 的 umo,确保 ILLEGAL_FILENAME_CHARS 命中
+    umo = "webchat:<user:bad>"
+    fname = todo_list.build_filename(umo, when=fixed_dt)
 
-    expected_hash = hashlib.sha256(sender_key.encode("utf-8")).hexdigest()[:16]
+    expected_hash = hashlib.sha256(umo.encode("utf-8")).hexdigest()[:16]
     expected = f"{expected_hash}_202606131201.md"
     assert fname == expected, (
         f"Expected sha256 fallback for unsafe chars, got {fname!r}"
@@ -1101,8 +1102,8 @@ def test_add_result_has_no_legacy_item_id_field(tmp_path: Path):
     单条时仍只返回 list 形式 item_ids + items,前端统一按 list 处理。
     """
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "a"}])
-    r = store.add(SENDER, [{"title": "b"}])
+    store.create(UMO, title="t", items=[{"title": "a"}])
+    r = store.add(UMO, [{"title": "b"}])
     assert r["ok"] is True
     assert "item_id" not in r, (
         f"add should not return legacy item_id, got keys={list(r.keys())}"
@@ -1140,8 +1141,8 @@ def test_update_result_has_no_legacy_item_id_field(tmp_path: Path):
     单条时仍只返回 list 形式 item_ids + items,前端统一按 list 处理。
     """
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "a"}, {"title": "b"}])
-    r = store.update(SENDER, 1, status="done")  # 单条
+    store.create(UMO, title="t", items=[{"title": "a"}, {"title": "b"}])
+    r = store.update(UMO, 1, status="done")  # 单条
     assert r["ok"] is True
     assert "item_id" not in r, (
         f"update should not return legacy item_id, got keys={list(r.keys())}"
@@ -1162,8 +1163,8 @@ def test_update_result_has_no_legacy_item_id_field(tmp_path: Path):
 def test_modify_add_mode_appends_items(tmp_path: Path):
     """modify(mode='add') 等价于 add(items=...)。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "existing"}])
-    r = store.modify(SENDER, mode="add", items=[{"title": "new1"}, {"title": "new2"}])
+    store.create(UMO, title="t", items=[{"title": "existing"}])
+    r = store.modify(UMO, mode="add", items=[{"title": "new1"}, {"title": "new2"}])
     assert r["ok"] is True
     assert r["item_count"] == 3
     assert r["item_ids"] == [2, 3]
@@ -1172,8 +1173,8 @@ def test_modify_add_mode_appends_items(tmp_path: Path):
 def test_modify_update_mode_modifies_items(tmp_path: Path):
     """modify(mode='update') 等价于 update(item_ids=..., status=..., notes=...)。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "a"}, {"title": "b"}])
-    r = store.modify(SENDER, mode="update", item_ids=[1, 2], status="done")
+    store.create(UMO, title="t", items=[{"title": "a"}, {"title": "b"}])
+    r = store.modify(UMO, mode="update", item_ids=[1, 2], status="done")
     assert r["ok"] is True
     assert r["item_ids"] == [1, 2]
 
@@ -1182,9 +1183,9 @@ def test_modify_delete_mode_removes_items(tmp_path: Path):
     """modify(mode='delete') 等价于 delete(item_ids=...)。"""
     store = _new_store(tmp_path)
     store.create(
-        SENDER, title="t", items=[{"title": "a"}, {"title": "b"}, {"title": "c"}]
+        UMO, title="t", items=[{"title": "a"}, {"title": "b"}, {"title": "c"}]
     )
-    r = store.modify(SENDER, mode="delete", item_ids=[1, 3])
+    r = store.modify(UMO, mode="delete", item_ids=[1, 3])
     assert r["ok"] is True
     assert r["deleted"] == 2
     assert r["item_count"] == 1
@@ -1193,7 +1194,7 @@ def test_modify_delete_mode_removes_items(tmp_path: Path):
 def test_modify_unknown_mode_returns_error(tmp_path: Path):
     """modify 收到未知 mode 返回错误而非崩溃。"""
     store = _new_store(tmp_path)
-    r = store.modify(SENDER, mode="bogus")
+    r = store.modify(UMO, mode="bogus")
     assert r["ok"] is False
     assert "bogus" in r["error"]
     assert "add/update/delete" in r["proposal"]
@@ -1208,30 +1209,30 @@ def test_modify_unknown_mode_returns_error(tmp_path: Path):
 def test_modify_update_with_none_notes_keeps_existing(tmp_path: Path):
     """modify update 模式 notes=None → 保留旧值。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "a", "notes": "原始备注"}])
-    r = store.modify(SENDER, mode="update", item_ids=1, status="done", notes=None)
+    store.create(UMO, title="t", items=[{"title": "a", "notes": "原始备注"}])
+    r = store.modify(UMO, mode="update", item_ids=1, status="done", notes=None)
     assert r["ok"] is True
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["list"]["items"][0]["notes"] == "原始备注"
 
 
 def test_modify_update_with_empty_string_notes_clears(tmp_path: Path):
     """modify update 模式 notes='' → 清空 notes。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "a", "notes": "原始"}])
-    r = store.modify(SENDER, mode="update", item_ids=1, notes="")
+    store.create(UMO, title="t", items=[{"title": "a", "notes": "原始"}])
+    r = store.modify(UMO, mode="update", item_ids=1, notes="")
     assert r["ok"] is True
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["list"]["items"][0]["notes"] == ""
 
 
 def test_modify_update_with_new_notes_overwrites(tmp_path: Path):
     """modify update 模式 notes='xxx' → 覆盖。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "a", "notes": "原始"}])
-    r = store.modify(SENDER, mode="update", item_ids=1, notes="新内容")
+    store.create(UMO, title="t", items=[{"title": "a", "notes": "原始"}])
+    r = store.modify(UMO, mode="update", item_ids=1, notes="新内容")
     assert r["ok"] is True
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["list"]["items"][0]["notes"] == "新内容"
 
 
@@ -1241,7 +1242,7 @@ def test_modify_update_with_new_notes_overwrites(tmp_path: Path):
 def test_create_rejects_empty_items(tmp_path: Path):
     """create(items=[]) 必须返回错误。"""
     store = _new_store(tmp_path)
-    r = store.create(SENDER, title="t", items=[])
+    r = store.create(UMO, title="t", items=[])
     assert r["ok"] is False
     assert "items" in r["error"].lower()
 
@@ -1249,8 +1250,8 @@ def test_create_rejects_empty_items(tmp_path: Path):
 def test_modify_add_rejects_empty_items(tmp_path: Path):
     """modify(mode='add') items=[] 拒绝。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "a"}])
-    r = store.modify(SENDER, mode="add", items=[])
+    store.create(UMO, title="t", items=[{"title": "a"}])
+    r = store.modify(UMO, mode="add", items=[])
     assert r["ok"] is False
     assert "items" in r["error"].lower() or "add" in r["error"].lower()
 
@@ -1258,16 +1259,16 @@ def test_modify_add_rejects_empty_items(tmp_path: Path):
 def test_modify_add_rejects_none_items(tmp_path: Path):
     """modify(mode='add') items=None 拒绝。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "a"}])
-    r = store.modify(SENDER, mode="add", items=None)
+    store.create(UMO, title="t", items=[{"title": "a"}])
+    r = store.modify(UMO, mode="add", items=None)
     assert r["ok"] is False
 
 
 def test_modify_update_rejects_none_item_ids(tmp_path: Path):
     """modify(mode='update') item_ids=None 拒绝。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "a"}])
-    r = store.modify(SENDER, mode="update", item_ids=None, status="done")
+    store.create(UMO, title="t", items=[{"title": "a"}])
+    r = store.modify(UMO, mode="update", item_ids=None, status="done")
     assert r["ok"] is False
     assert "item_ids" in r["error"]
 
@@ -1275,8 +1276,8 @@ def test_modify_update_rejects_none_item_ids(tmp_path: Path):
 def test_modify_delete_rejects_none_item_ids(tmp_path: Path):
     """modify(mode='delete') item_ids=None 拒绝。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "a"}])
-    r = store.modify(SENDER, mode="delete", item_ids=None)
+    store.create(UMO, title="t", items=[{"title": "a"}])
+    r = store.modify(UMO, mode="delete", item_ids=None)
     assert r["ok"] is False
     assert "item_ids" in r["error"]
 
@@ -1292,17 +1293,17 @@ def test_modify_add_at_max_items_boundary(tmp_path: Path):
     """
     store = _new_store(tmp_path)
     items_99 = [{"title": f"t{i}"} for i in range(99)]
-    r1 = store.create(SENDER, title="t", items=items_99)
+    r1 = store.create(UMO, title="t", items=items_99)
     assert r1["ok"] is True
     assert r1["item_count"] == 99
 
     # add 1 个 → 成功
-    r2 = store.modify(SENDER, mode="add", items=[{"title": "t99"}])
+    r2 = store.modify(UMO, mode="add", items=[{"title": "t99"}])
     assert r2["ok"] is True
     assert r2["item_count"] == 100
 
     # 再 add 1 个 → 失败
-    r3 = store.modify(SENDER, mode="add", items=[{"title": "t100"}])
+    r3 = store.modify(UMO, mode="add", items=[{"title": "t100"}])
     assert r3["ok"] is False
     assert r3["item_count"] == 100  # 不变
 
@@ -1311,12 +1312,12 @@ def test_modify_add_rollback_at_max_boundary(tmp_path: Path):
     """add 触发 100 上限时,已存在数据保持不变。"""
     store = _new_store(tmp_path)
     items_99 = [{"title": f"t{i}"} for i in range(99)]
-    store.create(SENDER, title="t", items=items_99)
+    store.create(UMO, title="t", items=items_99)
 
     # 尝试加 2 个(99+2=101 > 100)→ 失败,文件状态不变
-    r = store.modify(SENDER, mode="add", items=[{"title": "x"}, {"title": "y"}])
+    r = store.modify(UMO, mode="add", items=[{"title": "x"}, {"title": "y"}])
     assert r["ok"] is False
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert len(q["list"]["items"]) == 99  # 已存在数据未被修改
 
 
@@ -1326,23 +1327,23 @@ def test_modify_add_rollback_at_max_boundary(tmp_path: Path):
 def test_modify_update_rollback_on_missing_id(tmp_path: Path):
     """update 模式中,任一 item_ids 不存在 → 全量回滚。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "a"}, {"title": "b"}])
+    store.create(UMO, title="t", items=[{"title": "a"}, {"title": "b"}])
     # item_ids=[1, 999],其中 999 不存在
-    r = store.modify(SENDER, mode="update", item_ids=[1, 999], status="done")
+    r = store.modify(UMO, mode="update", item_ids=[1, 999], status="done")
     assert r["ok"] is False
     # id=1 的状态应保持原状(pending),不被部分更新
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert q["list"]["items"][0]["status"] == "pending"
 
 
 def test_modify_delete_rollback_on_missing_id(tmp_path: Path):
     """delete 模式中,任一 item_ids 不存在 → 全量回滚。"""
     store = _new_store(tmp_path)
-    store.create(SENDER, title="t", items=[{"title": "a"}, {"title": "b"}])
-    r = store.modify(SENDER, mode="delete", item_ids=[1, 999])
+    store.create(UMO, title="t", items=[{"title": "a"}, {"title": "b"}])
+    r = store.modify(UMO, mode="delete", item_ids=[1, 999])
     assert r["ok"] is False
     # 列表应保持 2 项
-    q = store.query(SENDER)
+    q = store.query(UMO)
     assert len(q["list"]["items"]) == 2
 
 
@@ -1513,7 +1514,7 @@ def test_store_adopt_contract_renumbers_ids_from_1(tmp_path: Path):
     """create() 必须丢弃入参 items 的 id,重排从 1 开始。"""
     store = _new_store(tmp_path)
     r = store.create(
-        SENDER,
+        UMO,
         title="t",
         items=[{"id": 99, "title": "x", "status": "pending"}],
     )
@@ -1523,20 +1524,20 @@ def test_store_adopt_contract_renumbers_ids_from_1(tmp_path: Path):
     assert parsed["items"][0]["id"] == 1
 
 
-def test_store_adopt_contract_overwrites_sender_key(tmp_path: Path):
-    """create() 入参的 sender_key 必须覆盖原文件 / 入参 items 的 sender_key。"""
+def test_store_adopt_contract_overwrites_umo(tmp_path: Path):
+    """create() 入参的 umo 必须写入新文件(覆盖原文件 / 入参 items 的 umo)。"""
     store = _new_store(tmp_path)
-    r = store.create(SENDER, title="t", items=[{"title": "x"}])
+    r = store.create(UMO, title="t", items=[{"title": "x"}])
     assert r["ok"] is True
     parsed = todo_list.parse_md(Path(r["file"]).read_text(encoding="utf-8"))
-    assert parsed["sender_key"] == SENDER
+    assert parsed["umo"] == UMO
 
 
 def test_store_adopt_contract_writes_now_timestamp(tmp_path: Path):
     """create() 写 created_at / updated_at = now() (秒级精度)。"""
     store = _new_store(tmp_path)
     before = datetime.now().isoformat(timespec="seconds")
-    r = store.create(SENDER, title="t", items=[{"title": "x"}])
+    r = store.create(UMO, title="t", items=[{"title": "x"}])
     after = datetime.now().isoformat(timespec="seconds")
     parsed = todo_list.parse_md(Path(r["file"]).read_text(encoding="utf-8"))
     assert before <= parsed["created_at"] <= after
@@ -1549,12 +1550,15 @@ def test_store_adopt_contract_writes_now_timestamp(tmp_path: Path):
 
 
 def _mock_context(
-    platform: str = "qq_official", sender_id: str = "787D6B0A323239BE9CAFB7F5CE7EFFDD"
+    umo: str = "qq_official:PrivateMessage:787D6B0A323239BE9CAFB7F5CE7EFFDD",
 ):
-    """Helper: 构造一个 mock ContextWrapper[AstrAgentContext]。"""
+    """Helper: 构造一个 mock ContextWrapper[AstrAgentContext]。
+
+    v2.11: todo_list 的隔离键已切到 umo,所以这里只 mock ``event.unified_msg_origin``,
+    不再 mock ``get_platform_name`` / ``get_sender_id``(extract_umo 不再调用它们)。
+    """
     event = MagicMock()
-    event.get_platform_name = MagicMock(return_value=platform)
-    event.get_sender_id = MagicMock(return_value=sender_id)
+    event.unified_msg_origin = umo
     inner = MagicMock()
     inner.event = event
     ctx = MagicMock()
@@ -1563,7 +1567,7 @@ def _mock_context(
 
 
 def test_todo_create_tool_from_path_happy_path(tmp_path: Path, monkeypatch):
-    """from_path 正常 → 落盘文件存在 + sender_key = 当前 mock 用户。"""
+    """from_path 正常 → 落盘文件存在,文件名前缀是 mock umo 清洗后的字符串。"""
     # 把 StarTools.get_data_dir 引导到 tmp_path,避免污染真实 data_dir
     monkeypatch.setattr(
         main_mod.StarTools, "get_data_dir", classmethod(lambda cls: str(tmp_path))
@@ -1574,10 +1578,11 @@ def test_todo_create_tool_from_path_happy_path(tmp_path: Path, monkeypatch):
     ctx = _mock_context()
     result = asyncio.run(tool.call(ctx, items=None, from_path=str(src)))
     assert '"ok": true' in result
-    # 落盘文件存在,前缀是 mock 用户的 platform_sid
+    # 落盘文件存在,前缀是 mock umo 清洗后的字符串(`:` → `_`)
     files = list((tmp_path / "todos").glob("*.md"))
     assert any(
-        "qq_official_787D6B0A323239BE9CAFB7F5CE7EFFDD" in f.name for f in files
+        "qq_official_PrivateMessage_787D6B0A323239BE9CAFB7F5CE7EFFDD" in f.name
+        for f in files
     ), f"expected file not found, got {files}"
 
 
