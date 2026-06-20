@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -95,6 +96,193 @@ def _build_error_response(path: str | Path, reason: str) -> dict:
     详见 docs/superpowers/specs/2026-06-20-file-browser-endpoint-design.md §6.4。
     """
     return {"type": None, "path": str(path), "reason": reason}
+
+
+def _is_binary(path: Path, sniff_bytes: int = FILE_BROWSER_SNIFF_BYTES) -> bool:
+    """扫前 sniff_bytes 字节,含 NUL 字节 → 二进制。
+
+    Git 自身也用相同启发式(`xd0` 工具的 ``is_binary``);见 spec §7.1。
+    """
+    try:
+        with path.open("rb") as f:
+            chunk = f.read(sniff_bytes)
+    except OSError:
+        return True  # 不可读 → 当 binary 处理
+    return b"\x00" in chunk
+
+
+def _classify_entry(p: Path) -> str:
+    """不跟随 symlink 的类型分类。
+
+    返回值: ``directory`` / ``file`` / ``symlink`` / ``special`` (FIFO/socket/device)。
+
+    WHY: Python 3.12 build 缺 ``Path.is_dir(follow_symlinks=)`` 参数(仅在
+    Python ≥ 3.13 才正式支持);改用 ``os.stat`` + ``stat.S_ISDIR`` 走底层
+    ``stat.S_IFMT`` 判定,与 spec §7.3 "用 lstat 不跟随" 等价。
+    """
+    if p.is_symlink():
+        return "symlink"
+    try:
+        st = os.stat(p, follow_symlinks=False)
+    except OSError:
+        return "special"
+    mode = stat.S_IFMT(st.st_mode)
+    if mode == stat.S_IFDIR:
+        return "directory"
+    if mode == stat.S_IFREG:
+        return "file"
+    return "special"
+
+
+def _safe_lstat_mtime(path: Path) -> float | None:
+    """安全读 mtime: lstat 失败 / st_mtime 访问失败 → None。
+
+    不抛异常;与 spec §6 "文件 mtime 失败" 边界一致。
+    """
+    try:
+        st = path.lstat()
+    except OSError:
+        return None
+    try:
+        return float(st.st_mtime)
+    except OSError:
+        return None
+
+
+def _make_entry(p: Path) -> dict:
+    """构造单个 entry dict(目录列表项)。
+
+    不跟随 symlink (lstat)。``_classify_entry`` 抛 OSError 时由调用方决定跳过。
+    """
+    st = p.lstat()  # 不跟随 symlink
+    entry: dict = {
+        "path": str(p),
+        "name": p.name,
+        "type": _classify_entry(p),
+        "size": st.st_size,
+        "mtime": _safe_lstat_mtime(p),
+        "is_symlink": p.is_symlink(),
+    }
+    if p.is_symlink():
+        entry["target"] = os.readlink(p)
+        entry["target_exists"] = Path(entry["target"]).exists()
+    return entry
+
+
+def _build_file_response(path: Path) -> dict:
+    """构造文件响应。三种 reason 路径(成功 / file_too_large / binary_file)。
+
+    ``read_text`` 抛 OSError / UnicodeDecodeError 统一视为 binary
+    (spec §7.5 注释说明)。
+    """
+    try:
+        st = path.lstat()
+    except OSError as exc:
+        return _build_error_response(path, _classify_oserror(exc))
+    base: dict = {
+        "type": "file",
+        "path": str(path),
+        "name": path.name,
+        "size": st.st_size,
+        "mtime": _safe_lstat_mtime(path),
+        "max_bytes": FILE_BROWSER_MAX_BYTES,
+    }
+    if st.st_size > FILE_BROWSER_MAX_BYTES:
+        return {
+            **base,
+            "encoding": None,
+            "is_binary": False,
+            "content": None,
+            "reason": "file_too_large",
+        }
+    if _is_binary(path):
+        return {
+            **base,
+            "encoding": None,
+            "is_binary": True,
+            "content": None,
+            "reason": "binary_file",
+        }
+    # 文本正常;read_text 抛异常统一视为 binary
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {
+            **base,
+            "encoding": None,
+            "is_binary": None,
+            "content": None,
+            "reason": "binary_file",
+        }
+    return {
+        **base,
+        "encoding": "utf-8",
+        "is_binary": False,
+        "content": content,
+        "reason": None,
+    }
+
+
+def _classify_oserror(exc: OSError) -> str:
+    """把 OSError 映射到 reason 字符串(EACCES/PermissionError → permission_denied)。
+
+    其他 OSError 视为 path_not_found(资源不可用)。
+    """
+    if isinstance(exc, PermissionError):
+        return "permission_denied"
+    if exc.errno == 13:  # EACCES
+        return "permission_denied"
+    return "path_not_found"
+
+
+def _build_directory_response(path: Path) -> dict:
+    """构造目录响应。
+
+    - 过滤以 ``.`` 开头的隐藏项
+    - 按 ``(_TYPE_ORDER[type], name)`` 排序:directory → file → symlink
+    - 超过 ``FILE_BROWSER_MAX_ENTRIES`` 截断
+    """
+    raw_entries: list[dict] = []
+    for child in path.iterdir():
+        if child.name.startswith("."):
+            continue
+        try:
+            raw_entries.append(_make_entry(child))
+        except OSError:
+            continue  # lstat 失败(罕见;权限/竞态)— 跳过
+    raw_entries.sort(key=lambda e: (_TYPE_ORDER[e["type"]], e["name"]))
+    truncated = len(raw_entries) > FILE_BROWSER_MAX_ENTRIES
+    entries = raw_entries[:FILE_BROWSER_MAX_ENTRIES]
+    return {
+        "type": "directory",
+        "path": str(path),
+        "entry_count": len(entries),
+        "truncated": truncated,
+        "max_entries": FILE_BROWSER_MAX_ENTRIES,
+        "entries": entries,
+        "reason": "directory_listing_truncated" if truncated else None,
+    }
+
+
+def _build_symlink_response(path: Path) -> dict:
+    """构造顶层 symlink 响应。
+
+    symlink → 文件: target_exists=True(若 target 存在)
+    悬空 symlink: target_exists=False
+    """
+    st = path.lstat()
+    target = os.readlink(path)
+    return {
+        "type": "symlink",
+        "path": str(path),
+        "name": path.name,
+        "size": st.st_size,
+        "mtime": _safe_lstat_mtime(path),
+        "is_symlink": True,
+        "target": target,
+        "target_exists": Path(target).exists(),
+        "reason": None,
+    }
 
 
 def _make_git_diff_empty_envelope(
@@ -3241,8 +3429,26 @@ class SPCodeToolkit(star.Star):
         if not raw_path:
             return {"status": "ok", "data": _build_error_response("", "path_not_found")}
         path = Path(raw_path)
+        # 不跟随 symlink 的路径校验(spec §7.2):broken symlink 时
+        # path.exists() 返回 False,所以**额外**用 path.is_symlink() 检查
         if not path.exists() and not path.is_symlink():
             return {"status": "ok", "data": _build_error_response(path, "path_not_found")}
-        # 文件 / 目录 / symlink 分支在 Task 5 / 8 / 14 中实现
-        # (当前是骨架;具体实现见后续任务)
-        return {"status": "ok", "data": _build_error_response(path, "path_not_found")}
+        # 分支调度(spec §7.3):
+        #   1. directory → _build_directory_response
+        #   2. file → _build_file_response
+        #   3. symlink → _build_symlink_response
+        #   4. else → special_file (FIFO/socket/device)
+        try:
+            entry_type = _classify_entry(path)
+            if entry_type == "directory":
+                data = _build_directory_response(path)
+            elif entry_type == "file":
+                data = _build_file_response(path)
+            elif entry_type == "symlink":
+                data = _build_symlink_response(path)
+            else:
+                data = _build_error_response(path, "special_file")
+        except (PermissionError, OSError) as exc:
+            logger.warning("file-browser: OSError on %s: %s", path, exc)
+            return {"status": "ok", "data": _build_error_response(path, _classify_oserror(exc))}
+        return {"status": "ok", "data": data}
