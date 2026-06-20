@@ -80,6 +80,14 @@ _SCOPE_GIT_ARGS: dict[str, list[str]] = {
 }
 DEFAULT_SCOPE: str = "unstaged"  # 与 v1 行为严格兼容
 
+# ── file-browser 端点常量(v3.2) ──
+# 单一真相源,handler 与测试共享;详情见
+# docs/superpowers/specs/2026-06-20-file-browser-endpoint-design.md §5
+FILE_BROWSER_MAX_BYTES: int = 5 * 1024 * 1024  # 5 MB 文件大小硬上限
+FILE_BROWSER_MAX_ENTRIES: int = 1000  # 单层目录最大返回项数
+FILE_BROWSER_SNIFF_BYTES: int = 8192  # 8 KB 二进制探测窗口
+_TYPE_ORDER: dict[str, int] = {"directory": 0, "file": 1, "symlink": 2}
+
 
 def _make_git_diff_empty_envelope(
     umo: str | None,
