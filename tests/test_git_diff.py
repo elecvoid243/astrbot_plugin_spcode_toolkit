@@ -18,6 +18,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+# v3.2: shared helper 从 conftest 导入(原为 test_git_diff.py 私有)
+from tests.conftest import make_web_request_mock  # noqa: F401
+
 # 启用 pytest-asyncio:让所有 `async def` 测试函数在 strict 模式下也能运行。
 # (项目用 strict 模式,不在 pytest 配置里改全局,避免影响其他测试文件。)
 pytestmark = pytest.mark.asyncio
@@ -93,22 +96,6 @@ def _make_event(umo: str = "test:umo") -> MagicMock:
     event = MagicMock()
     event.unified_msg_origin = umo
     return event
-
-
-def _make_web_request_mock(query: dict[str, str | None] | None = None) -> MagicMock:
-    """构造一个 mock 替换 ``astrbot.api.web.request``。
-
-    现有 v1 测试用 ``monkey_q.get = MagicMock(return_value="target:umo")`` 模式
-    只能为所有 key 返回同一个值,无法按 ``umo`` / ``worktree`` / ``scope`` 各自
-    设值。本辅助通过 ``side_effect`` 让每个 key 独立查表。
-
-    Args:
-        query: 模拟 query string,如 ``{"scope": "staged", "umo": "x:y"}``。
-               key 不存在时返回 None(对齐真实 ``QueryDict.get`` 语义)。
-    """
-    mock = MagicMock()
-    mock.query.get = MagicMock(side_effect=lambda key: (query or {}).get(key))
-    return mock
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -313,10 +300,10 @@ async def test_handle_git_diff_umo_query_param_hits_loaded_umo(plugin, tmp_path,
     # Mock web.request.query to return "target:umo" only for the "umo" key.
     # v3.1 之前用 MagicMock(return_value="target:umo") 对所有 key 返回同值,
     # 但新增的 ?scope= 校验会把它误判为非法 scope 并提前返回。这里用
-    # _make_web_request_mock 让 umo / worktree / scope 三个 key 各自查表。
+    # make_web_request_mock 让 umo / worktree / scope 三个 key 各自查表。
     from astrbot.api import web
     monkeypatch.setattr(
-        web, "request", _make_web_request_mock({"umo": "target:umo"})
+        web, "request", make_web_request_mock({"umo": "target:umo"})
     )
 
     result = await plugin.handle_get_git_diff()
@@ -412,7 +399,7 @@ async def test_handle_git_diff_default_scope_is_unstaged(plugin, tmp_path, monke
     _init_git_repo(tmp_path)
     (tmp_path / "README.md").write_text("modified", encoding="utf-8")
     _load_project(plugin, "test:umo", str(tmp_path))
-    monkeypatch.setattr(web, "request", _make_web_request_mock())
+    monkeypatch.setattr(web, "request", make_web_request_mock())
 
     result = await plugin.handle_get_git_diff()
     data = result["data"]
@@ -431,7 +418,7 @@ async def test_handle_git_diff_scope_staged_returns_staged_diff(plugin, tmp_path
     (tmp_path / "README.md").write_text("staged + extra edit", encoding="utf-8")
     _load_project(plugin, "test:umo", str(tmp_path))
     monkeypatch.setattr(
-        web, "request", _make_web_request_mock({"scope": "staged"})
+        web, "request", make_web_request_mock({"scope": "staged"})
     )
 
     result = await plugin.handle_get_git_diff()
@@ -455,7 +442,7 @@ async def test_handle_git_diff_scope_all_returns_combined_diff(plugin, tmp_path,
     (tmp_path / "README.md").write_text("modified+unstaged\n", encoding="utf-8")
     _load_project(plugin, "test:umo", str(tmp_path))
     monkeypatch.setattr(
-        web, "request", _make_web_request_mock({"scope": "all"})
+        web, "request", make_web_request_mock({"scope": "all"})
     )
 
     result = await plugin.handle_get_git_diff()
@@ -476,7 +463,7 @@ async def test_handle_git_diff_scope_staged_empty_when_no_staged_changes(
     # 注意:不调用 git add
     _load_project(plugin, "test:umo", str(tmp_path))
     monkeypatch.setattr(
-        web, "request", _make_web_request_mock({"scope": "staged"})
+        web, "request", make_web_request_mock({"scope": "staged"})
     )
 
     result = await plugin.handle_get_git_diff()
@@ -497,7 +484,7 @@ async def test_handle_git_diff_scope_all_with_only_staged_changes(
     subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
     _load_project(plugin, "test:umo", str(tmp_path))
     monkeypatch.setattr(
-        web, "request", _make_web_request_mock({"scope": "all"})
+        web, "request", make_web_request_mock({"scope": "all"})
     )
 
     result = await plugin.handle_get_git_diff()
@@ -517,7 +504,7 @@ async def test_handle_git_diff_scope_all_with_only_unstaged_changes(
     # 不 git add
     _load_project(plugin, "test:umo", str(tmp_path))
     monkeypatch.setattr(
-        web, "request", _make_web_request_mock({"scope": "all"})
+        web, "request", make_web_request_mock({"scope": "all"})
     )
 
     result = await plugin.handle_get_git_diff()
@@ -547,7 +534,7 @@ async def test_handle_git_diff_scope_invalid_value_returns_invalid_scope(
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
     monkeypatch.setattr(
-        web, "request", _make_web_request_mock({"scope": "foo"})
+        web, "request", make_web_request_mock({"scope": "foo"})
     )
 
     result = await plugin.handle_get_git_diff()
@@ -566,7 +553,7 @@ async def test_handle_git_diff_scope_case_insensitive(plugin, tmp_path, monkeypa
     subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
     _load_project(plugin, "test:umo", str(tmp_path))
     monkeypatch.setattr(
-        web, "request", _make_web_request_mock({"scope": "STAGED"})
+        web, "request", make_web_request_mock({"scope": "STAGED"})
     )
 
     result = await plugin.handle_get_git_diff()
@@ -584,7 +571,7 @@ async def test_handle_git_diff_scope_empty_string_defaults_to_unstaged(
     (tmp_path / "README.md").write_text("unstaged", encoding="utf-8")
     _load_project(plugin, "test:umo", str(tmp_path))
     monkeypatch.setattr(
-        web, "request", _make_web_request_mock({"scope": ""})
+        web, "request", make_web_request_mock({"scope": ""})
     )
 
     result = await plugin.handle_get_git_diff()
@@ -606,7 +593,7 @@ async def test_handle_git_diff_scope_field_echoed_in_success_response(
         ("all", "all"),
     ]:
         monkeypatch.setattr(
-            web, "request", _make_web_request_mock({"scope": requested})
+            web, "request", make_web_request_mock({"scope": requested})
         )
         result = await plugin.handle_get_git_diff()
         assert result["data"]["scope"] == echoed, (
@@ -622,7 +609,7 @@ async def test_handle_git_diff_scope_invalid_response_omits_scope_field(
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
     monkeypatch.setattr(
-        web, "request", _make_web_request_mock({"scope": "bogus"})
+        web, "request", make_web_request_mock({"scope": "bogus"})
     )
 
     result = await plugin.handle_get_git_diff()
@@ -642,7 +629,7 @@ async def test_handle_git_diff_scope_invalid_takes_precedence_over_feature_flag(
     plugin._config["agentsmd_enabled"] = False
     try:
         monkeypatch.setattr(
-            web, "request", _make_web_request_mock({"scope": "foo"})
+            web, "request", make_web_request_mock({"scope": "foo"})
         )
         result = await plugin.handle_get_git_diff()
         assert result["data"]["reason"] == "invalid_scope"
@@ -668,7 +655,7 @@ async def test_handle_git_diff_scope_staged_with_real_add(
     subprocess.run(["git", "add", "new.py"], cwd=tmp_path, check=True)
     _load_project(plugin, "test:umo", str(tmp_path))
     monkeypatch.setattr(
-        web, "request", _make_web_request_mock({"scope": "staged"})
+        web, "request", make_web_request_mock({"scope": "staged"})
     )
 
     result = await plugin.handle_get_git_diff()
@@ -697,7 +684,7 @@ async def test_handle_git_diff_scope_combines_with_worktree_param(
     _load_project(plugin, "test:umo", str(tmp_path))
     monkeypatch.setattr(
         web, "request",
-        _make_web_request_mock({"scope": "all", "worktree": "../escape"}),
+        make_web_request_mock({"scope": "all", "worktree": "../escape"}),
     )
     result = await plugin.handle_get_git_diff()
     # scope 解析通过后,worktree 校验失败 → worktree_invalid(而非 invalid_scope)

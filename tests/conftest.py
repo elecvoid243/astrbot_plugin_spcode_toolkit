@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -86,3 +87,25 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "test_codegraph_cpp" in item.nodeid:
             item.add_marker(skip)
+
+
+# ── 共享 test helper ────────────────────────────────────────
+# WHY: 多个 test_*.py 需要构造 mock 替换 ``astrbot.api.web.request``,
+# 原 _make_web_request_mock 在 test_git_diff.py 私有;v3.2 抽出到 conftest
+# 供 test_file_browser.py 复用。设计见 docs/superpowers/specs/
+# 2026-06-20-file-browser-endpoint-design.md §13 实施检查清单。
+
+
+def make_web_request_mock(query: dict[str, str | None] | None = None) -> MagicMock:
+    """构造 mock 替换 ``astrbot.api.web.request``。
+
+    Args:
+        query: 模拟 query string,如 ``{"scope": "staged", "umo": "x:y"}``。
+               key 不存在时返回 None(对齐真实 ``QueryDict.get`` 语义)。
+
+    Returns:
+        ``MagicMock`` — ``mock.query.get(key)`` 按 query dict 查表。
+    """
+    mock = MagicMock()
+    mock.query.get = MagicMock(side_effect=lambda key: (query or {}).get(key))
+    return mock
