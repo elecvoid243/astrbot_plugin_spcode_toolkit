@@ -104,8 +104,12 @@ def make_web_request_mock(query: dict[str, str | None] | None = None) -> MagicMo
                key 不存在时返回 None(对齐真实 ``QueryDict.get`` 语义)。
 
     Returns:
-        ``MagicMock`` — ``mock.query.get(key)`` 按 query dict 查表。
+        ``MagicMock`` — ``mock.query.get(key[, default])`` 按 query dict 查表。
+        接受 1 或 2 个位置参数(对应 ``QueryDict.get`` 的两种签名),
+        1-arg 旧 caller 与 2-arg 新 caller 都能复用同一个 mock。
     """
     mock = MagicMock()
-    mock.query.get = MagicMock(side_effect=lambda key: (query or {}).get(key))
+    mock.query.get = MagicMock(
+        side_effect=lambda *args: (query or {}).get(args[0]) if args else None
+    )
     return mock

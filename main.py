@@ -89,6 +89,14 @@ FILE_BROWSER_SNIFF_BYTES: int = 8192  # 8 KB 二进制探测窗口
 _TYPE_ORDER: dict[str, int] = {"directory": 0, "file": 1, "symlink": 2}
 
 
+def _build_error_response(path: str | Path, reason: str) -> dict:
+    """构造错误响应(3 字段:type=null, path, reason)。
+
+    详见 docs/superpowers/specs/2026-06-20-file-browser-endpoint-design.md §6.4。
+    """
+    return {"type": None, "path": str(path), "reason": reason}
+
+
 def _make_git_diff_empty_envelope(
     umo: str | None,
     reason: str,
@@ -3209,3 +3217,32 @@ class SPCodeToolkit(star.Star):
             yield event.plain_result(
                 f"ℹ️ 已在 build 模式 (会话 {umo})。所有工具默认可用,无需切换。"
             )
+
+    # ── file-browser 端点(v3.2)─────────────────────────────────────
+    #
+    # 详见 docs/superpowers/specs/2026-06-20-file-browser-endpoint-design.md
+    # 入口路由在 initialize() 中注册(本方法只是 view_handler)。
+
+    async def handle_get_file_browser(self) -> dict:
+        """Web API handler for ``GET /spcode/file-browser``.
+
+        Query params:
+          - ``path`` (必填):绝对路径;指向文件 / 目录 / 符号链接。
+
+        Response envelope::
+            {"status": "ok", "data": {<type-specific>}}
+
+        type ∈ {file, directory, symlink, null}。null 表示错误,
+        此时 data 含 ``reason`` 字段说明错误类型。
+        """
+        import astrbot.api.web as _aw
+
+        raw_path = _aw.request.query.get("path", "").strip()
+        if not raw_path:
+            return {"status": "ok", "data": _build_error_response("", "path_not_found")}
+        path = Path(raw_path)
+        if not path.exists() and not path.is_symlink():
+            return {"status": "ok", "data": _build_error_response(path, "path_not_found")}
+        # 文件 / 目录 / symlink 分支在 Task 5 / 8 / 14 中实现
+        # (当前是骨架;具体实现见后续任务)
+        return {"status": "ok", "data": _build_error_response(path, "path_not_found")}
