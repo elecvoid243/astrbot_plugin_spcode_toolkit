@@ -310,11 +310,14 @@ async def test_handle_git_diff_umo_query_param_hits_loaded_umo(plugin, tmp_path,
     _init_git_repo(tmp_path)
     _load_project(plugin, "target:umo", str(tmp_path))
 
-    # Mock web.request.query.get to return "target:umo"
+    # Mock web.request.query to return "target:umo" only for the "umo" key.
+    # v3.1 之前用 MagicMock(return_value="target:umo") 对所有 key 返回同值,
+    # 但新增的 ?scope= 校验会把它误判为非法 scope 并提前返回。这里用
+    # _make_web_request_mock 让 umo / worktree / scope 三个 key 各自查表。
     from astrbot.api import web
-    monkey_q = MagicMock()
-    monkey_q.get = MagicMock(return_value="target:umo")
-    monkeypatch.setattr(web, "request", MagicMock(query=monkey_q))
+    monkeypatch.setattr(
+        web, "request", _make_web_request_mock({"umo": "target:umo"})
+    )
 
     result = await plugin.handle_get_git_diff()
     assert result["data"]["umo"] == "target:umo"
@@ -647,15 +650,22 @@ async def test_handle_git_diff_scope_invalid_takes_precedence_over_feature_flag(
         plugin._config["agentsmd_enabled"] = True
 
 
-async def test_handle_git_diff_scope_staged_handles_intent_to_add(
+async def test_handle_git_diff_scope_staged_with_real_add(
     plugin, tmp_path, monkeypatch
 ):
-    """git add -N new.py → ?scope=staged 中 files_changed 含 status='A',
-    且 data.scope 字段回显为 'staged'(避免与 v1 走 'git diff' 误判为绿)。"""
+    """真实 git add new.py(在 index 注入内容)→ ?scope=staged 中
+    files_changed 含 status='A',且 data.scope 字段回显为 'staged'。
+
+    注意:不能用 ``git add -N``(intent-to-add)做这个测试。intent-to-add
+    只把 path 注册到 index 但不复制内容(在 index 里是空文件),``git diff
+    --cached`` 不会输出该文件 — 它只在 ``git diff``(unstaged)中出现。
+    这里用真正的 ``git add`` 把内容写入 index,``git diff --cached`` 才能
+    看到该文件作为 'A'(new file with N additions)。
+    """
     from astrbot.api import web
     _init_git_repo(tmp_path)
     (tmp_path / "new.py").write_text("print('hi')\n", encoding="utf-8")
-    subprocess.run(["git", "add", "-N", "new.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "new.py"], cwd=tmp_path, check=True)
     _load_project(plugin, "test:umo", str(tmp_path))
     monkeypatch.setattr(
         web, "request", _make_web_request_mock({"scope": "staged"})
