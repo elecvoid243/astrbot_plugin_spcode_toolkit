@@ -66,6 +66,20 @@ from collections import defaultdict
 MAX_GIT_DIFF_BYTES = 1 * 1024 * 1024  # 1 MB 硬上限
 _GIT_DIFF_ENCODING = detect_console_encoding()  # 进程内一次探测
 
+# ── git-diff scope 映射(v3.1) ──
+# 单一真相源:scope 名 → 传给 `git diff [args]` 的位置参数列表。
+# 三种 scope 与 git 原生三段 diff 语义一一对应:
+#   "unstaged" (默认) → 工作区 vs index(编辑器改动;v1 行为)
+#   "staged"         → index vs HEAD(`git add` 后的内容)
+#   "all"            → 工作区 vs HEAD(staged + unstaged 之和)
+_VALID_SCOPES: frozenset[str] = frozenset({"unstaged", "staged", "all"})
+_SCOPE_GIT_ARGS: dict[str, list[str]] = {
+    "unstaged": [],
+    "staged": ["--cached"],
+    "all": ["HEAD"],
+}
+DEFAULT_SCOPE: str = "unstaged"  # 与 v1 行为严格兼容
+
 
 def _make_git_diff_empty_envelope(
     umo: str | None,
@@ -2092,6 +2106,25 @@ class SPCodeToolkit(star.Star):
             umo = None
             worktree_param = None
 
+        # ── scope 解析(v3.1,Q1-OOR:在 feature flag 校验之前) ──
+        # 默认 "unstaged" 与 v1 行为严格一致;非法值 → invalid_scope;
+        # 大小写不敏感;空字符串视同缺省(避免误报)。
+        scope: str = DEFAULT_SCOPE
+        try:
+            scope_raw = web.request.query.get("scope")
+            if scope_raw is not None:
+                candidate = scope_raw.strip().lower()
+                if candidate and candidate not in _VALID_SCOPES:
+                    # _elapsed() 尚未定义,inline 计算 elapsed_ms
+                    return _make_git_diff_empty_envelope(
+                        umo=None,
+                        reason="invalid_scope",
+                        elapsed_ms=int((_time.time() - t0) * 1000),
+                    )
+                scope = candidate or DEFAULT_SCOPE
+        except Exception:
+            scope = DEFAULT_SCOPE
+
         git_bin = self._git_binary()
 
         def _elapsed() -> int:
@@ -2192,16 +2225,17 @@ class SPCodeToolkit(star.Star):
         # to avoid mojibake when changed lines contain non-ASCII characters
         # (e.g. Chinese comments / strings) on a cp936 Windows host.
         git_prefix = [git_bin, "-C", directory, "-c", "color.ui=never"]
+        scope_args = _SCOPE_GIT_ARGS[scope]
         (
             raw_result,
             name_status_result,
             numstat_result,
             stat_result,
         ) = await asyncio.gather(
-            run_sync(run_cmd, git_prefix + ["diff"], encoding="utf-8"),
-            run_sync(run_cmd, git_prefix + ["diff", "--name-status"], encoding="utf-8"),
-            run_sync(run_cmd, git_prefix + ["diff", "--numstat"], encoding="utf-8"),
-            run_sync(run_cmd, git_prefix + ["diff", "--stat"], encoding="utf-8"),
+            run_sync(run_cmd, git_prefix + ["diff"] + scope_args, encoding="utf-8"),
+            run_sync(run_cmd, git_prefix + ["diff", "--name-status"] + scope_args, encoding="utf-8"),
+            run_sync(run_cmd, git_prefix + ["diff", "--numstat"] + scope_args, encoding="utf-8"),
+            run_sync(run_cmd, git_prefix + ["diff", "--stat"] + scope_args, encoding="utf-8"),
         )
 
         if not raw_result["ok"]:
@@ -2229,6 +2263,7 @@ class SPCodeToolkit(star.Star):
                 "loaded": True,
                 "directory": directory,
                 "umo": umo,
+                "scope": scope,  # ← 新增 v3.1:回显 scope 解析结果
                 "diff": diff,
                 "stat": stat,
                 "files_changed": files_changed,
