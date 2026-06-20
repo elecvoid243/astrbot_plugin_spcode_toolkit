@@ -95,6 +95,22 @@ def _make_event(umo: str = "test:umo") -> MagicMock:
     return event
 
 
+def _make_web_request_mock(query: dict[str, str | None] | None = None) -> MagicMock:
+    """构造一个 mock 替换 ``astrbot.api.web.request``。
+
+    现有 v1 测试用 ``monkey_q.get = MagicMock(return_value="target:umo")`` 模式
+    只能为所有 key 返回同一个值,无法按 ``umo`` / ``worktree`` / ``scope`` 各自
+    设值。本辅助通过 ``side_effect`` 让每个 key 独立查表。
+
+    Args:
+        query: 模拟 query string,如 ``{"scope": "staged", "umo": "x:y"}``。
+               key 不存在时返回 None(对齐真实 ``QueryDict.get`` 语义)。
+    """
+    mock = MagicMock()
+    mock.query.get = MagicMock(side_effect=lambda key: (query or {}).get(key))
+    return mock
+
+
 # ────────────────────────────────────────────────────────────────────
 # Tests
 # ────────────────────────────────────────────────────────────────────
