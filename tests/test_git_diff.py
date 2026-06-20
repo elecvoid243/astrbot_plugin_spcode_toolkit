@@ -390,10 +390,305 @@ async def test_git_path_schema_field_exists():
     schema_path = _P(__file__).resolve().parent.parent / "_conf_schema.json"
     with open(schema_path, encoding="utf-8") as f:
         schema = json.load(f)
-    # Schema 嵌套在 git_diff.items.git_path(AstrBot 分组 + items 包装)
+    # Schema 宓屽鍦?git_diff.items.git_path(AstrBot 鍒嗙粍 + items 鍖呰)
     assert "git_diff" in schema, "git_diff group missing from schema"
     assert "git_path" in schema["git_diff"]["items"], "git_path field missing"
     field = schema["git_diff"]["items"]["git_path"]
     assert field["type"] == "string"
     assert field["default"] == ""
     assert field["description"]  # non-empty
+
+
+# ────────────────────────────────────────────────────────────────────
+# v3.1 scope 参数(在 v1 之上扩展,默认行为不变)
+# ────────────────────────────────────────────────────────────────────
+
+async def test_handle_git_diff_default_scope_is_unstaged(plugin, tmp_path, monkeypatch):
+    """不传 ?scope= 时,行为与 v1 完全一致(走 git diff,无参数)。"""
+    from astrbot.api import web
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("modified", encoding="utf-8")
+    _load_project(plugin, "test:umo", str(tmp_path))
+    monkeypatch.setattr(web, "request", _make_web_request_mock())
+
+    result = await plugin.handle_get_git_diff()
+    data = result["data"]
+    assert data["loaded"] is True
+    assert data["scope"] == "unstaged"  # 默认值回显
+    assert "README.md" in data["diff"]  # unstaged 改动出现在 diff 中
+
+
+async def test_handle_git_diff_scope_staged_returns_staged_diff(plugin, tmp_path, monkeypatch):
+    """?scope=staged → 走 git diff --cached,只显示已暂存内容。"""
+    from astrbot.api import web
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("staged change", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    # 之后在已 staged 之上再做 unstaged 修改
+    (tmp_path / "README.md").write_text("staged + extra edit", encoding="utf-8")
+    _load_project(plugin, "test:umo", str(tmp_path))
+    monkeypatch.setattr(
+        web, "request", _make_web_request_mock({"scope": "staged"})
+    )
+
+    result = await plugin.handle_get_git_diff()
+    data = result["data"]
+    assert data["loaded"] is True
+    assert data["scope"] == "staged"
+    # staged diff 显示原始 staged 内容(staged change),不含后续 edit
+    assert "staged change" in data["diff"]
+
+
+async def test_handle_git_diff_scope_all_returns_combined_diff(plugin, tmp_path, monkeypatch):
+    """?scope=all → 走 git diff HEAD,显示 working tree vs HEAD。"""
+    from astrbot.api import web
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("init\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "base", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "README.md").write_text("modified\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    # 再做 unstaged 改动
+    (tmp_path / "README.md").write_text("modified+unstaged\n", encoding="utf-8")
+    _load_project(plugin, "test:umo", str(tmp_path))
+    monkeypatch.setattr(
+        web, "request", _make_web_request_mock({"scope": "all"})
+    )
+
+    result = await plugin.handle_get_git_diff()
+    data = result["data"]
+    assert data["loaded"] is True
+    assert data["scope"] == "all"
+    # HEAD diff 包含 working tree 完整内容(对照 init vs modified+unstaged)
+    assert "modified+unstaged" in data["diff"]
+
+
+async def test_handle_git_diff_scope_staged_empty_when_no_staged_changes(
+    plugin, tmp_path, monkeypatch
+):
+    """仅 unstaged 改动时,?scope=staged 返回空 diff。"""
+    from astrbot.api import web
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("only unstaged", encoding="utf-8")
+    # 注意:不调用 git add
+    _load_project(plugin, "test:umo", str(tmp_path))
+    monkeypatch.setattr(
+        web, "request", _make_web_request_mock({"scope": "staged"})
+    )
+
+    result = await plugin.handle_get_git_diff()
+    data = result["data"]
+    assert data["loaded"] is True
+    assert data["scope"] == "staged"
+    assert data["diff"] == ""
+    assert data["files_changed"] == []
+
+
+async def test_handle_git_diff_scope_all_with_only_staged_changes(
+    plugin, tmp_path, monkeypatch
+):
+    """仅 staged 改动时,?scope=all 返回与 ?scope=staged 相同 diff。"""
+    from astrbot.api import web
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("only staged", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    _load_project(plugin, "test:umo", str(tmp_path))
+    monkeypatch.setattr(
+        web, "request", _make_web_request_mock({"scope": "all"})
+    )
+
+    result = await plugin.handle_get_git_diff()
+    data = result["data"]
+    assert data["scope"] == "all"
+    # staged 改动在工作区 + staged 之和中仍是相同内容
+    assert "only staged" in data["diff"]
+
+
+async def test_handle_git_diff_scope_all_with_only_unstaged_changes(
+    plugin, tmp_path, monkeypatch
+):
+    """仅 unstaged 改动时,?scope=all 返回与 ?scope=unstaged 相同 diff。"""
+    from astrbot.api import web
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("only unstaged", encoding="utf-8")
+    # 不 git add
+    _load_project(plugin, "test:umo", str(tmp_path))
+    monkeypatch.setattr(
+        web, "request", _make_web_request_mock({"scope": "all"})
+    )
+
+    result = await plugin.handle_get_git_diff()
+    data = result["data"]
+    assert data["scope"] == "all"
+    assert "only unstaged" in data["diff"]
+
+
+async def test_handle_git_diff_scope_invalid_value_returns_invalid_scope(
+    plugin, tmp_path, monkeypatch
+):
+    """?scope=foo(未知值)→ loaded=False, reason='invalid_scope',且 git 命令一次也不跑。"""
+    from astrbot.api import web
+    from tools import _helpers as _h
+    from astrbot_plugin_spcode_toolkit import main as _mm
+
+    real_run_cmd = _h.run_cmd
+    call_count = {"n": 0}
+
+    def _counted_run_cmd(*args, **kwargs):
+        call_count["n"] += 1
+        return real_run_cmd(*args, **kwargs)
+
+    monkeypatch.setattr(_h, "run_cmd", _counted_run_cmd)
+    monkeypatch.setattr(_mm, "run_cmd", _counted_run_cmd, raising=False)
+
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "test:umo", str(tmp_path))
+    monkeypatch.setattr(
+        web, "request", _make_web_request_mock({"scope": "foo"})
+    )
+
+    result = await plugin.handle_get_git_diff()
+    data = result["data"]
+    assert data["loaded"] is False
+    assert data["reason"] == "invalid_scope"
+    # Q1-OOR 风格:校验顺序在所有 git 操作之前,run_cmd 不应被调用
+    assert call_count["n"] == 0, f"run_cmd called {call_count['n']} times; expected 0"
+
+
+async def test_handle_git_diff_scope_case_insensitive(plugin, tmp_path, monkeypatch):
+    """?scope=STAGED 大写等价于 ?scope=staged。"""
+    from astrbot.api import web
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("staged", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    _load_project(plugin, "test:umo", str(tmp_path))
+    monkeypatch.setattr(
+        web, "request", _make_web_request_mock({"scope": "STAGED"})
+    )
+
+    result = await plugin.handle_get_git_diff()
+    data = result["data"]
+    assert data["scope"] == "staged"  # 规整为小写
+    assert "staged" in data["diff"]
+
+
+async def test_handle_git_diff_scope_empty_string_defaults_to_unstaged(
+    plugin, tmp_path, monkeypatch
+):
+    """?scope= 空字符串视同缺省 → scope=unstaged(避免误报 invalid_scope)。"""
+    from astrbot.api import web
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("unstaged", encoding="utf-8")
+    _load_project(plugin, "test:umo", str(tmp_path))
+    monkeypatch.setattr(
+        web, "request", _make_web_request_mock({"scope": ""})
+    )
+
+    result = await plugin.handle_get_git_diff()
+    data = result["data"]
+    assert data["scope"] == "unstaged"
+    assert "unstaged" in data["diff"]
+
+
+async def test_handle_git_diff_scope_field_echoed_in_success_response(
+    plugin, tmp_path, monkeypatch
+):
+    """成功响应里 data.scope 等于客户端请求的合法值(精确回显)。"""
+    from astrbot.api import web
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "test:umo", str(tmp_path))
+    for requested, echoed in [
+        ("unstaged", "unstaged"),
+        ("staged", "staged"),
+        ("all", "all"),
+    ]:
+        monkeypatch.setattr(
+            web, "request", _make_web_request_mock({"scope": requested})
+        )
+        result = await plugin.handle_get_git_diff()
+        assert result["data"]["scope"] == echoed, (
+            f"scope={requested!r} should echo as {echoed!r}"
+        )
+
+
+async def test_handle_git_diff_scope_invalid_response_omits_scope_field(
+    plugin, tmp_path, monkeypatch
+):
+    """错误响应(invalid_scope)里不包含 scope 字段(空 envelope schema 严格不变)。"""
+    from astrbot.api import web
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "test:umo", str(tmp_path))
+    monkeypatch.setattr(
+        web, "request", _make_web_request_mock({"scope": "bogus"})
+    )
+
+    result = await plugin.handle_get_git_diff()
+    data = result["data"]
+    assert data["reason"] == "invalid_scope"
+    # v1 envelope 不含 scope 字段;空响应必须严格保持
+    assert "scope" not in data, (
+        f"empty envelope should not have 'scope' key, got: {sorted(data.keys())}"
+    )
+
+
+async def test_handle_git_diff_scope_invalid_takes_precedence_over_feature_flag(
+    plugin, tmp_path, monkeypatch
+):
+    """feature flag 关闭 + ?scope=foo → 仍返回 invalid_scope(Q1-OOR 校验顺序)。"""
+    from astrbot.api import web
+    plugin._config["agentsmd_enabled"] = False
+    try:
+        monkeypatch.setattr(
+            web, "request", _make_web_request_mock({"scope": "foo"})
+        )
+        result = await plugin.handle_get_git_diff()
+        assert result["data"]["reason"] == "invalid_scope"
+    finally:
+        plugin._config["agentsmd_enabled"] = True
+
+
+async def test_handle_git_diff_scope_staged_handles_intent_to_add(
+    plugin, tmp_path, monkeypatch
+):
+    """git add -N new.py → ?scope=staged 中 files_changed 含 status='A',
+    且 data.scope 字段回显为 'staged'(避免与 v1 走 'git diff' 误判为绿)。"""
+    from astrbot.api import web
+    _init_git_repo(tmp_path)
+    (tmp_path / "new.py").write_text("print('hi')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-N", "new.py"], cwd=tmp_path, check=True)
+    _load_project(plugin, "test:umo", str(tmp_path))
+    monkeypatch.setattr(
+        web, "request", _make_web_request_mock({"scope": "staged"})
+    )
+
+    result = await plugin.handle_get_git_diff()
+    data = result["data"]
+    # scope 字段断言:迫使 v3.1 走 git diff --cached 路径(否则 v1 走 git diff 也能 PASS)
+    assert data["scope"] == "staged"
+    fc = data["files_changed"]
+    assert any(f["path"] == "new.py" and f["status"] == "A" for f in fc), fc
+
+
+async def test_handle_git_diff_scope_combines_with_worktree_param(
+    plugin, tmp_path, monkeypatch
+):
+    """?scope= 与 ?worktree= 正交。scope 解析通过后,worktree 校验失败应仍走
+    worktree_invalid 路径(而非 invalid_scope)。"""
+    from astrbot.api import web
+    from tools import _helpers as _h
+
+    # 让 _validate_worktree_param 返回 worktree_invalid(模拟 6 步防御链失败)
+    def _reject_validate(*args, **kwargs):
+        return None, "worktree_invalid"
+
+    monkeypatch.setattr(_h, "_validate_worktree_param", _reject_validate)
+
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "test:umo", str(tmp_path))
+    monkeypatch.setattr(
+        web, "request",
+        _make_web_request_mock({"scope": "all", "worktree": "../escape"}),
+    )
+    result = await plugin.handle_get_git_diff()
+    # scope 解析通过后,worktree 校验失败 → worktree_invalid(而非 invalid_scope)
+    assert result["data"]["reason"] == "worktree_invalid"
