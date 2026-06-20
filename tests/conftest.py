@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -113,3 +114,31 @@ def make_web_request_mock(query: dict[str, str | None] | None = None) -> MagicMo
         side_effect=lambda *args: (query or {}).get(args[0]) if args else None
     )
     return mock
+
+
+def _make_plugin() -> Any:
+    """Build a minimal SPCodeToolkit instance for unit testing.
+
+    Bypasses __init__ (which would require a real star.Context) and sets up
+    the bare attributes the git-diff handler will touch. Matches the pattern
+    used by tests/test_project_subcommand.py.
+
+    v3.2: 从 test_git_diff.py 迁移到 conftest.py,供 test_file_browser.py 复用。
+    """
+    # 惰性导入避免模块级循环(与 test_git_diff.py 原 import 行为一致)
+    from astrbot_plugin_spcode_toolkit.main import SPCodeToolkit
+
+    plugin = SPCodeToolkit.__new__(SPCodeToolkit)
+    plugin.context = MagicMock()
+    plugin._loaded_projects = {}
+    plugin._loaded_agents = {}
+    plugin._codegraph_projects = {}
+    # Permissive default config so feature-flag checks pass.
+    plugin._config = {
+        "agentsmd_enabled": True,
+        "codegraph_enabled": True,
+        "codegraph_project": "",
+        "file_remove_blacklist": None,
+        "git_path": "",
+    }
+    return plugin

@@ -41,35 +41,16 @@ SPCodeToolkit = _main_mod.SPCodeToolkit
 
 
 # ────────────────────────────────────────────────────────────────────
-# Fixtures (local helpers; not exposed to conftest)
+# Fixtures (v3.2: _make_plugin 已迁移到 conftest.py)
 # ────────────────────────────────────────────────────────────────────
 
-def _make_plugin() -> Any:
-    """Build a minimal SPCodeToolkit instance for unit testing.
-
-    Bypasses __init__ (which would require a real star.Context) and sets up
-    the bare attributes the git-diff handler will touch. Matches the pattern
-    used by tests/test_project_subcommand.py.
-    """
-    plugin = SPCodeToolkit.__new__(SPCodeToolkit)
-    plugin.context = MagicMock()
-    plugin._loaded_projects = {}
-    plugin._loaded_agents = {}
-    plugin._codegraph_projects = {}
-    # Permissive default config so feature-flag checks pass.
-    plugin._config = {
-        "agentsmd_enabled": True,
-        "codegraph_enabled": True,
-        "codegraph_project": "",
-        "file_remove_blacklist": None,
-        "git_path": "",
-    }
-    return plugin
+# v3.2: 从 conftest 导入(v3.2 前是 test_git_diff.py 私有)
+from tests.conftest import _make_plugin  # noqa: F401, E402
 
 
 @pytest.fixture
 def plugin():
-    """Per-test plugin instance (local fixture; conftest has none)."""
+    """Per-test plugin instance (conftest 提供 _make_plugin)."""
     return _make_plugin()
 
 

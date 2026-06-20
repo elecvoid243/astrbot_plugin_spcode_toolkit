@@ -11,8 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.conftest import make_web_request_mock  # noqa: F401  (shared helper)
-from tests.test_git_diff import _make_plugin  # noqa: F401  (Task 4 会迁到 conftest)
+from tests.conftest import _make_plugin, make_web_request_mock  # noqa: F401  (v3.2 shared helpers)
 
 # 启用 pytest-asyncio:让所有 `async def` 测试函数在 strict 模式下也能运行。
 pytestmark = pytest.mark.asyncio
