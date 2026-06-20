@@ -1483,6 +1483,18 @@ class SPCodeToolkit(star.Star):
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(f"注册 spcode git-worktrees web API 失败: {exc!s}")
 
+        # v3.2: 注册 /spcode/file-browser — 供 dashboard 文件浏览器调用。
+        # 详见 docs/superpowers/specs/2026-06-20-file-browser-endpoint-design.md
+        try:
+            self.context.register_web_api(
+                route="/spcode/file-browser",
+                view_handler=self.handle_get_file_browser,
+                methods=["GET"],
+                desc="读取文件内容或列出单层目录（供 dashboard 文件浏览器调用）",
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"注册 spcode file-browser web API 失败: {exc!s}")
+
         # v2.8.1: 注册 /spcode/plan-mode —
         # dashboard 读取此端点驱动 SpcodePlanModeChip 的状态显示与切换。
         # 与 /spcode/project-status 平行的查询端点,只读,POST 切换走聊天命令
