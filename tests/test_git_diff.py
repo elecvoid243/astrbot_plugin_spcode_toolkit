@@ -543,6 +543,372 @@ async def test_handle_git_diff_scope_case_insensitive(plugin, tmp_path, monkeypa
     assert "staged" in data["diff"]
 
 
+# ── v3.3 (2026-06-21): git-diff 4 合 1 重构单测 ──
+# 验证新 helper 的纯函数行为 + handler 现在只跑 2 个 git 调用(从 4 个减半)。
+
+
+# ── 纯函数: _parse_diff_status_map ──
+
+
+def test_parse_diff_status_map_modified():
+    """modify 的 `git diff` 输出 → 状态 'M'。"""
+    diff = (
+        "diff --git a/file.txt b/file.txt\n"
+        "index abc..def 100644\n"
+        "--- a/file.txt\n"
+        "+++ b/file.txt\n"
+        "@@ -1,3 +1,3 @@\n"
+        " line1\n"
+        "-line2\n"
+        "+line2_mod\n"
+    )
+    from astrbot_plugin_spcode_toolkit import main as _m
+    assert _m._parse_diff_status_map(diff) == {"file.txt": "M"}
+
+
+def test_parse_diff_status_map_added():
+    """add(intent-to-add)的 `git diff` 输出 → 状态 'A'。"""
+    diff = (
+        "diff --git a/new.py b/new.py\n"
+        "new file mode 100644\n"
+        "index 0000000..123 100644\n"
+        "--- /dev/null\n"
+        "+++ b/new.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+a\n"
+        "+b\n"
+    )
+    from astrbot_plugin_spcode_toolkit import main as _m
+    assert _m._parse_diff_status_map(diff) == {"new.py": "A"}
+
+
+def test_parse_diff_status_map_deleted():
+    """delete 的 `git diff` 输出 → 状态 'D'。"""
+    diff = (
+        "diff --git a/old.py b/old.py\n"
+        "deleted file mode 100644\n"
+        "index abc..0000000\n"
+        "--- a/old.py\n"
+        "+++ /dev/null\n"
+        "@@ -1 +0,0 @@\n"
+        "-content\n"
+    )
+    from astrbot_plugin_spcode_toolkit import main as _m
+    assert _m._parse_diff_status_map(diff) == {"old.py": "D"}
+
+
+def test_parse_diff_status_map_renamed():
+    """rename 的 `git diff` 输出 → 状态 'R',key 是新路径。"""
+    diff = (
+        "diff --git a/old.py b/new.py\n"
+        "similarity index 100%\n"
+        "rename from old.py\n"
+        "rename to new.py\n"
+    )
+    from astrbot_plugin_spcode_toolkit import main as _m
+    assert _m._parse_diff_status_map(diff) == {"new.py": "R"}
+
+
+def test_parse_diff_status_map_skips_hunk_body():
+    """hunk body 内的 +/- 行不影响 status(只检查 header 区域)。"""
+    # 即使 hunk body 有"new file mode"字面文本(极端情况),也不会误判
+    diff = (
+        "diff --git a/x b/x\n"
+        "new file mode 100644\n"  # 唯一一处真正影响 status
+        "--- /dev/null\n"
+        "+++ b/x\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+new file mode 100644\n"  # 文本里出现但不影响 status
+    )
+    from astrbot_plugin_spcode_toolkit import main as _m
+    assert _m._parse_diff_status_map(diff) == {"x": "A"}
+
+
+def test_parse_diff_status_map_multiple_files():
+    """多文件的 status 映射按 diff 顺序。"""
+    diff = (
+        "diff --git a/a.txt b/a.txt\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/a.txt\n"
+        "@@ -0,0 +1 @@\n"
+        "+a\n"
+        "diff --git a/b.txt b/b.txt\n"
+        "deleted file mode 100644\n"
+        "--- a/b.txt\n"
+        "+++ /dev/null\n"
+        "@@ -1 +0,0 @@\n"
+        "-b\n"
+    )
+    from astrbot_plugin_spcode_toolkit import main as _m
+    result = _m._parse_diff_status_map(diff)
+    assert result == {"a.txt": "A", "b.txt": "D"}
+
+
+# ── 纯函数: _parse_numstat_counts ──
+
+
+def test_parse_numstat_counts_simple():
+    """基本 add/modify 的 numstat 解析。"""
+    from astrbot_plugin_spcode_toolkit import main as _m
+    out = "5\t2\tfile.txt\n3\t0\tnew.py\n"
+    assert _m._parse_numstat_counts(out) == {
+        "file.txt": (5, 2),
+        "new.py": (3, 0),
+    }
+
+
+def test_parse_numstat_counts_binary():
+    """Binary 文件的 numstat 是 `-` `-` → (0, 0)。"""
+    from astrbot_plugin_spcode_toolkit import main as _m
+    out = "-\t-\tbinary.dat\n"
+    assert _m._parse_numstat_counts(out) == {"binary.dat": (0, 0)}
+
+
+def test_parse_numstat_counts_rename_arrow():
+    """rename/copy 的 numstat 格式 `<old> => <new>`,用 new path 作 key。
+
+    旧实现有 bug:用整个 `<old> => <new>` 串作 key,导致 join 时永远 miss,
+    rename 文件的 additions/deletions 错误为 0。v3.3 修正。
+    """
+    from astrbot_plugin_spcode_toolkit import main as _m
+    out = "0\t0\told.py => new.py\n"
+    assert _m._parse_numstat_counts(out) == {"new.py": (0, 0)}
+
+
+def test_parse_numstat_counts_skips_blank():
+    """空行 / 少于 3 字段的行 → 跳过。"""
+    from astrbot_plugin_spcode_toolkit import main as _m
+    out = "\n5\t2\tfile.txt\nbad_line\n1\t2\n"
+    assert _m._parse_numstat_counts(out) == {"file.txt": (5, 2)}
+
+
+# ── 纯函数: _build_stat_text ──
+
+
+def test_build_stat_text_empty():
+    """空列表 → 空字符串。"""
+    from astrbot_plugin_spcode_toolkit import main as _m
+    assert _m._build_stat_text([]) == ""
+
+
+def test_build_stat_text_single_file():
+    """单文件 summary 用单数 '1 file changed';insertions/deletions 永远复数。"""
+    from astrbot_plugin_spcode_toolkit import main as _m
+    files = [{"path": "x.py", "status": "M", "additions": 3, "deletions": 1}]
+    text = _m._build_stat_text(files)
+    assert "x.py" in text
+    assert "1 file changed" in text
+    assert "3 insertions(+)" in text
+    # git 自身输出总是 "N deletions(-)"(复数);复刻该习惯
+    assert "1 deletions(-)" in text
+
+
+def test_build_stat_text_multiple_files():
+    """多文件 summary 用复数 'N files changed'。"""
+    from astrbot_plugin_spcode_toolkit import main as _m
+    files = [
+        {"path": "a.py", "status": "M", "additions": 5, "deletions": 2},
+        {"path": "b.py", "status": "A", "additions": 10, "deletions": 0},
+    ]
+    text = _m._build_stat_text(files)
+    assert "2 files changed" in text
+    assert "15 insertions(+)" in text
+    assert "2 deletions(-)" in text
+
+
+# ── 集成: handler 现在只跑 2 个 git 调用(从 4 减半) ──
+
+
+async def test_handle_git_diff_runs_two_git_invocations(
+    plugin, tmp_path, monkeypatch
+):
+    """v3.3 重构后,handler 一次请求应只跑 2 个 git 调用(从 4 减半)。
+
+    监控 run_cmd 调用次数,验证 4 → 2。
+    """
+    from astrbot_plugin_spcode_toolkit import main as _m
+    from tools import _helpers
+
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("modified", encoding="utf-8")
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    # 计数:过滤掉 probe (`rev-parse --is-inside-work-tree`) 之外的所有 diff 相关调用
+    real_run_cmd = _helpers.run_cmd
+    git_bin_str = plugin._git_binary()  # 实例方法,不是 _m 上的函数
+    git_cmd_args: list[list[str]] = []
+
+    def counting_run_cmd(cmd_args, *args, **kwargs):
+        if cmd_args and len(cmd_args) >= 2 and cmd_args[0] == git_bin_str:
+            git_cmd_args.append(cmd_args)
+        return real_run_cmd(cmd_args, *args, **kwargs)
+
+    monkeypatch.setattr(_helpers, "run_cmd", counting_run_cmd)
+    monkeypatch.setattr(_m, "run_cmd", counting_run_cmd, raising=False)
+
+    result = await plugin.handle_get_git_diff()
+    assert result["data"]["loaded"] is True
+
+    # 期望:1 个 rev-parse (probe) + 2 个 diff (full + numstat) = 3 个 git 调用
+    diff_calls = [c for c in git_cmd_args if "diff" in c]
+    assert len(diff_calls) == 2, (
+        f"expected 2 git diff invocations, got {len(diff_calls)}: {diff_calls}"
+    )
+    # 第一个应是 raw diff,第二个应是 numstat
+    assert "diff" in diff_calls[0] and "--numstat" not in diff_calls[0]
+    assert "--numstat" in diff_calls[1]
+
+
+# ── v3.3 (2026-06-21): HTTP 缓存 ETag/304 集成测试 ──
+# 验证 304 命中 / ETag 变化 / 缓存跳过 git 调用 / 响应头格式。
+
+
+async def test_handle_git_diff_returns_etag_on_success(
+    plugin, tmp_path, monkeypatch
+):
+    """成功响应必须带 ETag / Cache-Control / Vary 三个头。"""
+    from astrbot.api import web
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("modified", encoding="utf-8")
+    _load_project(plugin, "test:umo", str(tmp_path))
+    monkeypatch.setattr(web, "request", make_web_request_mock({}))
+
+    result = await plugin.handle_get_git_diff()
+    assert result.status_code == 200
+    # headers 是 Starlette MutableHeaders(类 dict),用 in / []
+    etag = result.headers.get("etag")
+    assert etag, f"missing ETag header in {dict(result.headers)}"
+    assert etag.startswith('W/"'), f"weak ETag expected, got {etag!r}"
+    assert "private" in result.headers.get("cache-control", "")
+    assert "must-revalidate" in result.headers.get("cache-control", "")
+    assert result.headers.get("vary") == "Cookie"
+
+
+async def test_handle_git_diff_returns_304_on_matching_etag(
+    plugin, tmp_path, monkeypatch
+):
+    """第二次带 If-None-Match 命中 → 304 + 空 body + ETag 头。"""
+    from astrbot.api import web
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("modified", encoding="utf-8")
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    # 第一次:无 If-None-Match,返回 200 + ETag
+    monkeypatch.setattr(web, "request", make_web_request_mock({}))
+    r1 = await plugin.handle_get_git_diff()
+    assert r1.status_code == 200
+    etag = r1.headers.get("etag")
+    assert etag
+
+    # 第二次:带匹配 ETag,返回 304
+    monkeypatch.setattr(
+        web, "request", make_web_request_mock(headers={"If-None-Match": etag})
+    )
+    r2 = await plugin.handle_get_git_diff()
+    assert r2.status_code == 304
+    assert r2.headers.get("etag") == etag
+    # 304 body 必须为空
+    import json
+    body = json.loads(r2.body) if r2.body else {}
+    assert body == {}, f"304 body should be empty, got {body!r}"
+
+
+async def test_handle_git_diff_304_skips_git_diff_invocation(
+    plugin, tmp_path, monkeypatch
+):
+    """304 路径只算 ETag(1 个 rev-parse HEAD),不跑 diff/numstat/probe。"""
+    from astrbot_plugin_spcode_toolkit import main as _m
+    from tools import _helpers
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    # 第一次拿 ETag
+    monkeypatch.setattr(web, "request", make_web_request_mock({}))
+    r1 = await plugin.handle_get_git_diff()
+    etag = r1.headers.get("etag")
+
+    # 第二次带 If-None-Match,开始计数 git 调用
+    # 注意:_compute_diff_etag / handle_get_git_diff 使用的是 main.py 顶部的
+    # ``run_cmd``(从 tools._helpers 导入的本地引用),所以必须 patch
+    # ``main.run_cmd``(``monkeypatch.setattr(_helpers, ...)`` 不会生效)。
+    real_run_cmd = _helpers.run_cmd
+    git_calls: list[list[str]] = []
+    git_bin = plugin._git_binary()
+
+    def counting_run_cmd(cmd_args, *args, **kwargs):
+        if cmd_args and cmd_args[0] == git_bin:
+            git_calls.append(cmd_args)
+        return real_run_cmd(cmd_args, *args, **kwargs)
+
+    monkeypatch.setattr(_m, "run_cmd", counting_run_cmd, raising=False)
+    monkeypatch.setattr(
+        web, "request", make_web_request_mock(headers={"If-None-Match": etag})
+    )
+
+    r2 = await plugin.handle_get_git_diff()
+    assert r2.status_code == 304
+
+    # 304 路径:仅 _compute_diff_etag 内的 1 个 rev-parse HEAD,不应有
+    # diff/probe/numstat 调用
+    diff_calls = [c for c in git_calls if "diff" in c]
+    probe_calls = [c for c in git_calls if "rev-parse" in c and "is-inside" in str(c)]
+    assert len(diff_calls) == 0, f"304 should skip diff, got {diff_calls}"
+    assert len(probe_calls) == 0, f"304 should skip probe, got {probe_calls}"
+    # 应有 1 个 rev-parse HEAD (来自 ETag 计算)
+    head_calls = [c for c in git_calls if "rev-parse" in c and "HEAD" in c]
+    assert len(head_calls) == 1, (
+        f"expected 1 rev-parse HEAD, got {head_calls}"
+    )
+
+
+async def test_handle_git_diff_etag_changes_after_commit(
+    plugin, tmp_path, monkeypatch
+):
+    """commit 后 ETag 变,带旧 ETag 的请求会拿到 200 + 新 ETag。"""
+    from astrbot.api import web
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    # 第一次:无 diff
+    monkeypatch.setattr(web, "request", make_web_request_mock({}))
+    r1 = await plugin.handle_get_git_diff()
+    etag_before = r1.headers.get("etag")
+
+    # commit 一次(改 HEAD)
+    (tmp_path / "new.txt").write_text("hi", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "t", "-q"], cwd=tmp_path, check=True)
+
+    # 第二次:带旧 ETag,应该 cache miss → 200 + 新 ETag
+    monkeypatch.setattr(
+        web, "request", make_web_request_mock(headers={"If-None-Match": etag_before})
+    )
+    r2 = await plugin.handle_get_git_diff()
+    assert r2.status_code == 200
+    etag_after = r2.headers.get("etag")
+    assert etag_after != etag_before, (
+        f"ETag should change after commit: {etag_before!r} vs {etag_after!r}"
+    )
+
+
+async def test_handle_git_diff_no_etag_on_error_envelope(
+    plugin, monkeypatch
+):
+    """错误响应(no_project_loaded / feature_disabled 等)不带 ETag。"""
+    from astrbot.api import web
+    # 无项目
+    plugin._loaded_projects.clear()
+    monkeypatch.setattr(web, "request", make_web_request_mock({}))
+    r = await plugin.handle_get_git_diff()
+    # 错误响应是普通 dict,不是 _JSONResponseCompat
+    assert isinstance(r, dict)
+    assert r["data"]["loaded"] is False
+    assert r["data"]["reason"] == "no_project_loaded"
+
+
 async def test_handle_git_diff_scope_empty_string_defaults_to_unstaged(
     plugin, tmp_path, monkeypatch
 ):

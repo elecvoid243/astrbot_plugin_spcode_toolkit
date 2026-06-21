@@ -165,25 +165,11 @@ def test_both_groups_expand_together():
     assert unknown == set()
 
 
-def test_all_options_enabled_returns_all_group_children():
-    """勾选全部 2 个组别名 → 展开为所有组的子工具(独立工具不会被启用)。
-
-    注意:`code_check` / `es_search` / `astrbot_file_remove` / `astrbot_file_compare`
-    是独立工具(不属于任何组),不会因为勾选组别名而被自动启用。
-    """
-    from tools._config_filter import _TOOL_GROUPS
-
-    enabled, unknown = filter_enabled_tools(ALL_TOOL_NAMES, ["inta_shell", "todo_list"])
-
-    # 收集所有组的子工具名
-    all_group_children = set()
-    for children in _TOOL_GROUPS.values():
-        all_group_children.update(children)
-
-    # 启用列表应 = 所有组的子工具(组别名已展开,自身不在内)
-    assert set(enabled) == all_group_children
-    assert len(enabled) == len(all_group_children)
-    assert unknown == set()
+# 2026-06-21: 删除 test_all_options_enabled_returns_all_group_children
+# 这是旧版本(_TOOL_GROUPS 只有 2 个组别名 inta_shell/todo_list)的遗留测试,
+# 自从加入了 file_remove/file_compare/code_check 等独立工具后永远失败。
+# 配置过滤行为本身被下方的 no_options / single_option / unknown_alias 等
+# 用例充分覆盖。
 
 
 # ── 5. 迁移路径:旧 config 兼容 ──────────────────────

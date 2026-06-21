@@ -381,3 +381,226 @@ async def test_utf8_chinese_filename(plugin, tmp_path):
     assert Path(data["path"]).name == "中文文件.txt"
 
 
+# ── v3.3 (2026-06-21): _make_entry 单次 lstat 收敛单测 ──
+# 直接 import 并 call _make_entry,验证:
+# 1. 单次 lstat 调用(用 mock 计数)
+# 2. 字段从 stat_result 派生(type/size/mtime/is_symlink)
+# 3. symlink 的 target 相对路径相对 symlink 父目录解析(原实现的 CWD-relative bug 已修)
+
+from astrbot_plugin_spcode_toolkit import main as _main_mod_browser  # noqa: E402
+
+
+def test_make_entry_file_single_lstat(tmp_path, monkeypatch):
+    """普通文件 _make_entry 应只调 1 次 lstat(从 stat_result 派生其他字段)。"""
+    f = tmp_path / "x.txt"
+    f.write_text("hello", encoding="utf-8")
+    lstat_count = 0
+    real_lstat = Path.lstat
+
+    def counting_lstat(self, *args, **kwargs):
+        nonlocal lstat_count
+        lstat_count += 1
+        return real_lstat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", counting_lstat)
+    entry = _main_mod_browser._make_entry(f)
+    assert lstat_count == 1
+    assert entry["type"] == "file"
+    assert entry["is_symlink"] is False
+    assert entry["size"] == 5  # len("hello")
+    assert "target" not in entry
+    assert "target_exists" not in entry
+
+
+def test_make_entry_directory(tmp_path):
+    """目录 _make_entry 应派生 type='directory',无 target 字段。"""
+    d = tmp_path / "subdir"
+    d.mkdir()
+    entry = _main_mod_browser._make_entry(d)
+    assert entry["type"] == "directory"
+    assert entry["is_symlink"] is False
+    assert "target" not in entry
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="os.symlink requires admin on Windows")
+def test_make_entry_relative_symlink_resolves_against_parent(tmp_path):
+    """相对 symlink:target_exists 应相对 symlink 父目录(不是 CWD)。"""
+    # 在 subdir/ 下创建相对 symlink 指向同目录下的 missing.txt
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    link = sub / "broken.lnk"
+    os.symlink("missing.txt", link)  # 相对 target
+    entry = _main_mod_browser._make_entry(link)
+    assert entry["type"] == "symlink"
+    assert entry["is_symlink"] is True
+    assert entry["target"] == "missing.txt"
+    # target 在 symlink 父目录下不存在 → target_exists=False
+    # (旧实现用 Path(target).exists() 会相对 CWD 解析,bug;此处用 os.path.join(parent, target))
+    assert entry["target_exists"] is False
+
+
+def test_make_entry_mtime_failure_returns_null(tmp_path, monkeypatch):
+    """lstat 成功但 st_mtime 访问抛 OSError → mtime=None(兜底)。"""
+    f = tmp_path / "x.txt"
+    f.write_text("x", encoding="utf-8")
+    real_lstat = Path.lstat
+
+    def broken_lstat(self, *args, **kwargs):
+        st = real_lstat(self, *args, **kwargs)
+
+        class _BrokenStat:
+            def __getattr__(self, name):
+                if name == "st_mtime":
+                    raise OSError("simulated mtime failure")
+                return getattr(st, name)
+
+            def __getitem__(self, idx):
+                if idx == 8:  # st_mtime index
+                    raise OSError("simulated mtime failure")
+                return st[idx]
+
+        return _BrokenStat()
+
+    monkeypatch.setattr(Path, "lstat", broken_lstat)
+    entry = _main_mod_browser._make_entry(f)
+    assert entry["mtime"] is None
+    assert entry["type"] == "file"
+    assert entry["size"] == 1
+
+
+# ── #20 (v3.3 新增): 大目录响应耗时 sanity check ──
+# 1000+ 项目录的 _build_directory_response 必须在合理时间内完成
+# (验证 _make_entry 单次 lstat 收敛有效,避免 5000+ syscalls 退化)。
+# Windows 上慢速 FS 容忍度更高,设宽松阈值。
+
+
+@pytest.mark.parametrize("entry_count", [1500])
+async def test_directory_large_listing_completes_quickly(plugin, tmp_path, entry_count):
+    """1500 项目录 listing 端点 < 3s(v3.3 单 lstat 收敛后应轻松达成)。
+
+    旧实现在 Windows 上 5000+ syscalls 可能超时 5-10s,新实现 ~1500 syscalls。
+    """
+    import time
+
+    d = tmp_path / "big"
+    d.mkdir()
+    for i in range(entry_count):
+        (d / f"f{i:05d}.txt").write_text("", encoding="utf-8")
+    t0 = time.time()
+    result = await _call_handler(plugin, str(d))
+    elapsed = time.time() - t0
+    data = result["data"]
+    assert data["truncated"] is True
+    assert data["entry_count"] == 1000
+    # 1500 → 1000 截断 + 排序,Windows 上应 < 3s;Linux < 1s
+    assert elapsed < 3.0, f"directory listing too slow: {elapsed:.2f}s"
+
+
+# ── v3.3 (2026-06-21): HTTP 缓存 ETag/304 + Cache-Control 集成测试 ──
+
+
+async def test_file_browser_file_returns_etag_header(plugin, tmp_path):
+    """文件响应必须带 ETag / Cache-Control / Vary 三个头。"""
+    f = tmp_path / "hello.txt"
+    f.write_text("Hello!", encoding="utf-8")
+    result = await _call_handler(plugin, str(f))
+    assert result.status_code == 200
+    etag = result.headers.get("etag")
+    assert etag, f"missing ETag in {dict(result.headers)}"
+    assert etag.startswith('W/"'), f"weak ETag expected, got {etag!r}"
+    # 文件用 private, must-revalidate(无 max-age,client 仍可缓存但必须 revalidate)
+    cc = result.headers.get("cache-control", "")
+    assert "private" in cc
+    assert "must-revalidate" in cc
+    assert result.headers.get("vary") == "Cookie"
+
+
+async def test_file_browser_file_304_on_matching_etag(plugin, tmp_path):
+    """文件内容 ETag 命中 → 304 + 空 body。"""
+    f = tmp_path / "hello.txt"
+    f.write_text("Hello!", encoding="utf-8")
+
+    # 第一次:拿 ETag
+    r1 = await _call_handler(plugin, str(f))
+    etag = r1.headers.get("etag")
+    assert etag
+
+    # 第二次:带匹配 ETag
+    r2 = await _file_browser_with_headers(
+        plugin, str(f), headers={"If-None-Match": etag}
+    )
+    assert r2.status_code == 304
+    assert r2.headers.get("etag") == etag
+    import json
+    body = json.loads(r2.body) if r2.body else {}
+    assert body == {}, f"304 body should be empty, got {body!r}"
+
+
+async def test_file_browser_file_etag_changes_after_modify(plugin, tmp_path):
+    """文件内容修改后 ETag 变,旧 ETag 不再命中。"""
+    f = tmp_path / "hello.txt"
+    f.write_text("v1", encoding="utf-8")
+    r1 = await _call_handler(plugin, str(f))
+    etag1 = r1.headers.get("etag")
+    assert etag1
+
+    # 改文件
+    f.write_text("v2 longer content", encoding="utf-8")
+
+    # 带旧 ETag → 200 + 新 ETag
+    r2 = await _file_browser_with_headers(
+        plugin, str(f), headers={"If-None-Match": etag1}
+    )
+    assert r2.status_code == 200
+    etag2 = r2.headers.get("etag")
+    assert etag2 != etag1
+
+
+async def test_file_browser_directory_returns_cache_control_max_age(
+    plugin, tmp_path
+):
+    """目录响应带 Cache-Control: max-age=2, must-revalidate。"""
+    d = tmp_path / "proj"
+    d.mkdir()
+    (d / "a.txt").write_text("a", encoding="utf-8")
+    result = await _call_handler(plugin, str(d))
+    assert result.status_code == 200
+    cc = result.headers.get("cache-control", "")
+    assert "max-age=2" in cc
+    assert "must-revalidate" in cc
+    assert "private" in cc
+    # 目录也带 ETag(max-age 过期后 revalidate 用)
+    etag = result.headers.get("etag")
+    assert etag
+    assert etag.startswith('W/"')
+
+
+async def test_file_browser_directory_304_on_matching_etag(plugin, tmp_path):
+    """目录 ETag 命中 → 304。"""
+    d = tmp_path / "proj"
+    d.mkdir()
+    (d / "a.txt").write_text("a", encoding="utf-8")
+
+    r1 = await _call_handler(plugin, str(d))
+    etag = r1.headers.get("etag")
+    assert etag
+
+    r2 = await _file_browser_with_headers(
+        plugin, str(d), headers={"If-None-Match": etag}
+    )
+    assert r2.status_code == 304
+
+
+# ── helpers for header-aware file_browser tests ──
+
+
+async def _file_browser_with_headers(plugin, path_value: str, headers: dict):
+    """Call handle_get_file_browser with mocked query + headers (v3.3 helper)."""
+    import astrbot.api.web as _aw
+    from unittest.mock import patch
+    q = {"path": path_value}
+    req = make_web_request_mock(q, headers=headers)
+    with patch.object(_aw, "request", req):
+        return await plugin.handle_get_file_browser()
+
+

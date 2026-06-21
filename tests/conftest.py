@@ -97,21 +97,35 @@ def pytest_collection_modifyitems(config, items):
 # 2026-06-20-file-browser-endpoint-design.md §13 实施检查清单。
 
 
-def make_web_request_mock(query: dict[str, str | None] | None = None) -> MagicMock:
+def make_web_request_mock(
+    query: dict[str, str | None] | None = None,
+    headers: dict[str, str] | None = None,
+) -> MagicMock:
     """构造 mock 替换 ``astrbot.api.web.request``。
 
     Args:
         query: 模拟 query string,如 ``{"scope": "staged", "umo": "x:y"}``。
                key 不存在时返回 None(对齐真实 ``QueryDict.get`` 语义)。
+        headers: 模拟 HTTP 请求头,如 ``{"If-None-Match": "W/abc"}``。
+                 key 不存在时返回 None(对齐真实 ``Headers.get`` 语义)。
+                 v3.3 (2026-06-21) HTTP 缓存支持新增。
 
     Returns:
-        ``MagicMock`` — ``mock.query.get(key[, default])`` 按 query dict 查表。
-        接受 1 或 2 个位置参数(对应 ``QueryDict.get`` 的两种签名),
-        1-arg 旧 caller 与 2-arg 新 caller 都能复用同一个 mock。
+        ``MagicMock`` — ``mock.query.get(key[, default])`` 按 query dict 查表;
+        ``mock.headers.get(key[, default])`` 按 headers dict 查表。
+        接受 1 或 2 个位置参数(对应 ``QueryDict.get`` / ``Headers.get`` 的
+        两种签名),1-arg 旧 caller 与 2-arg 新 caller 都能复用同一个 mock。
     """
     mock = MagicMock()
     mock.query.get = MagicMock(
         side_effect=lambda *args: (query or {}).get(args[0]) if args else None
+    )
+    # v3.3 HTTP 缓存:支持 If-None-Match 等头读取
+    # 关键:_get_if_none_match() 走 web.request.headers.get(...)
+    mock.headers.get = MagicMock(
+        side_effect=lambda *args, **kwargs: (
+            (headers or {}).get(args[0], kwargs.get("default")) if args else None
+        )
     )
     return mock
 
