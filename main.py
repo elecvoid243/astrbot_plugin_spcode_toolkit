@@ -917,14 +917,11 @@ class TodoModifyTool(_TodoToolBase):
 
     name: str = "todo_modify"
     description: str = (
-        "Modify an existing todo list. 3 modes: "
-        "add=append items; "
-        "update=change status/notes by item_ids; "
-        "delete=remove by item_ids. "
-        "For update: notes='' clears notes, omit notes keeps existing. "
-        "For delete: use todo_clear() to delete the whole list. "
-        "All operations return full list + stats. "
-        "Any invalid id → all-or-nothing rollback."
+        "Modify an existing todo list. Pick exactly one mode:\n"
+        "• mode='add':    todo_modify(mode='add', items=[{title, status?, notes?}, ...])\n"
+        "• mode='update': todo_modify(mode='update', item_ids=N or [N,...], status=?, notes=?)\n"
+        "• mode='delete': todo_modify(mode='delete', item_ids=N or [N,...])\n"
+        "Returns full list + stats. Any invalid id → all-or-nothing rollback."
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -956,9 +953,12 @@ class TodoModifyTool(_TodoToolBase):
                 "notes": {
                     "type": "string",
                     "description": (
-                        "[update mode] New notes. "
-                        "Empty string = clear notes. "
-                        "Omit = keep existing."
+                        "[update mode] New notes value. "
+                        "OVERWRITE: pass a non-empty string, e.g. \"blocked on review\". "
+                        "CLEAR: pass the empty string \"\". "
+                        "KEEP: OMIT this key entirely from the JSON object — "
+                        "do NOT write null, \"\", or any placeholder to express 'keep'; "
+                        "leaving the key out means 'leave the existing notes unchanged'."
                     ),
                 },
             },
