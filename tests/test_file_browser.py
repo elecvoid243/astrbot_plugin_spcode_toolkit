@@ -556,6 +556,110 @@ async def test_file_browser_file_etag_changes_after_modify(plugin, tmp_path):
     assert etag2 != etag1
 
 
+# ── v3.4 (2026-06-21) P0 perf: 304 路径不得触发完整文件 read_text ──
+
+
+async def test_file_browser_file_opens_file_exactly_once(plugin, tmp_path):
+    """P1 perf 修复:文件路径只打开文件 1 次(合并 binary sniff + read_text)。
+
+    旧实现走 ``_is_binary(path)`` (open + read 8K + close) 然后
+    ``path.read_text(...)`` (open + read + close),共 2 次 open + 2 次 close。
+    新实现:单次 ``open("rb")`` → sniff 8K → 全文 read → utf-8 decode,
+    合并为 1 次 open + 1 次 close。
+    """
+    from unittest.mock import patch
+
+    f = tmp_path / "hello.txt"
+    f.write_text("Hello, World!\n", encoding="utf-8")
+
+    open_calls: list[str] = []
+
+    real_open = Path.open
+
+    def _counting_open(self, *args, **kwargs):
+        open_calls.append((str(self), args, kwargs))
+        return real_open(self, *args, **kwargs)
+
+    import astrbot.api.web as _aw
+    q = {"path": str(f)}
+    req = make_web_request_mock(q)
+    with patch.object(_aw, "request", req), patch.object(
+        Path, "open", _counting_open
+    ):
+        result = await plugin.handle_get_file_browser()
+
+    data = result["data"]
+    assert data["type"] == "file"
+    assert data["content"] == "Hello, World!\n"
+    assert data["reason"] is None
+    # 期望:仅 1 次 open("rb")
+    assert len(open_calls) == 1, (
+        f"file response should open file exactly once, got {len(open_calls)}: "
+        f"{open_calls!r}"
+    )
+    # 模式必须是二进制(rb)— 我们 sniff 用
+    mode = open_calls[0][1]
+    assert mode and mode[0] == "rb", f"expected rb mode, got {mode!r}"
+
+
+async def test_file_browser_file_invalid_utf8_returns_binary(plugin, tmp_path):
+    """P1 perf 修复:无效 UTF-8 内容仍归 binary_file(行为兼容旧 read_text 失败路径)。"""
+    f = tmp_path / "broken.txt"
+    # 写一段非 UTF-8 字节(0xff 0xfe 不是合法 UTF-8 起始序列)
+    f.write_bytes(b"\xff\xfe\x00bad utf8\x00")
+
+    result = await _call_handler(plugin, str(f))
+    data = result["data"]
+    assert data["type"] == "file"
+    assert data["reason"] == "binary_file"
+    assert data["is_binary"] is True
+    assert data["content"] is None
+
+
+async def test_file_browser_file_304_skips_read_text(plugin, tmp_path):
+    """P0 perf 修复:文件路径 304 短路必须先于 read_text。
+
+    旧实现在 ``_build_file_response`` 完整读取文件之后才检查
+    If-None-Match → 客户端带正确 ETag 时,服务端白白读了整个文件(最大 5MB)。
+    新实现:先 lstat 算 ETag → 检查 304 → 才 build。
+    """
+    from unittest.mock import patch
+
+    f = tmp_path / "big.txt"
+    # 写 1 MB 内容,确保如果走 read_text 会读满 1 MB
+    f.write_bytes(b"x" * (1 * 1024 * 1024))
+
+    # 第一次:不 mock,拿 ETag
+    r1 = await _call_handler(plugin, str(f))
+    etag = r1.headers.get("etag")
+    assert etag
+    assert r1.status_code == 200
+
+    # 第二次:mock read_text 记录调用,如果 304 路径上没调到 read_text,
+    # 这个 mock 永远不应触发。
+    read_text_calls: list[str] = []
+
+    def _record_read_text(self, *args, **kwargs):
+        read_text_calls.append(str(self))
+        raise AssertionError(
+            "read_text was called on 304 path — should short-circuit on ETag first"
+        )
+
+    import astrbot.api.web as _aw
+    q = {"path": str(f)}
+    req = make_web_request_mock(q, headers={"If-None-Match": etag})
+    with patch.object(_aw, "request", req), patch.object(
+        type(f), "read_text", _record_read_text
+    ):
+        r2 = await plugin.handle_get_file_browser()
+
+    assert r2.status_code == 304
+    assert read_text_calls == [], (
+        f"304 path must not call read_text; got {len(read_text_calls)} calls"
+    )
+    assert r2.headers.get("etag") == etag
+
+
 async def test_file_browser_directory_returns_cache_control_max_age(
     plugin, tmp_path
 ):
@@ -589,6 +693,116 @@ async def test_file_browser_directory_304_on_matching_etag(plugin, tmp_path):
         plugin, str(d), headers={"If-None-Match": etag}
     )
     assert r2.status_code == 304
+
+
+# ── v3.4 (2026-06-21) P2 perf: 目录 ETag 冗余 lstat ──
+
+
+async def test_file_browser_directory_exposes_etag_in_data(plugin, tmp_path):
+    """P2 perf 修复:目录响应 data 含 ``etag`` 字段(由 build 时内部算)。
+
+    让 ``_build_directory_response`` 内部调 ``_compute_file_etag`` 一次,把
+    结果放 data["etag"],handle 复用而非额外 lstat,省 1 次 syscall。
+    """
+    d = tmp_path / "proj"
+    d.mkdir()
+    (d / "a.txt").write_text("a", encoding="utf-8")
+
+    result = await _call_handler(plugin, str(d))
+    data = result["data"]
+    assert data["type"] == "directory"
+    assert data["etag"], f"directory response missing 'etag' field, got {data!r}"
+    assert data["etag"].startswith('W/"')
+    # data["etag"] 必须等于响应头的 ETag(单一真相源)
+    assert result.headers.get("etag") == data["etag"]
+
+
+async def test_file_browser_directory_lstat_path_exactly_once(plugin, tmp_path):
+    """P2 perf 修复:目录路径只对 path 自身 lstat 1 次(旧实现 2 次)。
+
+    旧实现 ``_build_directory_response(path)`` + ``_compute_file_etag(path)``
+    各调一次 ``path.lstat()``,共 2 次。新实现让 ``_classify_entry`` 返回 st,
+    caller 复用算 ETag,共 1 次。children 的 lstat(N 次)不在断言范围内。
+    """
+    from unittest.mock import patch
+
+    d = tmp_path / "proj"
+    d.mkdir()
+    (d / "a.txt").write_text("a", encoding="utf-8")
+    (d / "b.py").write_text("b", encoding="utf-8")
+
+    lstat_calls: list[str] = []
+
+    real_lstat = Path.lstat
+
+    def _counting_lstat(self, *args, **kwargs):
+        lstat_calls.append(str(self))
+        return real_lstat(self, *args, **kwargs)
+
+    import astrbot.api.web as _aw
+    q = {"path": str(d)}
+    req = make_web_request_mock(q)
+    with patch.object(_aw, "request", req), patch.object(
+        Path, "lstat", _counting_lstat
+    ):
+        result = await plugin.handle_get_file_browser()
+
+    data = result["data"]
+    assert data["type"] == "directory"
+    # 对 path 自身 (即 d) 的 lstat 调用次数
+    d_resolved = str(d.resolve())
+    dir_lstats = [
+        p
+        for p in lstat_calls
+        if str(Path(p).resolve()) == d_resolved
+    ]
+    assert len(dir_lstats) == 1, (
+        f"directory path should be lstat'd exactly once, got {len(dir_lstats)}: "
+        f"{dir_lstats!r}; all lstat calls: {lstat_calls!r}"
+    )
+
+
+async def test_file_browser_file_lstat_path_exactly_once(plugin, tmp_path):
+    """P2 perf 修复:文件路径也只 lstat 1 次(复用 classify_entry 的 stat)。
+
+    旧实现 ``_classify_entry`` 调 1 次 os.stat + ``_compute_file_etag`` 调 1 次
+    ``path.lstat()``,共 2 次。新实现 ``_classify_entry`` 返回 st,后续
+    ``_compute_file_etag`` 复用,共 1 次。
+    """
+    from unittest.mock import patch
+
+    f = tmp_path / "sample.txt"
+    f.write_text("hello world", encoding="utf-8")
+
+    lstat_calls: list[str] = []
+
+    real_lstat = Path.lstat
+
+    def _counting_lstat(self, *args, **kwargs):
+        lstat_calls.append(str(self))
+        return real_lstat(self, *args, **kwargs)
+
+    import astrbot.api.web as _aw
+    q = {"path": str(f)}
+    req = make_web_request_mock(q)
+    with patch.object(_aw, "request", req), patch.object(
+        Path, "lstat", _counting_lstat
+    ):
+        result = await plugin.handle_get_file_browser()
+
+    data = result["data"]
+    assert data["type"] == "file"
+    # 对 path 自身 (即 f) 的 lstat 调用次数 = 1
+    f_resolved = str(f.resolve())
+    file_lstats = [
+        p
+        for p in lstat_calls
+        if str(Path(p).resolve()) == f_resolved
+    ]
+    assert len(file_lstats) == 1, (
+        f"file path should be lstat'd exactly once, got {len(file_lstats)}: "
+        f"{file_lstats!r}; all lstat calls: {lstat_calls!r}"
+    )
 
 
 # ── helpers for header-aware file_browser tests ──

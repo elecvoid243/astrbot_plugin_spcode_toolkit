@@ -64,11 +64,83 @@ import time as _time
 import datetime as _datetime
 
 # 让 main.py 可以动态添加 MethodType
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
+
+
+# ── git subprocess async helper(v3.4, 2026-06-21, P1 perf) ──
+# WHY: ``run_sync(run_cmd, ...)`` 把 subprocess.run 塞到默认 ThreadPoolExecutor,
+# 多并发 git-diff 请求时 2N 个 worker 被占满 + N 个 git 进程同时跑。
+# ``_run_git_async`` 用 ``asyncio.create_subprocess_exec`` + ``communicate()``,
+# 让事件循环直接管理子进程,worker 占用降到 0,且等待期间自然让出给其他 task。
+#
+# 行为兼容 ``run_cmd`` 的返回 dict 格式,便于无侵入替换 ``run_sync(run_cmd, ...)``:
+#   - 成功: {ok: True, stdout: str, stderr: str, code: int}
+#   - 失败: {ok: False, error: str}(命令不存在 / 超时)
+#   - 非零退出: {ok: False, stdout, stderr, code}(run_cmd 兼容)
+async def _run_git_async(
+    cmd_args: list[str],
+    cwd: str = "",
+    timeout: float = 15.0,
+    encoding: str = "utf-8",
+) -> dict:
+    """Asyncio 真异步版本的 ``run_cmd``,用于 git 调用。
+
+    Args:
+        cmd_args: 子进程参数列表(首元素为可执行文件名)。
+        cwd: 工作目录;空串则不设(用当前进程 cwd)。
+        timeout: 子进程超时(秒);超时自动 kill 进程。
+        encoding: stdout/stderr 解码用。
+
+    Returns:
+        与 ``run_cmd`` 兼容的 dict。
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd or None,
+        )
+    except FileNotFoundError:
+        cmd_name = cmd_args[0] if cmd_args else "command"
+        return {"ok": False, "error": f"{cmd_name} 未安装或不在 PATH 中"}
+
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+        return {"ok": False, "error": f"命令超时 ({timeout}s)"}
+
+    return {
+        "ok": proc.returncode == 0,
+        "stdout": stdout_bytes.decode(encoding, errors="replace").strip(),
+        "stderr": stderr_bytes.decode(encoding, errors="replace").strip(),
+        "code": proc.returncode,
+    }
 
 # git-diff 端点专用常量(也用于 __init__ 启动期探测)
 MAX_GIT_DIFF_BYTES = 1 * 1024 * 1024  # 1 MB 硬上限
 _GIT_DIFF_ENCODING = detect_console_encoding()  # 进程内一次探测
+
+# ── git-diff ETag in-memory 缓存(v3.4, 2026-06-21, P0 perf) ──
+# WHY: dashboard 5-10s 轮询 git-diff 端点时,绝大多数请求 head SHA / 工作树
+# / .git/index 都不变,无需每次跑 ``git rev-parse HEAD``(~10-20ms 进程启动)。
+# 加 1.5s TTL 缓存可让 N 个并发轮询共享 1 个 git 调用。
+# 设计:LRU + TTL(双条件),容量上限 64 个 directory,过期懒清理。
+# 注意:仅在 asyncio 单事件循环上下文中使用,无 thread-safe 保护;
+#      极端并发下只可能重复算 ETag,不会数据错乱。
+_DIFF_ETAG_TTL: float = 1.5  # seconds
+_DIFF_ETAG_CACHE_MAX = 64
+_DIFF_ETAG_CACHE: "OrderedDict[str, tuple[str, float]]" = OrderedDict()
 
 # ── git-diff scope 映射(v3.1) ──
 # 单一真相源:scope 名 → 传给 `git diff [args]` 的位置参数列表。
@@ -239,14 +311,26 @@ async def _compute_diff_etag(git_bin: str, directory: str) -> str:
     12ms 总开销(``rev-parse`` ~10ms + 2 stat ~2ms)。
 
     v3.3 (2026-06-21): 引入支持 HTTP 缓存。
+    v3.4 (2026-06-21) P0 perf: 加 1.5s TTL in-memory 缓存。dashboard 5-10s
+    polling 时,N 个请求共享 1 个 ``rev-parse HEAD`` 调用。
     """
+    # 缓存查询(命中且未过期 → 直接返回)
+    now = _time.monotonic()
+    cached = _DIFF_ETAG_CACHE.get(directory)
+    if cached is not None and (now - cached[1]) < _DIFF_ETAG_TTL:
+        # LRU:命中时移到队尾
+        _DIFF_ETAG_CACHE.move_to_end(directory)
+        return cached[0]
+
+    # 缓存未命中或过期 → 重新算
     head_sha = "no-head"
     try:
-        head_result = await run_sync(
-            run_cmd,
+        # P1 perf (v3.4, 2026-06-21): 用 _run_git_async 代替 run_sync(run_cmd, ...),
+        # 让事件循环直接管理 git 子进程,不占 ThreadPoolExecutor worker。
+        head_result = await _run_git_async(
             [git_bin, "-C", directory, "rev-parse", "HEAD"],
+            timeout=5.0,
             encoding="utf-8",
-            timeout=5,
         )
         if head_result.get("ok") and head_result.get("stdout"):
             head_sha = head_result["stdout"]
@@ -265,15 +349,31 @@ async def _compute_diff_etag(git_bin: str, directory: str) -> str:
     except OSError:
         pass
 
-    return f'W/"{head_sha}-{wt_mtime}-{idx_mtime}"'
+    etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}"'
+
+    # 写入缓存 + LRU 驱逐
+    _DIFF_ETAG_CACHE[directory] = (etag, now)
+    while len(_DIFF_ETAG_CACHE) > _DIFF_ETAG_CACHE_MAX:
+        _DIFF_ETAG_CACHE.popitem(last=False)
+    return etag
 
 
-def _compute_file_etag(path: Path) -> str | None:
-    """为单个文件计算弱 ETag(mtime_ns + size),失败返回 ``None``。"""
-    try:
-        st = path.lstat()
-    except OSError:
-        return None
+def _compute_file_etag(path: Path, st: os.stat_result | None = None) -> str | None:
+    """为单个文件计算弱 ETag(mtime_ns + size),失败返回 ``None``。
+
+    Args:
+        path: 文件 / 目录路径。
+        st: 可选 — caller 已有的 ``os.stat_result``,提供时复用(避免重复 lstat);
+            为 None 时函数内部 ``path.lstat()`` 一次。
+
+    Returns:
+        弱 ETag 字符串(如 ``W/"1234567890-100"``);失败 / lstat 错误 → ``None``。
+    """
+    if st is None:
+        try:
+            st = path.lstat()
+        except OSError:
+            return None
     return f'W/"{st.st_mtime_ns}-{st.st_size}"'
 
 
@@ -351,54 +451,56 @@ def _build_error_response(path: str | Path, reason: str) -> dict:
     return {"type": None, "path": str(path), "reason": reason}
 
 
-def _is_binary(path: Path, sniff_bytes: int = FILE_BROWSER_SNIFF_BYTES) -> bool:
-    """扫前 sniff_bytes 字节,含 NUL 字节 → 二进制。
+def _classify_entry(p: Path) -> tuple[str, os.stat_result | None]:
+    """不跟随 symlink 的类型分类 + 返回 stat 结果供 caller 复用。
 
-    Git 自身也用相同启发式(`xd0` 工具的 ``is_binary``);见 spec §7.1。
-    """
-    try:
-        with path.open("rb") as f:
-            chunk = f.read(sniff_bytes)
-    except OSError:
-        return True  # 不可读 → 当 binary 处理
-    return b"\x00" in chunk
-
-
-def _classify_entry(p: Path) -> str:
-    """不跟随 symlink 的类型分类。
-
-    返回值: ``directory`` / ``file`` / ``symlink`` / ``special`` (FIFO/socket/device)。
+    Returns:
+        ``(entry_type, st)`` 元组:
+        - ``entry_type``: ``directory`` / ``file`` / ``symlink`` / ``special`` (FIFO/socket/device)
+        - ``st``: ``os.stat_result`` 或 ``None``(symlink / 失败)
 
     WHY: Python 3.12 build 缺 ``Path.is_dir(follow_symlinks=)`` 参数(仅在
-    Python ≥ 3.13 才正式支持);改用 ``os.stat`` + ``stat.S_ISDIR`` 走底层
+    Python ≥ 3.13 才正式支持);改用 ``Path.lstat()`` + ``stat.S_ISDIR`` 走底层
     ``stat.S_IFMT`` 判定,与 spec §7.3 "用 lstat 不跟随" 等价。
+
+    v3.4 (2026-06-21) P2 perf: 返回 ``st`` 而不仅是 type,让 caller 复用
+    这次 ``Path.lstat()`` 结果算 ETag(避免后续 ``_compute_file_etag`` 重复 lstat),
+    整个 handle 目录 / 文件路径 lstat 次数从 2 → 1(directory)/ 3 → 1(file)。
     """
-    if p.is_symlink():
-        return "symlink"
     try:
-        st = os.stat(p, follow_symlinks=False)
+        st = p.lstat()
     except OSError:
-        return "special"
+        return "special", None
+    if stat.S_ISLNK(st.st_mode):
+        return "symlink", None
     mode = stat.S_IFMT(st.st_mode)
     if mode == stat.S_IFDIR:
-        return "directory"
+        return "directory", st
     if mode == stat.S_IFREG:
-        return "file"
-    return "special"
+        return "file", st
+    return "special", None
 
 
-def _safe_lstat_mtime(path: Path) -> float | None:
+def _safe_lstat_mtime(
+    path: Path,
+    st: os.stat_result | None = None,
+) -> float | None:
     """安全读 mtime: lstat 失败 / st_mtime 访问失败 → None。
 
     不抛异常;与 spec §6 "文件 mtime 失败" 边界一致。
+
+    Args:
+        path: 路径(``st=None`` 时用于内部 lstat)。
+        st: 可选 — caller 已有的 stat 结果;提供时直接读 ``st_mtime``,省 1 次 lstat。
     """
-    try:
-        st = path.lstat()
-    except OSError:
-        return None
+    if st is None:
+        try:
+            st = path.lstat()
+        except OSError:
+            return None
     try:
         return float(st.st_mtime)
-    except OSError:
+    except (OSError, ValueError):
         return None
 
 
@@ -453,25 +555,39 @@ def _make_entry(p: Path) -> dict:
     return entry
 
 
-def _build_file_response(path: Path) -> dict:
+def _build_file_response(
+    path: Path,
+    file_st: os.stat_result | None = None,
+) -> dict:
     """构造文件响应。三种 reason 路径(成功 / file_too_large / binary_file)。
 
-    ``read_text`` 抛 OSError / UnicodeDecodeError 统一视为 binary
-    (spec §7.5 注释说明)。
+    P1 perf (v3.4, 2026-06-21): 单次 ``open("rb")`` 合并 binary sniff + 全文读。
+    旧实现走 ``_is_binary(path)`` + ``path.read_text(...)``,共 2 次 open + 2 次 close。
+    新实现:1 次 open → sniff 8K → f.read() → utf-8 decode,合并 1 次 open + 1 次 close。
+
+    P2 perf (v3.4, 2026-06-21): 接受可选 ``file_st`` — caller 已 lstat 时复用,
+    内部不再 ``path.lstat()``(省 1 次 syscall)+ ``_safe_lstat_mtime`` 也不再 lstat。
+    总 file 路径 lstat 从 3 → 1。
+
+    行为兼容:
+    - binary 判定:sniff 8K 含 NUL → binary(同旧 sniff)
+    - utf-8 decode 失败 → binary(同旧 read_text UnicodeDecodeError 路径)
+    - OSError 不可读 → binary(同旧 _is_binary 异常路径)
     """
-    try:
-        st = path.lstat()
-    except OSError as exc:
-        return _build_error_response(path, _classify_oserror(exc))
+    if file_st is None:
+        try:
+            file_st = path.lstat()
+        except OSError as exc:
+            return _build_error_response(path, _classify_oserror(exc))
     base: dict = {
         "type": "file",
         "path": str(path),
         "name": path.name,
-        "size": st.st_size,
-        "mtime": _safe_lstat_mtime(path),
+        "size": file_st.st_size,
+        "mtime": _safe_lstat_mtime(path, st=file_st),
         "max_bytes": FILE_BROWSER_MAX_BYTES,
     }
-    if st.st_size > FILE_BROWSER_MAX_BYTES:
+    if file_st.st_size > FILE_BROWSER_MAX_BYTES:
         return {
             **base,
             "encoding": None,
@@ -479,7 +595,22 @@ def _build_file_response(path: Path) -> dict:
             "content": None,
             "reason": "file_too_large",
         }
-    if _is_binary(path):
+    # 单次 open("rb"):先 sniff 8K,再读全文,最后 utf-8 decode。
+    try:
+        with path.open("rb") as f:
+            sniff = f.read(FILE_BROWSER_SNIFF_BYTES)
+            if b"\x00" in sniff:
+                return {
+                    **base,
+                    "encoding": None,
+                    "is_binary": True,
+                    "content": None,
+                    "reason": "binary_file",
+                }
+            # 读剩余(已经在缓存中的 sniff 数据不必重新读)
+            f.seek(0)
+            raw = f.read()
+    except OSError:
         return {
             **base,
             "encoding": None,
@@ -487,17 +618,21 @@ def _build_file_response(path: Path) -> dict:
             "content": None,
             "reason": "binary_file",
         }
-    # 文本正常;read_text 抛异常统一视为 binary
+    # utf-8 decode:失败等同旧 read_text(UnicodeDecodeError)路径
     try:
-        content = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
         return {
             **base,
             "encoding": None,
-            "is_binary": None,
+            "is_binary": True,
             "content": None,
             "reason": "binary_file",
         }
+    # 模拟 ``Path.read_text(encoding="utf-8")`` 的 universal newlines 行为:
+    # 旧实现在 Windows 上把 ``\r\n`` / ``\r`` 统一为 ``\n``,我们用 ``open("rb")``
+    # 拿到的是原始字节,需要手工做这个翻译,保持返回 content 与 v3.3 行为一致。
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
     return {
         **base,
         "encoding": "utf-8",
@@ -519,12 +654,21 @@ def _classify_oserror(exc: OSError) -> str:
     return "path_not_found"
 
 
-def _build_directory_response(path: Path) -> dict:
+def _build_directory_response(
+    path: Path,
+    parent_st: os.stat_result | None = None,
+) -> dict:
     """构造目录响应。
 
     - 过滤以 ``.`` 开头的隐藏项
     - 按 ``(_TYPE_ORDER[type], name)`` 排序:directory → file → symlink
     - 超过 ``FILE_BROWSER_MAX_ENTRIES`` 截断
+    - 内部算 ETag(可复用 caller 传入的 ``parent_st``,省 1 次 lstat)
+
+    Args:
+        path: 目录路径。
+        parent_st: 可选 — caller 已经 lstat 过的 stat 结果(用于算 ETag);
+            缺省则内部自己 lstat。
     """
     raw_entries: list[dict] = []
     for child in path.iterdir():
@@ -537,6 +681,11 @@ def _build_directory_response(path: Path) -> dict:
     raw_entries.sort(key=lambda e: (_TYPE_ORDER[e["type"]], e["name"]))
     truncated = len(raw_entries) > FILE_BROWSER_MAX_ENTRIES
     entries = raw_entries[:FILE_BROWSER_MAX_ENTRIES]
+    # P2 perf (v3.4, 2026-06-21): 复用 caller 的 lstat 结果(若提供)算 ETag,
+    # 省 1 次 lstat(path)。旧实现 handle 在 build 后单独调
+    # ``_compute_file_etag(path)`` → 重复 lstat。新实现 caller 把 st 传进来,
+    # 总 lstat(path) 次数:从 2 (classify_entry + compute_file_etag) → 1。
+    dir_etag = _compute_file_etag(path, st=parent_st)
     return {
         "type": "directory",
         "path": str(path),
@@ -544,6 +693,7 @@ def _build_directory_response(path: Path) -> dict:
         "truncated": truncated,
         "max_entries": FILE_BROWSER_MAX_ENTRIES,
         "entries": entries,
+        "etag": dir_etag,  # 新增;handle 复用,避免再 lstat
         "reason": "directory_listing_truncated" if truncated else None,
     }
 
@@ -2661,8 +2811,8 @@ class SPCodeToolkit(star.Star):
         # so we always decode with utf-8 regardless of the Windows console
         # codepage (cp936/GBK on zh-CN systems would otherwise mojibake
         # non-ASCII characters in subsequent diff output).
-        probe = await run_sync(
-            run_cmd,
+        # P1 perf (v3.4, 2026-06-21): 改用 _run_git_async 释放 worker 线程。
+        probe = await _run_git_async(
             [git_bin, "-C", directory, "rev-parse", "--is-inside-work-tree"],
             encoding="utf-8",
         )
@@ -2690,24 +2840,27 @@ class SPCodeToolkit(star.Star):
                 elapsed_ms=_elapsed(),
             )
 
-        # 5. Concurrently collect raw diff + numstat.
-        # 性能优化 (v3.3,2026-06-21,git-diff 4 合 1):
-        # 之前 4 路 asyncio.gather 同时跑 `git diff` / `--name-status` /
-        # `--numstat` / `--stat`,在 Windows 上每次多 3 次 process spawn
-        # (~150-300ms) 且 3 个进程互相竞争 work tree I/O。
-        # 现版 2 路并发:慢的 `git diff` (full body) + 快的 `git diff --numstat`
-        # (只 walk tree,无 file read)。status 从 raw diff Python 解析(stat
-        # 也从 files_changed 构造)。实测 3 个 git 调用 + 3 个 thread pool
-        # worker 减到 1+1;Windows 冷启动开销从 4× ~80ms 降到 2× ~80ms。
+        # 5. Serially collect raw diff + numstat.
+        # P2 perf (v3.4, 2026-06-21): 串行 — diff 完成后跑 numstat,走 page cache。
+        # 旧版 (v3.3) 2 路 ``asyncio.gather(diff, numstat)`` 并发:
+        # - CPU 占用 2 路(2 个 git 子进程同时跑)
+        # - 2 个 git 进程互相竞争 work tree I/O
+        # - raw diff 失败时 numstat 也跑(浪费 1 个 git 调用)
+        # 新版串行:
+        # - raw diff 跑完 → 内核 page cache 填满 → numstat 紧接着跑,几乎瞬时
+        #   (numstat 不读 file body,只 walk tree;走 page cache 时 < 5ms)
+        # - 总 wall-clock 持平(因为 page cache 命中)
+        # - CPU 占用从 2 路降到 1 路
+        # - raw diff 失败时直接返回,**numstat 跳过**(省 1 个 git 调用)
         # All git invocations output UTF-8, so we decode with utf-8 to avoid
         # mojibake on cp936 Windows hosts.
         git_prefix = [git_bin, "-C", directory, "-c", "color.ui=never"]
         scope_args = _SCOPE_GIT_ARGS[scope]
-        raw_result, numstat_result = await asyncio.gather(
-            run_sync(run_cmd, git_prefix + ["diff"] + scope_args, encoding="utf-8"),
-            run_sync(
-                run_cmd, git_prefix + ["diff", "--numstat"] + scope_args, encoding="utf-8"
-            ),
+        # P1 perf (v3.4, 2026-06-21): diff / numstat 改用 _run_git_async,
+        # 事件循环直接管理两个 git 子进程,worker 占用从 2 → 0。
+        # P2 perf (v3.4, 2026-06-21): 改为串行(await 而非 asyncio.gather)。
+        raw_result = await _run_git_async(
+            git_prefix + ["diff"] + scope_args, encoding="utf-8"
         )
 
         if not raw_result["ok"]:
@@ -2718,6 +2871,11 @@ class SPCodeToolkit(star.Star):
                 stderr=raw_result.get("stderr", ""),
                 elapsed_ms=_elapsed(),
             )
+
+        # raw 成功后才跑 numstat(走 diff 留下的 page cache)
+        numstat_result = await _run_git_async(
+            git_prefix + ["diff", "--numstat"] + scope_args, encoding="utf-8"
+        )
 
         # 6. 截断与解析(single raw diff → 3 views in Python)
         raw = raw_result["stdout"]
@@ -3718,12 +3876,17 @@ class SPCodeToolkit(star.Star):
         #   3. symlink   → _build_symlink_response(无缓存)
         #   4. else      → special_file (FIFO/socket/device,无缓存)
         try:
-            entry_type = _classify_entry(path)
+            # P2 perf (v3.4, 2026-06-21): 复用 ``_classify_entry`` 的 lstat 结果算 ETag。
+            # 旧实现: ``_classify_entry`` 调 1 次 ``os.stat`` + 后续 ``_compute_file_etag``
+            # 调 1 次 ``path.lstat()`` → 同一 path 共 2 次 syscall。
+            # 新实现: ``_classify_entry`` 返回 ``st`` → 后续 ``_compute_file_etag``
+            # 复用,共 1 次 syscall(directory / file 路径都适用)。
+            entry_type, path_st = _classify_entry(path)
             if entry_type == "directory":
-                data = _build_directory_response(path)
+                data = _build_directory_response(path, parent_st=path_st)
                 # 目录 mtime 作为 ETag(廉价;漏检 in-place 编辑,
                 # 接受 1 个 poll 周期延迟,同 git-diff ETag 策略)
-                dir_etag = _compute_file_etag(path)
+                dir_etag = data.get("etag")
                 # max-age=2 让 5-10s polling 期间大部分请求直接不发请求
                 # (浏览器命中本地缓存),2s 后再用 ETag revalidate
                 cache_headers = _common_cache_headers(dir_etag)
@@ -3734,12 +3897,19 @@ class SPCodeToolkit(star.Star):
                     {"status": "ok", "data": data}, headers=cache_headers
                 )
             elif entry_type == "file":
-                data = _build_file_response(path)
-                # 文件内容 ETag(mtime_ns + size):100% 准确
-                file_etag = _compute_file_etag(path)
+                # P0 perf (v3.4, 2026-06-21): 先算 ETag → 检查 304 → 才 build。
+                # 旧顺序在 304 命中场景下白白走一次 read_text(最大 5MB IO),
+                # dashboard 5-10s 轮询时,所有缓存命中的请求都重复这个浪费。
+                # lstat 一次廉价,而 read_text 在 5MB 文件上 5-200ms。
+                # P2 perf (v3.4, 2026-06-21): 复用 ``_classify_entry`` 的 stat,
+                # 不再额外 ``path.lstat()``。
+                file_etag = _compute_file_etag(path, st=path_st)
                 cache_headers = _common_cache_headers(file_etag)
                 if file_etag and _get_if_none_match() == file_etag:
                     return _make_304_response(cache_headers)
+                # P2 perf (v3.4, 2026-06-21): 复用 classify_entry 的 stat,
+                # 避免 _build_file_response 再 lstat 2 次(path + mtime)。
+                data = _build_file_response(path, file_st=path_st)
                 return _JSONResponseCompat(
                     {"status": "ok", "data": data}, headers=cache_headers
                 )

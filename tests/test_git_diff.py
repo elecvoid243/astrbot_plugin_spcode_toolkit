@@ -242,16 +242,16 @@ async def test_handle_git_diff_git_unavailable(plugin, tmp_path, monkeypatch):
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
 
-    # Patch tools._helpers.run_cmd to simulate FileNotFoundError
-    from tools import _helpers
+    # v3.4 (2026-06-21) P1 perf: P1-5 把 run_sync(run_cmd, ...) 换成 _run_git_async,
+    # 所以 mock 目标从 run_cmd 改为 _run_git_async。模拟"git 不在 PATH"路径
+    # (``asyncio.create_subprocess_exec`` 抛 FileNotFoundError,_run_git_async
+    # 转成 {ok: False, error: "git 未安装或不在 PATH 中"})。
+    from astrbot_plugin_spcode_toolkit import main as main_mod
 
-    def _fake_run_cmd(cmd_args, cwd="", timeout=15, encoding="utf-8"):
+    async def _fake_run_git_async(cmd_args, cwd="", timeout=15.0, encoding="utf-8"):
         return {"ok": False, "error": "git 未安装或不在 PATH 中"}
 
-    monkeypatch.setattr(_helpers, "run_cmd", _fake_run_cmd)
-    # also patch in main module namespace (since it's imported)
-    from astrbot_plugin_spcode_toolkit import main as main_mod
-    monkeypatch.setattr(main_mod, "run_cmd", _fake_run_cmd, raising=False)
+    monkeypatch.setattr(main_mod, "_run_git_async", _fake_run_git_async)
 
     result = await plugin.handle_get_git_diff()
     data = result["data"]
@@ -332,6 +332,109 @@ async def test_handle_git_diff_git_calls_run_concurrently(plugin, tmp_path, monk
     elapsed = _t.time() - t0
     # Concurrent: ~0.4-0.5s. Serial: ~0.9-1.0s. Threshold 0.6s clearly distinguishes.
     assert elapsed < 0.6, f"git calls appear serial (elapsed={elapsed:.2f}s)"
+
+
+# ── v3.4 (2026-06-21) P2 perf: git diff / numstat 串行 ──
+
+
+async def test_handle_git_diff_diff_runs_before_numstat(plugin, tmp_path, monkeypatch):
+    """P2 perf 修复:diff 完成后才跑 numstat(走 page cache),而不是 gather 并发。
+
+    旧实现 ``asyncio.gather(diff, numstat)`` → 两路并发,CPU 2 路。
+    新实现串行:diff 跑完填满 page cache → numstat 几乎瞬时。
+    总 wall-clock 持平(numstat 极快),但 CPU 占用从 2 路降到 1 路。
+
+    测试方法:mock ``_run_git_async``,记录每个调用的 args 和时间戳,
+    断言 diff 调用在 numstat 之前完成(按完成时间)。
+    """
+    import time as _t
+
+    _init_git_repo(tmp_path)
+    (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
+    subprocess.run(["git", "add", "a.txt"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+    (tmp_path / "a.txt").write_text("hello world", encoding="utf-8")
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    from astrbot_plugin_spcode_toolkit import main as main_mod
+
+    # 真实 ``_run_git_async``(避免完全 mock 掉,改用 wrapper 记录调用顺序)
+    real_run = main_mod._run_git_async
+    call_log: list[tuple[float, tuple, dict]] = []  # (completed_at, args, kwargs)
+
+    async def _instrumented(*args, **kwargs):
+        result = await real_run(*args, **kwargs)
+        call_log.append((_t.time(), args, kwargs))
+        return result
+
+    monkeypatch.setattr(main_mod, "_run_git_async", _instrumented)
+
+    await plugin.handle_get_git_diff()
+
+    # 找到 raw diff 调用和 numstat 调用的完成时间
+    def _is_raw_diff_call(args: tuple, kwargs: dict) -> bool:
+        # git_prefix + ["diff"] + scope_args,没有 "--numstat"
+        cmd = args[0]
+        return "diff" in cmd and "--numstat" not in cmd
+
+    def _is_numstat_call(args: tuple, kwargs: dict) -> bool:
+        cmd = args[0]
+        return "diff" in cmd and "--numstat" in cmd
+
+    raw_diff_completed = next(
+        (t for t, a, kw in call_log if _is_raw_diff_call(a, kw)), None
+    )
+    numstat_completed = next(
+        (t for t, a, kw in call_log if _is_numstat_call(a, kw)), None
+    )
+
+    assert raw_diff_completed is not None, "raw diff invocation not recorded"
+    assert numstat_completed is not None, "numstat invocation not recorded"
+    assert raw_diff_completed <= numstat_completed, (
+        f"raw diff must complete before numstat starts "
+        f"(diff_completed={raw_diff_completed}, numstat_completed={numstat_completed}); "
+        f"if diff >= numstat, the handler is still using asyncio.gather"
+    )
+
+
+async def test_handle_git_diff_skips_numstat_on_raw_failure(plugin, tmp_path, monkeypatch):
+    """P2 perf 修复:raw diff 失败时不跑 numstat(节省 1 个 git 调用)。
+
+    旧实现 ``asyncio.gather(diff, numstat)`` 两路并发 — raw 失败时 numstat
+    仍跑,浪费 1 个 git 调用。新实现串行 — raw 失败直接返回,numstat 跳过。
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    from astrbot_plugin_spcode_toolkit import main as main_mod
+
+    real_run = main_mod._run_git_async
+    call_log: list[tuple] = []
+
+    async def _fake_run(*args, **kwargs):
+        cmd = args[0]
+        call_log.append(cmd)
+        # 只让 raw diff 返回 ok=False;其他调用走真实实现
+        if "diff" in cmd and "--numstat" not in cmd:
+            return {"ok": False, "stdout": "", "stderr": "simulated failure", "elapsed_ms": 0}
+        return await real_run(*args, **kwargs)
+
+    monkeypatch.setattr(main_mod, "_run_git_async", _fake_run)
+
+    result = await plugin.handle_get_git_diff()
+    data = result["data"]
+    assert data["loaded"] is False
+    assert data["reason"] == "git_error"
+
+    # 验证 raw diff 跑了,但 numstat 没跑
+    raw_diff_calls = [c for c in call_log if "diff" in c and "--numstat" not in c]
+    numstat_calls = [c for c in call_log if "diff" in c and "--numstat" in c]
+    assert len(raw_diff_calls) >= 1, f"raw diff should have been called: {call_log!r}"
+    assert len(numstat_calls) == 0, (
+        f"numstat must NOT run when raw diff fails "
+        f"(saves 1 git call); got numstat_calls={numstat_calls!r}"
+    )
 
 
 # --- T19: git_path config --------------------------------------------
@@ -723,34 +826,35 @@ def test_build_stat_text_multiple_files():
 async def test_handle_git_diff_runs_two_git_invocations(
     plugin, tmp_path, monkeypatch
 ):
-    """v3.3 重构后,handler 一次请求应只跑 2 个 git 调用(从 4 减半)。
+    """v3.3 重构后,handler 一次请求应只跑 2 个 git diff 调用(从 4 减半)。
 
-    监控 run_cmd 调用次数,验证 4 → 2。
+    v3.4 (2026-06-21) P1 perf: P1-5 把 run_sync(run_cmd, ...) 换成 _run_git_async,
+    所以 mock 目标改为 _run_git_async(计数其内部 create_subprocess_exec 调用)。
     """
     from astrbot_plugin_spcode_toolkit import main as _m
-    from tools import _helpers
 
     _init_git_repo(tmp_path)
     (tmp_path / "README.md").write_text("modified", encoding="utf-8")
     _load_project(plugin, "test:umo", str(tmp_path))
 
-    # 计数:过滤掉 probe (`rev-parse --is-inside-work-tree`) 之外的所有 diff 相关调用
-    real_run_cmd = _helpers.run_cmd
-    git_bin_str = plugin._git_binary()  # 实例方法,不是 _m 上的函数
+    # 清空 ETag 缓存,确保 ETag 路径也走 git(rev-parse HEAD)
+    _m._DIFF_ETAG_CACHE.clear()
+
+    # P1-5 改完后,计数目标是 _run_git_async
+    real_run_git_async = _m._run_git_async
     git_cmd_args: list[list[str]] = []
 
-    def counting_run_cmd(cmd_args, *args, **kwargs):
-        if cmd_args and len(cmd_args) >= 2 and cmd_args[0] == git_bin_str:
+    async def counting_run_git_async(cmd_args, *args, **kwargs):
+        if cmd_args and len(cmd_args) >= 2 and cmd_args[0] == plugin._git_binary():
             git_cmd_args.append(cmd_args)
-        return real_run_cmd(cmd_args, *args, **kwargs)
+        return await real_run_git_async(cmd_args, *args, **kwargs)
 
-    monkeypatch.setattr(_helpers, "run_cmd", counting_run_cmd)
-    monkeypatch.setattr(_m, "run_cmd", counting_run_cmd, raising=False)
+    monkeypatch.setattr(_m, "_run_git_async", counting_run_git_async)
 
     result = await plugin.handle_get_git_diff()
     assert result["data"]["loaded"] is True
 
-    # 期望:1 个 rev-parse (probe) + 2 个 diff (full + numstat) = 3 个 git 调用
+    # 期望:1 个 rev-parse (probe) + 1 个 rev-parse (ETag) + 2 个 diff = 4 个调用
     diff_calls = [c for c in git_cmd_args if "diff" in c]
     assert len(diff_calls) == 2, (
         f"expected 2 git diff invocations, got {len(diff_calls)}: {diff_calls}"
@@ -817,7 +921,11 @@ async def test_handle_git_diff_returns_304_on_matching_etag(
 async def test_handle_git_diff_304_skips_git_diff_invocation(
     plugin, tmp_path, monkeypatch
 ):
-    """304 路径只算 ETag(1 个 rev-parse HEAD),不跑 diff/numstat/probe。"""
+    """304 路径算 ETag 后,只读缓存(0 个 git 调用),不跑 diff/numstat/probe。
+
+    v3.4 (2026-06-21) P0 perf:第一次请求填 ETag 缓存,第二次 304 命中走缓存,
+    完全跳过 rev-parse HEAD。dashboard 5-10s 轮询时,N 个请求共用 1 个 git 进程。
+    """
     from astrbot_plugin_spcode_toolkit import main as _m
     from tools import _helpers
     from astrbot.api import web
@@ -825,10 +933,12 @@ async def test_handle_git_diff_304_skips_git_diff_invocation(
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
 
-    # 第一次拿 ETag
+    # 第一次:清空缓存 + 拿 ETag(填缓存)
+    _m._DIFF_ETAG_CACHE.clear()
     monkeypatch.setattr(web, "request", make_web_request_mock({}))
     r1 = await plugin.handle_get_git_diff()
     etag = r1.headers.get("etag")
+    assert etag
 
     # 第二次带 If-None-Match,开始计数 git 调用
     # 注意:_compute_diff_etag / handle_get_git_diff 使用的是 main.py 顶部的
@@ -851,26 +961,176 @@ async def test_handle_git_diff_304_skips_git_diff_invocation(
     r2 = await plugin.handle_get_git_diff()
     assert r2.status_code == 304
 
-    # 304 路径:仅 _compute_diff_etag 内的 1 个 rev-parse HEAD,不应有
-    # diff/probe/numstat 调用
+    # 304 路径:不跑 diff/probe/numstat,且由于缓存命中,0 个 rev-parse HEAD
     diff_calls = [c for c in git_calls if "diff" in c]
     probe_calls = [c for c in git_calls if "rev-parse" in c and "is-inside" in str(c)]
+    head_calls = [c for c in git_calls if "rev-parse" in c and "HEAD" in c]
     assert len(diff_calls) == 0, f"304 should skip diff, got {diff_calls}"
     assert len(probe_calls) == 0, f"304 should skip probe, got {probe_calls}"
-    # 应有 1 个 rev-parse HEAD (来自 ETag 计算)
-    head_calls = [c for c in git_calls if "rev-parse" in c and "HEAD" in c]
-    assert len(head_calls) == 1, (
-        f"expected 1 rev-parse HEAD, got {head_calls}"
+    # P0 perf:缓存命中 → 0 个 rev-parse HEAD(v3.3 是 1 个)
+    assert len(head_calls) == 0, (
+        f"cached 304 should skip rev-parse HEAD, got {head_calls}"
+    )
+
+
+# ── v3.4 (2026-06-21) P0 perf: _compute_diff_etag in-memory 缓存 ──
+
+
+async def test_compute_diff_etag_caches_across_requests(
+    plugin, tmp_path, monkeypatch
+):
+    """P0 perf 修复:同 directory 在 TTL 内的多次请求共用缓存,只触发 1 次 rev-parse HEAD。
+
+    旧实现每次都跑 ``git rev-parse HEAD``(10-20ms 进程启动)。
+    新实现:同 directory 在 1.5s TTL 内复用 ETag 缓存。
+    v3.4 (2026-06-21) P1 perf: P1-5 改用 _run_git_async,计数目标迁移。
+    """
+    from astrbot_plugin_spcode_toolkit import main as _m
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    git_bin = plugin._git_binary()
+    real_run_git_async = _m._run_git_async
+    head_call_count = 0
+
+    async def counting_run_git_async(cmd_args, *args, **kwargs):
+        nonlocal head_call_count
+        if (
+            cmd_args
+            and cmd_args[0] == git_bin
+            and "rev-parse" in cmd_args
+            and "HEAD" in cmd_args
+        ):
+            head_call_count += 1
+        return await real_run_git_async(cmd_args, *args, **kwargs)
+
+    _m._DIFF_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_run_git_async", counting_run_git_async)
+    monkeypatch.setattr(web, "request", make_web_request_mock({}))
+
+    # 3 次连续请求:应该只触发 1 次 rev-parse HEAD
+    r1 = await plugin.handle_get_git_diff()
+    assert r1.status_code == 200
+    r2 = await plugin.handle_get_git_diff()
+    assert r2.status_code == 200
+    r3 = await plugin.handle_get_git_diff()
+    assert r3.status_code == 200
+
+    assert head_call_count == 1, (
+        f"3 requests in <TTL should share 1 rev-parse HEAD, got {head_call_count}"
+    )
+
+
+async def test_compute_diff_etag_invalidates_after_ttl(
+    plugin, tmp_path, monkeypatch
+):
+    """P0 perf 修复:TTL 过期后重新触发 rev-parse HEAD。
+
+    通过 ``monkeypatch.setattr`` 把 ``_DIFF_ETAG_TTL`` 设为 0 验证。
+    v3.4 P1-5:计数目标改为 _run_git_async。
+    """
+    from astrbot_plugin_spcode_toolkit import main as _m
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    git_bin = plugin._git_binary()
+    real_run_git_async = _m._run_git_async
+    head_call_count = 0
+
+    async def counting_run_git_async(cmd_args, *args, **kwargs):
+        nonlocal head_call_count
+        if (
+            cmd_args
+            and cmd_args[0] == git_bin
+            and "rev-parse" in cmd_args
+            and "HEAD" in cmd_args
+        ):
+            head_call_count += 1
+        return await real_run_git_async(cmd_args, *args, **kwargs)
+
+    _m._DIFF_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_run_git_async", counting_run_git_async)
+    monkeypatch.setattr(_m, "_DIFF_ETAG_TTL", 0.0)  # 强制每次都过期
+    monkeypatch.setattr(web, "request", make_web_request_mock({}))
+
+    r1 = await plugin.handle_get_git_diff()
+    assert r1.status_code == 200
+    r2 = await plugin.handle_get_git_diff()
+    assert r2.status_code == 200
+
+    # TTL=0 → 每次都重算
+    assert head_call_count == 2, (
+        f"TTL=0 should re-evaluate every time, got {head_call_count}"
+    )
+
+
+async def test_compute_diff_etag_per_directory_cache(
+    plugin, tmp_path, monkeypatch
+):
+    """P0 perf 修复:不同 directory 各自独立缓存,互不污染。
+
+    v3.4 P1-5:计数目标改为 _run_git_async。
+    """
+    from astrbot_plugin_spcode_toolkit import main as _m
+
+    repo_a = tmp_path / "a"
+    repo_b = tmp_path / "b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    _init_git_repo(repo_a)
+    _init_git_repo(repo_b)
+
+    git_bin = plugin._git_binary()
+    real_run_git_async = _m._run_git_async
+    head_call_count = 0
+
+    async def counting_run_git_async(cmd_args, *args, **kwargs):
+        nonlocal head_call_count
+        if (
+            cmd_args
+            and cmd_args[0] == git_bin
+            and "rev-parse" in cmd_args
+            and "HEAD" in cmd_args
+        ):
+            head_call_count += 1
+        return await real_run_git_async(cmd_args, *args, **kwargs)
+
+    _m._DIFF_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_run_git_async", counting_run_git_async)
+
+    # 第一次算 repo_a ETag(repo_b 的 stat 路径会先报 path 不存在但不影响计数)
+    etag_a1 = await _m._compute_diff_etag(git_bin, str(repo_a))
+    await _m._compute_diff_etag(git_bin, str(repo_b))  # noqa: F841 — 触发 repo_b 缓存
+    etag_a2 = await _m._compute_diff_etag(git_bin, str(repo_a))
+
+    assert etag_a1 == etag_a2, "second repo_a should hit cache"
+    assert head_call_count == 2, (
+        f"3 calls on 2 dirs should trigger 2 rev-parse HEAD, got {head_call_count}"
     )
 
 
 async def test_handle_git_diff_etag_changes_after_commit(
     plugin, tmp_path, monkeypatch
 ):
-    """commit 后 ETag 变,带旧 ETag 的请求会拿到 200 + 新 ETag。"""
+    """commit 后 ETag 变,带旧 ETag 的请求会拿到 200 + 新 ETag。
+
+    v3.4 (2026-06-21) P0 perf: 加了 1.5s TTL 缓存后,为了在这个测试里稳定
+    看到 ETag 变化,把 TTL 设为 0 强制每次重算。否则 commit 后 1.5s 内的
+    请求会命中缓存,这是新设计**有意接受**的 staleness(类似 git 自身
+    index mtime 漏检窗口),由 dashboard 下一次自然轮询纠正。
+    """
+    from astrbot_plugin_spcode_toolkit import main as _m
     from astrbot.api import web
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
+
+    # 禁用缓存以稳定观察 ETag 变化
+    _m._DIFF_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_DIFF_ETAG_TTL", 0.0)
 
     # 第一次:无 diff
     monkeypatch.setattr(web, "request", make_web_request_mock({}))
@@ -882,7 +1142,7 @@ async def test_handle_git_diff_etag_changes_after_commit(
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-m", "t", "-q"], cwd=tmp_path, check=True)
 
-    # 第二次:带旧 ETag,应该 cache miss → 200 + 新 ETag
+    # 第二次:带旧 ETag,TTL=0 强制 cache miss → 200 + 新 ETag
     monkeypatch.setattr(
         web, "request", make_web_request_mock(headers={"If-None-Match": etag_before})
     )
