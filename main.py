@@ -1397,6 +1397,7 @@ class TodoModifyTool(_TodoToolBase):
                 },
             },
             "required": ["mode"],
+            "additionalProperties": False,
         }
     )
 
