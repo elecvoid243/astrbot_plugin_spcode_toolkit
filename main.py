@@ -771,6 +771,110 @@ def _make_git_worktrees_empty_envelope(
     }
 
 
+def _make_file_restore_empty_envelope(
+    *,
+    umo: str | None = None,
+    file: str = "",
+    directory: str | None = None,
+    worktree: str | None = None,
+    scope: str = "unstaged",
+    reason: str,
+    stderr: str = "",
+    elapsed_ms: int = 0,
+) -> dict:
+    """构造 ``/spcode/file-restore`` 失败路径的响应骨架。
+
+    Spec: docs/superpowers/specs/2026-06-22-file-restore-endpoint-design.md §8
+    """
+    return {
+        "status": "ok",
+        "data": {
+            "restored": False,
+            "directory": directory,
+            "umo": umo,
+            "worktree": worktree or directory,
+            "file": file,
+            "scope": scope,
+            "elapsed_ms": elapsed_ms,
+            "stderr": stderr,
+            "reason": reason,
+        },
+    }
+
+
+def _make_file_restore_success_envelope(
+    *,
+    umo: str | None,
+    file: str,
+    directory: str,
+    elapsed_ms: int,
+) -> dict:
+    """构造 ``/spcode/file-restore`` 成功路径的响应骨架。
+
+    Spec: docs/superpowers/specs/2026-06-22-file-restore-endpoint-design.md §3
+    """
+    return {
+        "status": "ok",
+        "data": {
+            "restored": True,
+            "directory": directory,
+            "umo": umo,
+            "worktree": directory,
+            "file": file,
+            "scope": "unstaged",
+            "elapsed_ms": elapsed_ms,
+            "stderr": "",
+            "reason": None,
+        },
+    }
+
+
+def _validate_restore_file(
+    file_path: str, worktree: Path,
+) -> tuple[Path | None, str | None]:
+    """4-step defense for the ``file`` field of ``/spcode/file-restore``.
+
+    Returns ``(resolved_path, None)`` on success; ``(None, "path_unsafe")`` on
+    rejection. Spec §5.
+
+    The 4 steps:
+      1. Reject absolute paths (POSIX leading "/" or Windows drive letter)
+         and ".." segments; force POSIX-style forward slashes only.
+      2. Resolve relative to ``worktree`` and ensure target stays inside.
+      3. Reject paths containing a ``.git`` component.
+      4. Reject symlinks whose realpath escapes ``worktree`` (realpath defense).
+    """
+    if not file_path:
+        return None, "path_unsafe"
+
+    # Step 1: format
+    if file_path.startswith("/") or file_path.startswith("\\"):
+        return None, "path_unsafe"
+    if "\\" in file_path:  # 强制 POSIX 风格
+        return None, "path_unsafe"
+    if ".." in file_path.replace("\\", "/").split("/"):
+        return None, "path_unsafe"
+
+    # Step 2: resolve into worktree
+    worktree_resolved = worktree.resolve()
+    target = (worktree_resolved / file_path).resolve()
+    try:
+        target.relative_to(worktree_resolved)
+    except ValueError:
+        return None, "path_unsafe"
+
+    # Step 3: reject .git internals
+    if any(part == ".git" for part in target.parts):
+        return None, "path_unsafe"
+
+    # Step 4: symlink defense (realpath must equal target)
+    real = os.path.realpath(target)
+    if os.path.normcase(real) != os.path.normcase(str(target)):
+        return None, "path_unsafe"
+
+    return target, None
+
+
 # inta_shell 组件单例(v2.5: 由 initialize 设置,FunctionTool 通过模块级引用访问)
 _inta_component: LocalInteractiveShellComponent | None = None
 _inta_default_cwd: str = ""
@@ -1931,6 +2035,19 @@ class SPCodeToolkit(star.Star):
             )
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(f"注册 spcode file-browser web API 失败: {exc!s}")
+
+        # v3.5: 注册 /spcode/file-restore — 供 dashboard "↩ 恢复" 按钮调用。
+        # 本插件首个 POST 端点;与 GET /spcode/git-diff 形成闭环。
+        # 详见 docs/superpowers/specs/2026-06-22-file-restore-endpoint-design.md
+        try:
+            self.context.register_web_api(
+                route="/spcode/file-restore",
+                view_handler=self.handle_post_file_restore,
+                methods=["POST"],
+                desc="恢复工作区中某一文件相对于 index 的改动（git checkout -- <file> 语义，供 dashboard 调用）",
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"注册 spcode file-restore web API 失败: {exc!s}")
 
         # v2.8.1: 注册 /spcode/plan-mode —
         # dashboard 读取此端点驱动 SpcodePlanModeChip 的状态显示与切换。
@@ -3923,3 +4040,188 @@ class SPCodeToolkit(star.Star):
             return {"status": "ok", "data": _build_error_response(path, _classify_oserror(exc))}
         # symlink / special / 其他类型:不缓存(状态不稳定或语义不明确)
         return {"status": "ok", "data": data}
+
+    # ── /spcode/file-restore 端点(POST,v3.5) ───────────────
+    # Spec: docs/superpowers/specs/2026-06-22-file-restore-endpoint-design.md
+    async def handle_post_file_restore(self) -> dict:
+        """Web API handler for ``POST /spcode/file-restore``.
+
+        恢复工作区中某一文件相对于 index 的改动(``git checkout -- <file>`` 语义)。
+        接收 JSON body ``{"file": "<repo-rel>", "umo": "...", "worktree": "..."}``,
+        返回 ``{"status": "ok", "data": {"restored": bool, "reason": str|None, ...}}``。
+        """
+        t0 = _time.time()
+
+        def _elapsed() -> int:
+            return int((_time.time() - t0) * 1000)
+
+        from astrbot.api import web
+
+        # 1. 读取 body(POST 协议)
+        try:
+            body = web.request.get_json(silent=True)
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            return _make_file_restore_empty_envelope(
+                reason="invalid_body", elapsed_ms=_elapsed()
+            )
+
+        # 2. 提取 file 字段
+        file_field = body.get("file", "")
+        if not isinstance(file_field, str) or not file_field.strip():
+            return _make_file_restore_empty_envelope(
+                reason="missing_file", elapsed_ms=_elapsed()
+            )
+        file_path = file_field.strip()
+
+        # 3. 提取 umo / worktree(留接口位;后续 task 接入)
+        umo_raw = body.get("umo")
+        umo = umo_raw if isinstance(umo_raw, str) and umo_raw.strip() else None
+        wt_raw = body.get("worktree")
+        worktree_param = wt_raw if isinstance(wt_raw, str) else None
+
+        # 4. Feature flag 校验
+        if not (
+            self._config.get("agentsmd_enabled", True)
+            and self._config.get("codegraph_enabled", True)
+        ):
+            return _make_file_restore_empty_envelope(
+                umo=umo, file=file_path, reason="feature_disabled",
+                elapsed_ms=_elapsed()
+            )
+
+        # 5. umo 解析与回退(与 git-diff 完全相同)
+        if umo:
+            info = self._loaded_projects.get(umo)
+        else:
+            if not self._loaded_projects:
+                info = None
+            else:
+                _, info = max(
+                    self._loaded_projects.items(),
+                    key=lambda kv: kv[1].get("loaded_at", 0),
+                )
+        if info is None:
+            return _make_file_restore_empty_envelope(
+                umo=umo, file=file_path, reason="no_project_loaded",
+                elapsed_ms=_elapsed()
+            )
+        directory = info.get("directory", "")
+
+        # 6. worktree 校验(6 步防御,与 git-diff 完全相同)
+        if worktree_param is not None and worktree_param.strip():
+            validated_wt, wt_err = _validate_worktree_param(
+                self._git_binary(), directory, worktree_param
+            )
+            if wt_err is not None:
+                logger.warning(
+                    f"[file-restore] rejected ?worktree={worktree_param!r} "
+                    f"(loaded={directory!r})"
+                )
+                return _make_file_restore_empty_envelope(
+                    umo=umo, file=file_path, reason=wt_err,
+                    directory=directory, elapsed_ms=_elapsed()
+                )
+            directory = validated_wt
+
+        # 7. 目录存在性
+        if not Path(directory).is_dir():
+            return _make_file_restore_empty_envelope(
+                umo=umo, file=file_path, reason="directory_missing",
+                directory=directory, elapsed_ms=_elapsed()
+            )
+
+        # 8. git repo probe
+        probe = await _run_git_async(
+            [self._git_binary(), "-C", directory, "rev-parse", "--is-inside-work-tree"],
+            encoding="utf-8",
+        )
+        if not probe["ok"]:
+            combined = (probe.get("stderr", "") + probe.get("error", "")).lower()
+            if "not a git repository" in combined:
+                return _make_file_restore_empty_envelope(
+                    umo=umo, file=file_path, reason="not_a_git_repo",
+                    directory=directory, elapsed_ms=_elapsed()
+                )
+            if "未安装" in probe.get("error", ""):
+                return _make_file_restore_empty_envelope(
+                    umo=umo, file=file_path, reason="git_unavailable",
+                    directory=directory, elapsed_ms=_elapsed()
+                )
+            return _make_file_restore_empty_envelope(
+                umo=umo, file=file_path, reason="git_error",
+                directory=directory,
+                stderr=probe.get("stderr", "") or probe.get("error", ""),
+                elapsed_ms=_elapsed()
+            )
+
+        # 9. file 路径安全校验(4 步防御)
+        target, path_err = _validate_restore_file(file_path, Path(directory))
+        if path_err is not None:
+            logger.warning(
+                f"[file-restore] rejected file={file_path!r} "
+                f"(worktree={directory!r}): {path_err}"
+            )
+            return _make_file_restore_empty_envelope(
+                umo=umo, file=file_path, reason="path_unsafe",
+                directory=directory, elapsed_ms=_elapsed()
+            )
+
+        # 10. file 存在性
+        if not target.exists():
+            return _make_file_restore_empty_envelope(
+                umo=umo, file=file_path, reason="file_not_found",
+                directory=directory, elapsed_ms=_elapsed()
+            )
+
+        # 11. git status --porcelain 预检(区分 not_modified / untracked_file)
+        status = await _run_git_async(
+            [self._git_binary(), "-C", directory, "status", "--porcelain", "--",
+             file_path],
+            encoding="utf-8",
+        )
+        if status["ok"]:
+            porcelain = status["stdout"]
+            if not porcelain.strip():
+                # working tree 与 index 一致 → 无可恢复
+                return _make_file_restore_empty_envelope(
+                    umo=umo, file=file_path, reason="not_modified",
+                    directory=directory, elapsed_ms=_elapsed()
+                )
+            first = porcelain.splitlines()[0] if porcelain else ""
+            if first.startswith("??") or first.startswith("!!"):
+                return _make_file_restore_empty_envelope(
+                    umo=umo, file=file_path, reason="untracked_file",
+                    directory=directory, stderr=porcelain,
+                    elapsed_ms=_elapsed()
+                )
+
+        # 12. 执行 git checkout -- <file>
+        result = await _run_git_async(
+            [self._git_binary(), "-C", directory, "-c", "color.ui=never",
+             "checkout", "--", file_path],
+            encoding="utf-8",
+        )
+
+        if not result["ok"]:
+            stderr = result.get("stderr", "")
+            lower = stderr.lower()
+            if "did not match any file" in lower or "unknown revision" in lower:
+                reason = "untracked_file"
+            else:
+                reason = "git_error"
+            return _make_file_restore_empty_envelope(
+                umo=umo, file=file_path, reason=reason,
+                directory=directory, stderr=stderr, elapsed_ms=_elapsed()
+            )
+
+        # 13. 成功:审计日志 + success envelope
+        logger.info(
+            f"[file-restore] restored: file={file_path!r} "
+            f"worktree={directory!r} umo={umo!r} elapsed_ms={_elapsed()}"
+        )
+        return _make_file_restore_success_envelope(
+            umo=umo, file=file_path, directory=directory,
+            elapsed_ms=_elapsed()
+        )
