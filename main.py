@@ -2036,6 +2036,19 @@ class SPCodeToolkit(star.Star):
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(f"注册 spcode file-browser web API 失败: {exc!s}")
 
+        # v3.5: 注册 /spcode/file-restore — 供 dashboard "↩ 恢复" 按钮调用。
+        # 本插件首个 POST 端点;与 GET /spcode/git-diff 形成闭环。
+        # 详见 docs/superpowers/specs/2026-06-22-file-restore-endpoint-design.md
+        try:
+            self.context.register_web_api(
+                route="/spcode/file-restore",
+                view_handler=self.handle_post_file_restore,
+                methods=["POST"],
+                desc="恢复工作区中某一文件相对于 index 的改动（git checkout -- <file> 语义，供 dashboard 调用）",
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"注册 spcode file-restore web API 失败: {exc!s}")
+
         # v2.8.1: 注册 /spcode/plan-mode —
         # dashboard 读取此端点驱动 SpcodePlanModeChip 的状态显示与切换。
         # 与 /spcode/project-status 平行的查询端点,只读,POST 切换走聊天命令
