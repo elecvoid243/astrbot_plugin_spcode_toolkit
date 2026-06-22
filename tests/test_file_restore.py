@@ -377,3 +377,51 @@ async def test_restore_logs_audit_trail(
 
     # 至少 1 条含 "file-restore" 标记的 INFO
     assert any("file-restore" in c for c in info_calls), info_calls
+
+
+# ── T5: worktree 6 步防御 + git_path 配置 ────────────
+
+
+async def test_restore_with_worktree_param_succeeds(
+    plugin, tmp_path, monkeypatch
+):
+    """合法 worktree + file,restore 在 worktree 内执行。"""
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("x", encoding="utf-8")
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(
+        monkeypatch, body={"worktree": str(tmp_path), "file": "README.md"}
+    )
+    result = await plugin.handle_post_file_restore()
+    data = result["data"]
+    assert data["restored"] is True
+    assert data["worktree"] == str(tmp_path)
+
+
+async def test_restore_worktree_param_cross_repo_rejected(
+    plugin, tmp_path, monkeypatch
+):
+    """?worktree= 指向其它 git 仓库(跨 repo)时,被 worktree 6 步防御拒绝。"""
+    _init_git_repo(tmp_path)
+    # 创建另一个独立 repo
+    other = tmp_path / "other_repo"
+    other.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=other, check=True)
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(
+        monkeypatch, body={"worktree": str(other), "file": "README.md"}
+    )
+    result = await plugin.handle_post_file_restore()
+    assert result["data"]["reason"] == "worktree_invalid"
+
+
+async def test_restore_uses_configured_git_path(plugin):
+    """git_path 配置后,plugin._git_binary() 返回配置值。"""
+    plugin._config["git_path"] = "/custom/path/to/git.exe"
+    assert plugin._git_binary() == "/custom/path/to/git.exe"
+
+
+async def test_restore_falls_back_to_git_when_path_empty(plugin):
+    """git_path=""(默认)时,plugin._git_binary() 返回 "git"。"""
+    plugin._config["git_path"] = ""
+    assert plugin._git_binary() == "git"
