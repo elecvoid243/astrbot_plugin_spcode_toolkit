@@ -425,3 +425,101 @@ async def test_restore_falls_back_to_git_when_path_empty(plugin):
     """git_path=""(默认)时,plugin._git_binary() 返回 "git"。"""
     plugin._config["git_path"] = ""
     assert plugin._git_binary() == "git"
+
+
+# ── T6: envelope factory unit tests(纯函数,无 git 调用) ───────
+
+
+def test_envelope_empty_minimal():
+    """最小调用:只给 reason,其它字段走默认。"""
+    env = _main_mod._make_file_restore_empty_envelope(reason="no_project_loaded")
+    assert env["status"] == "ok"
+    assert env["data"]["restored"] is False
+    assert env["data"]["reason"] == "no_project_loaded"
+    assert env["data"]["scope"] == "unstaged"
+    assert env["data"]["file"] == ""
+    assert env["data"]["elapsed_ms"] == 0
+    assert env["data"]["directory"] is None
+
+
+def test_envelope_empty_full():
+    """完整调用:所有字段都被正确填充。"""
+    env = _main_mod._make_file_restore_empty_envelope(
+        umo="u:m",
+        file="main.py",
+        directory="/tmp/repo",
+        worktree="/tmp/repo",
+        scope="unstaged",
+        reason="path_unsafe",
+        stderr="some stderr",
+        elapsed_ms=12,
+    )
+    data = env["data"]
+    assert data["restored"] is False
+    assert data["umo"] == "u:m"
+    assert data["file"] == "main.py"
+    assert data["directory"] == "/tmp/repo"
+    assert data["worktree"] == "/tmp/repo"
+    assert data["scope"] == "unstaged"
+    assert data["reason"] == "path_unsafe"
+    assert data["stderr"] == "some stderr"
+    assert data["elapsed_ms"] == 12
+
+
+def test_envelope_worktree_falls_back_to_directory():
+    """不传 worktree 时,worktree 字段降级为 directory。"""
+    env = _main_mod._make_file_restore_empty_envelope(
+        directory="/tmp/repo", reason="git_error"
+    )
+    assert env["data"]["worktree"] == "/tmp/repo"
+
+
+def test_envelope_success():
+    env = _main_mod._make_file_restore_success_envelope(
+        umo="u:m", file="main.py", directory="/tmp/repo", elapsed_ms=42
+    )
+    assert env["status"] == "ok"
+    data = env["data"]
+    assert data["restored"] is True
+    assert data["reason"] is None
+    assert data["file"] == "main.py"
+    assert data["directory"] == "/tmp/repo"
+    assert data["worktree"] == "/tmp/repo"
+    assert data["scope"] == "unstaged"
+    assert data["stderr"] == ""
+    assert data["elapsed_ms"] == 42
+
+
+# ── T7: _validate_restore_file 单元测试(直接调 helper) ──────
+
+
+@pytest.mark.parametrize("bad_input", [
+    "/etc/passwd",                    # 绝对路径(以 /)
+    "\\Windows\\system.ini",          # 绝对路径(以 \)
+    "C:\\Windows\\system.ini",        # Windows 盘符
+    "src\\foo.py",                    # 反斜杠
+    "../foo.py",                      # .. 段
+    "src/../foo.py",                  # 中段 ..
+    ".git/config",                    # .git 内部
+    "src/.git/config",                # 子目录中的 .git
+    "",                               # 空字符串
+])
+def test_validate_restore_file_rejects_unsafe(tmp_path, bad_input):
+    """_validate_restore_file 对所有不安全输入返回 path_unsafe。"""
+    target, err = _main_mod._validate_restore_file(bad_input, tmp_path)
+    assert target is None
+    assert err == "path_unsafe"
+
+
+def test_validate_restore_file_accepts_safe(tmp_path):
+    """_validate_restore_file 对合法相对路径返回 (Path, None)。"""
+    target, err = _main_mod._validate_restore_file("README.md", tmp_path)
+    assert err is None
+    assert target == (tmp_path / "README.md").resolve()
+
+
+def test_validate_restore_file_accepts_nested(tmp_path):
+    """_validate_restore_file 接受嵌套合法相对路径。"""
+    target, err = _main_mod._validate_restore_file("src/main.py", tmp_path)
+    assert err is None
+    assert target == (tmp_path / "src" / "main.py").resolve()
