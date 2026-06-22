@@ -4058,8 +4058,11 @@ class SPCodeToolkit(star.Star):
         from astrbot.api import web
 
         # 1. 读取 body(POST 协议)
+        # NOTE: AstrBot 的 PluginRequestProxy 不提供 Flask 风格的 get_json,
+        # 正确 API 是 ``await web.request.json(default=None)``,内部已
+        # 捕获 JSON 解析异常并返回 default。
         try:
-            body = web.request.get_json(silent=True)
+            body = await web.request.json(default=None)
         except Exception:
             body = None
         if not isinstance(body, dict):
