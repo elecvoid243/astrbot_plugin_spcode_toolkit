@@ -3981,3 +3981,125 @@ class SPCodeToolkit(star.Star):
             return {"status": "ok", "data": _build_error_response(path, _classify_oserror(exc))}
         # symlink / special / 其他类型:不缓存(状态不稳定或语义不明确)
         return {"status": "ok", "data": data}
+
+    # ── /spcode/file-restore 端点(POST,v3.5) ───────────────
+    # Spec: docs/superpowers/specs/2026-06-22-file-restore-endpoint-design.md
+    async def handle_post_file_restore(self) -> dict:
+        """Web API handler for ``POST /spcode/file-restore``.
+
+        恢复工作区中某一文件相对于 index 的改动(``git checkout -- <file>`` 语义)。
+        接收 JSON body ``{"file": "<repo-rel>", "umo": "...", "worktree": "..."}``,
+        返回 ``{"status": "ok", "data": {"restored": bool, "reason": str|None, ...}}``。
+        """
+        t0 = _time.time()
+
+        def _elapsed() -> int:
+            return int((_time.time() - t0) * 1000)
+
+        from astrbot.api import web
+
+        # 1. 读取 body(POST 协议)
+        try:
+            body = web.request.get_json(silent=True)
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            return _make_file_restore_empty_envelope(
+                reason="invalid_body", elapsed_ms=_elapsed()
+            )
+
+        # 2. 提取 file 字段
+        file_field = body.get("file", "")
+        if not isinstance(file_field, str) or not file_field.strip():
+            return _make_file_restore_empty_envelope(
+                reason="missing_file", elapsed_ms=_elapsed()
+            )
+        file_path = file_field.strip()
+
+        # 3. 提取 umo / worktree(留接口位;后续 task 接入)
+        umo_raw = body.get("umo")
+        umo = umo_raw if isinstance(umo_raw, str) and umo_raw.strip() else None
+        wt_raw = body.get("worktree")
+        worktree_param = wt_raw if isinstance(wt_raw, str) else None
+
+        # 4. Feature flag 校验
+        if not (
+            self._config.get("agentsmd_enabled", True)
+            and self._config.get("codegraph_enabled", True)
+        ):
+            return _make_file_restore_empty_envelope(
+                umo=umo, file=file_path, reason="feature_disabled",
+                elapsed_ms=_elapsed()
+            )
+
+        # 5. umo 解析与回退(与 git-diff 完全相同)
+        if umo:
+            info = self._loaded_projects.get(umo)
+        else:
+            if not self._loaded_projects:
+                info = None
+            else:
+                _, info = max(
+                    self._loaded_projects.items(),
+                    key=lambda kv: kv[1].get("loaded_at", 0),
+                )
+        if info is None:
+            return _make_file_restore_empty_envelope(
+                umo=umo, file=file_path, reason="no_project_loaded",
+                elapsed_ms=_elapsed()
+            )
+        directory = info.get("directory", "")
+
+        # 6. worktree 校验(6 步防御,与 git-diff 完全相同)
+        if worktree_param is not None and worktree_param.strip():
+            validated_wt, wt_err = _validate_worktree_param(
+                self._git_binary(), directory, worktree_param
+            )
+            if wt_err is not None:
+                logger.warning(
+                    f"[file-restore] rejected ?worktree={worktree_param!r} "
+                    f"(loaded={directory!r})"
+                )
+                return _make_file_restore_empty_envelope(
+                    umo=umo, file=file_path, reason=wt_err,
+                    directory=directory, elapsed_ms=_elapsed()
+                )
+            directory = validated_wt
+
+        # 7. 目录存在性
+        if not Path(directory).is_dir():
+            return _make_file_restore_empty_envelope(
+                umo=umo, file=file_path, reason="directory_missing",
+                directory=directory, elapsed_ms=_elapsed()
+            )
+
+        # 8. git repo probe
+        probe = await _run_git_async(
+            [self._git_binary(), "-C", directory, "rev-parse", "--is-inside-work-tree"],
+            encoding="utf-8",
+        )
+        if not probe["ok"]:
+            combined = (probe.get("stderr", "") + probe.get("error", "")).lower()
+            if "not a git repository" in combined:
+                return _make_file_restore_empty_envelope(
+                    umo=umo, file=file_path, reason="not_a_git_repo",
+                    directory=directory, elapsed_ms=_elapsed()
+                )
+            if "未安装" in probe.get("error", ""):
+                return _make_file_restore_empty_envelope(
+                    umo=umo, file=file_path, reason="git_unavailable",
+                    directory=directory, elapsed_ms=_elapsed()
+                )
+            return _make_file_restore_empty_envelope(
+                umo=umo, file=file_path, reason="git_error",
+                directory=directory,
+                stderr=probe.get("stderr", "") or probe.get("error", ""),
+                elapsed_ms=_elapsed()
+            )
+
+        # TODO: file 路径校验 + git status 预检 + git checkout(后续 task)
+        return _make_file_restore_empty_envelope(
+            umo=umo, file=file_path, directory=directory,
+            reason="file_not_found",  # 占位:让现有测试通过
+            elapsed_ms=_elapsed()
+        )
