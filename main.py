@@ -771,6 +771,64 @@ def _make_git_worktrees_empty_envelope(
     }
 
 
+def _make_file_restore_empty_envelope(
+    *,
+    umo: str | None = None,
+    file: str = "",
+    directory: str | None = None,
+    worktree: str | None = None,
+    scope: str = "unstaged",
+    reason: str,
+    stderr: str = "",
+    elapsed_ms: int = 0,
+) -> dict:
+    """构造 ``/spcode/file-restore`` 失败路径的响应骨架。
+
+    Spec: docs/superpowers/specs/2026-06-22-file-restore-endpoint-design.md §8
+    """
+    return {
+        "status": "ok",
+        "data": {
+            "restored": False,
+            "directory": directory,
+            "umo": umo,
+            "worktree": worktree or directory,
+            "file": file,
+            "scope": scope,
+            "elapsed_ms": elapsed_ms,
+            "stderr": stderr,
+            "reason": reason,
+        },
+    }
+
+
+def _make_file_restore_success_envelope(
+    *,
+    umo: str | None,
+    file: str,
+    directory: str,
+    elapsed_ms: int,
+) -> dict:
+    """构造 ``/spcode/file-restore`` 成功路径的响应骨架。
+
+    Spec: docs/superpowers/specs/2026-06-22-file-restore-endpoint-design.md §3
+    """
+    return {
+        "status": "ok",
+        "data": {
+            "restored": True,
+            "directory": directory,
+            "umo": umo,
+            "worktree": directory,
+            "file": file,
+            "scope": "unstaged",
+            "elapsed_ms": elapsed_ms,
+            "stderr": "",
+            "reason": None,
+        },
+    }
+
+
 # inta_shell 组件单例(v2.5: 由 initialize 设置,FunctionTool 通过模块级引用访问)
 _inta_component: LocalInteractiveShellComponent | None = None
 _inta_default_cwd: str = ""
