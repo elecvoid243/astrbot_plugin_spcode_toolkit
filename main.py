@@ -829,6 +829,52 @@ def _make_file_restore_success_envelope(
     }
 
 
+def _validate_restore_file(
+    file_path: str, worktree: Path,
+) -> tuple[Path | None, str | None]:
+    """4-step defense for the ``file`` field of ``/spcode/file-restore``.
+
+    Returns ``(resolved_path, None)`` on success; ``(None, "path_unsafe")`` on
+    rejection. Spec §5.
+
+    The 4 steps:
+      1. Reject absolute paths (POSIX leading "/" or Windows drive letter)
+         and ".." segments; force POSIX-style forward slashes only.
+      2. Resolve relative to ``worktree`` and ensure target stays inside.
+      3. Reject paths containing a ``.git`` component.
+      4. Reject symlinks whose realpath escapes ``worktree`` (realpath defense).
+    """
+    if not file_path:
+        return None, "path_unsafe"
+
+    # Step 1: format
+    if file_path.startswith("/") or file_path.startswith("\\"):
+        return None, "path_unsafe"
+    if "\\" in file_path:  # 强制 POSIX 风格
+        return None, "path_unsafe"
+    if ".." in file_path.replace("\\", "/").split("/"):
+        return None, "path_unsafe"
+
+    # Step 2: resolve into worktree
+    worktree_resolved = worktree.resolve()
+    target = (worktree_resolved / file_path).resolve()
+    try:
+        target.relative_to(worktree_resolved)
+    except ValueError:
+        return None, "path_unsafe"
+
+    # Step 3: reject .git internals
+    if any(part == ".git" for part in target.parts):
+        return None, "path_unsafe"
+
+    # Step 4: symlink defense (realpath must equal target)
+    real = os.path.realpath(target)
+    if os.path.normcase(real) != os.path.normcase(str(target)):
+        return None, "path_unsafe"
+
+    return target, None
+
+
 # inta_shell 组件单例(v2.5: 由 initialize 设置,FunctionTool 通过模块级引用访问)
 _inta_component: LocalInteractiveShellComponent | None = None
 _inta_default_cwd: str = ""
@@ -4097,7 +4143,26 @@ class SPCodeToolkit(star.Star):
                 elapsed_ms=_elapsed()
             )
 
-        # TODO: file 路径校验 + git status 预检 + git checkout(后续 task)
+        # 9. file 路径安全校验(4 步防御)
+        target, path_err = _validate_restore_file(file_path, Path(directory))
+        if path_err is not None:
+            logger.warning(
+                f"[file-restore] rejected file={file_path!r} "
+                f"(worktree={directory!r}): {path_err}"
+            )
+            return _make_file_restore_empty_envelope(
+                umo=umo, file=file_path, reason="path_unsafe",
+                directory=directory, elapsed_ms=_elapsed()
+            )
+
+        # 10. file 存在性
+        if not target.exists():
+            return _make_file_restore_empty_envelope(
+                umo=umo, file=file_path, reason="file_not_found",
+                directory=directory, elapsed_ms=_elapsed()
+            )
+
+        # TODO: git status 预检 + git checkout(后续 task)
         return _make_file_restore_empty_envelope(
             umo=umo, file=file_path, directory=directory,
             reason="file_not_found",  # 占位:让现有测试通过

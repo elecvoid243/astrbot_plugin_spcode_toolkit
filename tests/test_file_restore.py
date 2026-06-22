@@ -171,3 +171,94 @@ async def test_restore_not_a_git_repo(plugin, tmp_path, monkeypatch):
     data = result["data"]
     assert data["restored"] is False
     assert data["reason"] == "not_a_git_repo"
+
+
+# ── T3: file 路径安全(4 步防御) ──────────────────────
+
+
+async def test_restore_rejects_absolute_path(plugin, tmp_path, monkeypatch):
+    """file 是绝对路径(以 / 开头)时返回 path_unsafe。"""
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"file": "/etc/passwd"})
+    result = await plugin.handle_post_file_restore()
+    assert result["data"]["reason"] == "path_unsafe"
+
+
+async def test_restore_rejects_windows_absolute_path(
+    plugin, tmp_path, monkeypatch
+):
+    """file 是 Windows 盘符绝对路径时返回 path_unsafe。"""
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"file": "C:\\Windows\\system.ini"})
+    result = await plugin.handle_post_file_restore()
+    assert result["data"]["reason"] == "path_unsafe"
+
+
+async def test_restore_rejects_parent_traversal(plugin, tmp_path, monkeypatch):
+    """file 含 .. 段时返回 path_unsafe。"""
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"file": "../foo.py"})
+    result = await plugin.handle_post_file_restore()
+    assert result["data"]["reason"] == "path_unsafe"
+
+
+async def test_restore_rejects_dot_git_path(plugin, tmp_path, monkeypatch):
+    """file 指向 .git 内部时返回 path_unsafe。"""
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"file": ".git/config"})
+    result = await plugin.handle_post_file_restore()
+    assert result["data"]["reason"] == "path_unsafe"
+
+
+async def test_restore_rejects_backslash_path(plugin, tmp_path, monkeypatch):
+    """file 含反斜杠(Windows 风格路径分隔符)时返回 path_unsafe。"""
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"file": "src\\foo.py"})
+    result = await plugin.handle_post_file_restore()
+    assert result["data"]["reason"] == "path_unsafe"
+
+
+async def test_restore_rejects_symlink_escape(plugin, tmp_path, monkeypatch):
+    """file 是 symlink 且指向 worktree 外时返回 path_unsafe。
+
+    Windows 10/11 默认禁止普通用户创建 symlink(WinError 1314),需要
+    开发者模式或管理员权限。若 os.symlink 失败,跳过此测试(其他 6 个
+    路径安全测试仍覆盖完整防御链)。
+    """
+    _init_git_repo(tmp_path)
+    outside_dir = tmp_path.parent
+    outside = outside_dir / f"outside_secret_{os.getpid()}.txt"
+    outside.write_text("secret", encoding="utf-8")
+    try:
+        try:
+            os.symlink(str(outside), tmp_path / "escape_link")
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"无法创建 symlink(平台/权限限制): {exc}")
+        subprocess.run(["git", "add", "-N", "escape_link"], cwd=tmp_path, check=True)
+        _load_project(plugin, "u:m", str(tmp_path))
+        _patch_post_body(monkeypatch, body={"file": "escape_link"})
+        result = await plugin.handle_post_file_restore()
+        assert result["data"]["reason"] == "path_unsafe"
+    finally:
+        try:
+            (tmp_path / "escape_link").unlink()
+        except FileNotFoundError:
+            pass
+        try:
+            outside.unlink()
+        except FileNotFoundError:
+            pass
+
+
+async def test_restore_file_not_found(plugin, tmp_path, monkeypatch):
+    """file 解析后路径不存在时返回 file_not_found。"""
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"file": "does_not_exist.py"})
+    result = await plugin.handle_post_file_restore()
+    assert result["data"]["reason"] == "file_not_found"
