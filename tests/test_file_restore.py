@@ -64,10 +64,21 @@ def _load_project(plugin: Any, umo: str, directory: str) -> None:
 
 
 def _patch_post_body(monkeypatch, body: Any) -> None:
-    """Mock astrbot.api.web.request with get_json() returning body."""
+    """Mock astrbot.api.web.request with json(default=...) returning body.
+
+    v3.6: handler 改用 ``await web.request.json(default=None)``(AstrBot
+    PluginRequestProxy 实际 API),而不是 Flask 风格 ``get_json(silent=True)``
+    (该方法在 AstrBot 中不存在)。同步 mock 包装一下即可。
+    """
     from astrbot.api import web
 
+    async def _json(*_args, **_kwargs):
+        return body
+
     mock = MagicMock()
+    mock.json = _json
+    # 保留 ``get_json`` mock 以便 v3.5 旧测试不会在 ``__getattr__`` 路径
+    # 上抛 AttributeError(如果未来又有代码切回 Flask 风格)
     mock.get_json = MagicMock(return_value=body)
     monkeypatch.setattr(web, "request", mock)
 
@@ -298,7 +309,13 @@ async def test_restore_untracked_file_returns_untracked(
 async def test_restore_modifies_file_back_to_index(
     plugin, tmp_path, monkeypatch
 ):
-    """修改文件后 restore,内容真的回到 HEAD。"""
+    """修改文件后 restore,内容真的回到 HEAD。
+
+    v3.6 回归点:这是 worktree-only 修改场景,scope 应识别为 ``unstaged``
+    并使用 ``git checkout -- <file>``。原 ``_run_git_async`` 用 ``.strip()``
+    会吞掉 porcelain 头部的 `` ``,把 `` M`` 误判为 ``M``(已暂存),导致
+    走 ``git checkout HEAD --`` 把文件重置到 HEAD 而不是 index。
+    """
     _init_git_repo(tmp_path)
     (tmp_path / "README.md").write_text("modified content", encoding="utf-8")
     _load_project(plugin, "u:m", str(tmp_path))
@@ -308,8 +325,104 @@ async def test_restore_modifies_file_back_to_index(
     assert data["restored"] is True
     assert data["reason"] is None
     assert data["file"] == "README.md"
-    # 文件内容真的被还原到 HEAD
+    assert data["scope"] == "unstaged"  # v3.6: regression guard
+    # 文件内容真的被还原到 HEAD(index == HEAD 时,worktree 与 index 一致 = HEAD)
     assert (tmp_path / "README.md").read_text(encoding="utf-8") == "init"
+
+
+async def test_restore_staged_file_reverts_to_head(
+    plugin, tmp_path, monkeypatch
+):
+    """v3.6 新增:已暂存(``git add`` 后未提交)的文件,restore 应撤销 index 和 worktree。
+
+    原 v3.5 实现永远跑 ``git checkout -- <file>``,对已暂存文件是 no-op,
+    导致 dashboard 看到 "restored=true" 但文件没变。
+    """
+    _init_git_repo(tmp_path)
+    # 1. 在 worktree 修改并 stage
+    (tmp_path / "README.md").write_text("staged content", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    # 此时 git status 显示 "M  README.md"(X='M' Y=' ')
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"file": "README.md"})
+    result = await plugin.handle_post_file_restore()
+    data = result["data"]
+    assert data["restored"] is True
+    assert data["reason"] is None
+    assert data["file"] == "README.md"
+    assert data["scope"] == "staged"  # v3.6: echo actual scope
+    # 关键:worktree 和 index 都应回到 HEAD 内容 "init"
+    assert (tmp_path / "README.md").read_text(encoding="utf-8") == "init"
+    # git status 应为空(已完全撤销)
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=tmp_path, capture_output=True, text=True, check=True,
+    ).stdout
+    assert "README.md" not in status
+
+
+async def test_restore_staged_plus_worktree_reverts_to_head(
+    plugin, tmp_path, monkeypatch
+):
+    """v3.6 新增:已暂存 + worktree 又有改动 → 完全撤销到 HEAD。
+
+    场景:``git add file`` 暂存了 v1,然后又编辑成 v2。Restore 应当把
+    index 和 worktree 都恢复到 HEAD(v0),而不是只把 worktree 还原到 index(v1)。
+    """
+    _init_git_repo(tmp_path)
+    # v1:修改并暂存
+    (tmp_path / "README.md").write_text("v1", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    # v2:继续在 worktree 编辑(暂存没动,index 还是 v1)
+    (tmp_path / "README.md").write_text("v2", encoding="utf-8")
+    # 此时 git status 显示 "MM README.md"(X='M' Y='M')
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"file": "README.md"})
+    result = await plugin.handle_post_file_restore()
+    data = result["data"]
+    assert data["restored"] is True
+    assert data["scope"] == "staged"
+    # 完全回到 HEAD "init"
+    assert (tmp_path / "README.md").read_text(encoding="utf-8") == "init"
+    # index 也应回到 HEAD
+    head_content = subprocess.run(
+        ["git", "show", "HEAD:README.md"],
+        cwd=tmp_path, capture_output=True, text=True, check=True,
+    ).stdout
+    assert head_content == "init"
+    index_content = subprocess.run(
+        ["git", "show", ":README.md"],
+        cwd=tmp_path, capture_output=True, text=True, check=True,
+    ).stdout
+    assert index_content == "init"
+
+
+async def test_restore_intent_to_add_unsets_intent(
+    plugin, tmp_path, monkeypatch
+):
+    """``git add -N new.py`` 后写内容,restore 取消新增意图(scope=unstaged)。
+
+    intent-to-add(``A  path``)X 列是 'A' 而不是 'M',语义是"还没暂存内容,
+    只是告诉 git 我想 track"。restore 应走 unstaged 路径(``git checkout --``)
+    只取消意图,文件保留但变 untracked。
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "new.py").write_text("print('hi')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-N", "new.py"], cwd=tmp_path, check=True)
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"file": "new.py"})
+    result = await plugin.handle_post_file_restore()
+    data = result["data"]
+    assert data["restored"] is True
+    assert data["scope"] == "unstaged"  # v3.6: intent-to-add is unstaged
+    # 新增意图被取消(文件重新变回 untracked 但内容仍在)
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=tmp_path,
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "new.py" in status
+    # 关键:文件内容没有被删
+    assert (tmp_path / "new.py").read_text(encoding="utf-8") == "print('hi')\n"
 
 
 async def test_restore_intent_to_add_file(plugin, tmp_path, monkeypatch):

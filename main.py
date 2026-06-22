@@ -122,10 +122,14 @@ async def _run_git_async(
 
     return {
         "ok": proc.returncode == 0,
-        "stdout": stdout_bytes.decode(encoding, errors="replace").strip(),
-        "stderr": stderr_bytes.decode(encoding, errors="replace").strip(),
+        # 只去尾部换行(``, ``),**不**用 ``.strip()``:后者会把
+        # ``git status --porcelain`` 第一列的 `` ``(X=未暂存)误删,
+        # 导致下游解析 `` M`` → ``M`` 后误判为已暂存(v3.6 file-restore bug)。
+        "stdout": stdout_bytes.decode(encoding, errors="replace").rstrip("\r\n"),
+        "stderr": stderr_bytes.decode(encoding, errors="replace").rstrip("\r\n"),
         "code": proc.returncode,
     }
+
 
 # git-diff 端点专用常量(也用于 __init__ 启动期探测)
 MAX_GIT_DIFF_BYTES = 1 * 1024 * 1024  # 1 MB 硬上限
@@ -210,11 +214,11 @@ def _parse_diff_status_map(diff_output: str) -> dict[str, str]:
         elif line.startswith("rename from "):
             current_status = "R"
         elif line.startswith("rename to "):
-            current_path = line[len("rename to "):]
+            current_path = line[len("rename to ") :]
         elif line.startswith("copy from "):
             current_status = "C"
         elif line.startswith("copy to "):
-            current_path = line[len("copy to "):]
+            current_path = line[len("copy to ") :]
         elif line.startswith("@@"):
             in_hunk = True
         # index / similarity / file header (--- / +++) / Binary files 等行:忽略
@@ -278,9 +282,7 @@ def _build_stat_text(files_changed: list[dict]) -> str:
         bar = "+" * min(add, 50) + "-" * min(delete, 50)
         if not bar:
             bar = "|"
-        lines.append(
-            f" {f['path']:<{max_path_len}} | {total:>{max_change_len}} {bar}"
-        )
+        lines.append(f" {f['path']:<{max_path_len}} | {total:>{max_change_len}} {bar}")
         total_add += add
         total_del += delete
 
@@ -808,10 +810,15 @@ def _make_file_restore_success_envelope(
     file: str,
     directory: str,
     elapsed_ms: int,
+    scope: str = "unstaged",
 ) -> dict:
     """构造 ``/spcode/file-restore`` 成功路径的响应骨架。
 
     Spec: docs/superpowers/specs/2026-06-22-file-restore-endpoint-design.md §3
+
+    v3.6: ``scope`` 字段现在回显 handler 实际执行的 scope(``"unstaged"`` 或
+    ``"staged"``),因为 handler 会基于 ``git status`` 自动检测。前端可据此
+    展示 "已恢复工作区改动" vs "已取消暂存并回退到 HEAD"。
     """
     return {
         "status": "ok",
@@ -821,7 +828,7 @@ def _make_file_restore_success_envelope(
             "umo": umo,
             "worktree": directory,
             "file": file,
-            "scope": "unstaged",
+            "scope": scope,
             "elapsed_ms": elapsed_ms,
             "stderr": "",
             "reason": None,
@@ -830,7 +837,8 @@ def _make_file_restore_success_envelope(
 
 
 def _validate_restore_file(
-    file_path: str, worktree: Path,
+    file_path: str,
+    worktree: Path,
 ) -> tuple[Path | None, str | None]:
     """4-step defense for the ``file`` field of ``/spcode/file-restore``.
 
@@ -1492,8 +1500,8 @@ class TodoModifyTool(_TodoToolBase):
                     "type": "string",
                     "description": (
                         "[update mode] New notes value. "
-                        "OVERWRITE: pass a non-empty string, e.g. \"blocked on review\". "
-                        "CLEAR: pass the empty string \"\". "
+                        'OVERWRITE: pass a non-empty string, e.g. "blocked on review". '
+                        'CLEAR: pass the empty string "". '
                         "KEEP: OMIT this key entirely from the JSON object — "
                         "do NOT write null, \"\", or any placeholder to express 'keep'; "
                         "leaving the key out means 'leave the existing notes unchanged'."
@@ -3987,7 +3995,10 @@ class SPCodeToolkit(star.Star):
         # 不跟随 symlink 的路径校验(spec §7.2):broken symlink 时
         # path.exists() 返回 False,所以**额外**用 path.is_symlink() 检查
         if not path.exists() and not path.is_symlink():
-            return {"status": "ok", "data": _build_error_response(path, "path_not_found")}
+            return {
+                "status": "ok",
+                "data": _build_error_response(path, "path_not_found"),
+            }
         # 分支调度(spec §7.3):
         #   1. directory → _build_directory_response(+ Cache-Control)
         #   2. file      → _build_file_response(+ ETag/304 路径)
@@ -4037,18 +4048,32 @@ class SPCodeToolkit(star.Star):
                 data = _build_error_response(path, "special_file")
         except (PermissionError, OSError) as exc:
             logger.warning("file-browser: OSError on %s: %s", path, exc)
-            return {"status": "ok", "data": _build_error_response(path, _classify_oserror(exc))}
+            return {
+                "status": "ok",
+                "data": _build_error_response(path, _classify_oserror(exc)),
+            }
         # symlink / special / 其他类型:不缓存(状态不稳定或语义不明确)
         return {"status": "ok", "data": data}
 
-    # ── /spcode/file-restore 端点(POST,v3.5) ───────────────
+    # ── /spcode/file-restore 端点(POST,v3.5;v3.6 staged 支持) ────
     # Spec: docs/superpowers/specs/2026-06-22-file-restore-endpoint-design.md
     async def handle_post_file_restore(self) -> dict:
         """Web API handler for ``POST /spcode/file-restore``.
 
-        恢复工作区中某一文件相对于 index 的改动(``git checkout -- <file>`` 语义)。
         接收 JSON body ``{"file": "<repo-rel>", "umo": "...", "worktree": "..."}``,
         返回 ``{"status": "ok", "data": {"restored": bool, "reason": str|None, ...}}``。
+
+        v3.6: scope 自动检测。原 spec 限定 ``unstaged``,导致已暂存文件被
+        ``git checkout -- <file>`` 静默 no-op(返回 0 但未修改任何东西)。
+        现在通过 ``git status --porcelain`` 解析 X/Y 列:
+
+        - X 列非空(``M``/``A``/``D``/``R``/``C``/``T``)→ 已暂存 → ``git checkout HEAD -- <file>``
+          (同时重置 index + worktree 到 HEAD,即"完全撤销")
+        - 仅 Y 列非空 → 未暂存 → ``git checkout -- <file>``
+          (重置 worktree 到 index,保留既有行为)
+        - 都不空(MM / AM / …)→ 视为 staged,执行完全撤销
+        - 都为空 → ``not_modified``
+        - ``??``/``!!`` → ``untracked_file``
         """
         t0 = _time.time()
 
@@ -4090,8 +4115,10 @@ class SPCodeToolkit(star.Star):
             and self._config.get("codegraph_enabled", True)
         ):
             return _make_file_restore_empty_envelope(
-                umo=umo, file=file_path, reason="feature_disabled",
-                elapsed_ms=_elapsed()
+                umo=umo,
+                file=file_path,
+                reason="feature_disabled",
+                elapsed_ms=_elapsed(),
             )
 
         # 5. umo 解析与回退(与 git-diff 完全相同)
@@ -4107,8 +4134,10 @@ class SPCodeToolkit(star.Star):
                 )
         if info is None:
             return _make_file_restore_empty_envelope(
-                umo=umo, file=file_path, reason="no_project_loaded",
-                elapsed_ms=_elapsed()
+                umo=umo,
+                file=file_path,
+                reason="no_project_loaded",
+                elapsed_ms=_elapsed(),
             )
         directory = info.get("directory", "")
 
@@ -4123,16 +4152,22 @@ class SPCodeToolkit(star.Star):
                     f"(loaded={directory!r})"
                 )
                 return _make_file_restore_empty_envelope(
-                    umo=umo, file=file_path, reason=wt_err,
-                    directory=directory, elapsed_ms=_elapsed()
+                    umo=umo,
+                    file=file_path,
+                    reason=wt_err,
+                    directory=directory,
+                    elapsed_ms=_elapsed(),
                 )
             directory = validated_wt
 
         # 7. 目录存在性
         if not Path(directory).is_dir():
             return _make_file_restore_empty_envelope(
-                umo=umo, file=file_path, reason="directory_missing",
-                directory=directory, elapsed_ms=_elapsed()
+                umo=umo,
+                file=file_path,
+                reason="directory_missing",
+                directory=directory,
+                elapsed_ms=_elapsed(),
             )
 
         # 8. git repo probe
@@ -4144,19 +4179,27 @@ class SPCodeToolkit(star.Star):
             combined = (probe.get("stderr", "") + probe.get("error", "")).lower()
             if "not a git repository" in combined:
                 return _make_file_restore_empty_envelope(
-                    umo=umo, file=file_path, reason="not_a_git_repo",
-                    directory=directory, elapsed_ms=_elapsed()
+                    umo=umo,
+                    file=file_path,
+                    reason="not_a_git_repo",
+                    directory=directory,
+                    elapsed_ms=_elapsed(),
                 )
             if "未安装" in probe.get("error", ""):
                 return _make_file_restore_empty_envelope(
-                    umo=umo, file=file_path, reason="git_unavailable",
-                    directory=directory, elapsed_ms=_elapsed()
+                    umo=umo,
+                    file=file_path,
+                    reason="git_unavailable",
+                    directory=directory,
+                    elapsed_ms=_elapsed(),
                 )
             return _make_file_restore_empty_envelope(
-                umo=umo, file=file_path, reason="git_error",
+                umo=umo,
+                file=file_path,
+                reason="git_error",
                 directory=directory,
                 stderr=probe.get("stderr", "") or probe.get("error", ""),
-                elapsed_ms=_elapsed()
+                elapsed_ms=_elapsed(),
             )
 
         # 9. file 路径安全校验(4 步防御)
@@ -4167,45 +4210,142 @@ class SPCodeToolkit(star.Star):
                 f"(worktree={directory!r}): {path_err}"
             )
             return _make_file_restore_empty_envelope(
-                umo=umo, file=file_path, reason="path_unsafe",
-                directory=directory, elapsed_ms=_elapsed()
+                umo=umo,
+                file=file_path,
+                reason="path_unsafe",
+                directory=directory,
+                elapsed_ms=_elapsed(),
             )
 
         # 10. file 存在性
         if not target.exists():
             return _make_file_restore_empty_envelope(
-                umo=umo, file=file_path, reason="file_not_found",
-                directory=directory, elapsed_ms=_elapsed()
+                umo=umo,
+                file=file_path,
+                reason="file_not_found",
+                directory=directory,
+                elapsed_ms=_elapsed(),
             )
 
-        # 11. git status --porcelain 预检(区分 not_modified / untracked_file)
+        # 11. git status --porcelain 预检 + scope 自动检测
+        # v3.6 改造:不仅区分 not_modified / untracked_file,还按 X/Y 列
+        # 决定是执行 unstaged 恢复(``git checkout --``)还是 staged 完全撤销
+        # (``git checkout HEAD --``)。原 v3.5 永远跑 ``git checkout --``,
+        # 对已暂存文件是 no-op,导致假成功。
+        git_bin = self._git_binary()
         status = await _run_git_async(
-            [self._git_binary(), "-C", directory, "status", "--porcelain", "--",
-             file_path],
+            [git_bin, "-C", directory, "status", "--porcelain", "--", file_path],
             encoding="utf-8",
         )
-        if status["ok"]:
-            porcelain = status["stdout"]
-            if not porcelain.strip():
-                # working tree 与 index 一致 → 无可恢复
-                return _make_file_restore_empty_envelope(
-                    umo=umo, file=file_path, reason="not_modified",
-                    directory=directory, elapsed_ms=_elapsed()
-                )
-            first = porcelain.splitlines()[0] if porcelain else ""
-            if first.startswith("??") or first.startswith("!!"):
-                return _make_file_restore_empty_envelope(
-                    umo=umo, file=file_path, reason="untracked_file",
-                    directory=directory, stderr=porcelain,
-                    elapsed_ms=_elapsed()
-                )
+        if not status["ok"]:
+            stderr = status.get("stderr", "") or status.get("error", "")
+            return _make_file_restore_empty_envelope(
+                umo=umo,
+                file=file_path,
+                reason="git_error",
+                directory=directory,
+                stderr=stderr,
+                elapsed_ms=_elapsed(),
+            )
 
-        # 12. 执行 git checkout -- <file>
-        result = await _run_git_async(
-            [self._git_binary(), "-C", directory, "-c", "color.ui=never",
-             "checkout", "--", file_path],
-            encoding="utf-8",
-        )
+        porcelain = status["stdout"]
+        if not porcelain.strip():
+            # working tree 与 index 一致 → 无可恢复
+            return _make_file_restore_empty_envelope(
+                umo=umo,
+                file=file_path,
+                reason="not_modified",
+                directory=directory,
+                elapsed_ms=_elapsed(),
+            )
+
+        first_line = porcelain.splitlines()[0] if porcelain else ""
+        # git status --porcelain 格式:"XY <path>",X=index Y=worktree
+        x_status = first_line[0] if len(first_line) >= 1 else " "
+        y_status = first_line[1] if len(first_line) >= 2 else " "
+
+        # 未跟踪文件(``?? path``)
+        if x_status == "?" and y_status == "?":
+            return _make_file_restore_empty_envelope(
+                umo=umo,
+                file=file_path,
+                reason="untracked_file",
+                directory=directory,
+                stderr=porcelain,
+                elapsed_ms=_elapsed(),
+            )
+
+        # scope 判定(v3.6,基于 porcelain v1 实测语义):
+        #
+        # | 场景               | porcelain  示例      | X   | Y   | 处理 |
+        # |--------------------|----------------------|-----|-----|------|
+        # | 仅 worktree 改动    | `` M path``          | ' ' | 'M' | git checkout -- |
+        # | 已暂存(无 wt 改动) | ``M  path``          | 'M' | ' ' | git checkout HEAD -- |
+        # | 已暂存 + wt 改动    | ``MM path``          | 'M' | 'M' | git checkout HEAD -- |
+        # | intent-to-add      | `` A path``          | ' ' | 'A' | git reset HEAD -- |
+        #
+        # 关键陷阱(intent-to-add):
+        # - X 是 ' ' 而**不是** 'A'(因为 index 还没真暂存内容,只是记了个意图)
+        # - Y 是 'A'(worktree 有新文件)
+        # - 不能用 ``git checkout --``:它会把 worktree 内容置空(index 里 blob 是空的)
+        # - 必须用 ``git reset HEAD`` 取消意图(worktree 内容保留,文件变 untracked)
+        _TRULY_STAGED_X = frozenset({"M", "D", "R", "C", "T"})
+        _WORKTREE_Y = frozenset({"M", "A", "D", "R", "C", "T"})
+        is_intent_to_add = x_status == " " and y_status == "A"
+        is_truly_staged = x_status in _TRULY_STAGED_X
+        is_worktree_dirty = y_status in _WORKTREE_Y
+
+        if is_intent_to_add:
+            scope = "unstaged"
+            restore_cmd = [
+                git_bin,
+                "-C",
+                directory,
+                "-c",
+                "color.ui=never",
+                "reset",
+                "HEAD",
+                "--",
+                file_path,
+            ]
+        elif is_truly_staged:
+            # 真正已暂存(可能 worktree 也有改动)→ 完全恢复到 HEAD
+            scope = "staged"
+            restore_cmd = [
+                git_bin,
+                "-C",
+                directory,
+                "-c",
+                "color.ui=never",
+                "checkout",
+                "HEAD",
+                "--",
+                file_path,
+            ]
+        elif is_worktree_dirty:
+            # 仅 worktree 与 index 不同 → 既有行为
+            scope = "unstaged"
+            restore_cmd = [
+                git_bin,
+                "-C",
+                directory,
+                "-c",
+                "color.ui=never",
+                "checkout",
+                "--",
+                file_path,
+            ]
+        else:
+            return _make_file_restore_empty_envelope(
+                umo=umo,
+                file=file_path,
+                reason="not_modified",
+                directory=directory,
+                elapsed_ms=_elapsed(),
+            )
+
+        # 12. 执行 restore 命令
+        result = await _run_git_async(restore_cmd, encoding="utf-8")
 
         if not result["ok"]:
             stderr = result.get("stderr", "")
@@ -4215,16 +4355,24 @@ class SPCodeToolkit(star.Star):
             else:
                 reason = "git_error"
             return _make_file_restore_empty_envelope(
-                umo=umo, file=file_path, reason=reason,
-                directory=directory, stderr=stderr, elapsed_ms=_elapsed()
+                umo=umo,
+                file=file_path,
+                reason=reason,
+                scope=scope,
+                directory=directory,
+                stderr=stderr,
+                elapsed_ms=_elapsed(),
             )
 
-        # 13. 成功:审计日志 + success envelope
+        # 13. 成功:审计日志 + success envelope(scope 回显)
         logger.info(
-            f"[file-restore] restored: file={file_path!r} "
+            f"[file-restore] restored: file={file_path!r} scope={scope} "
             f"worktree={directory!r} umo={umo!r} elapsed_ms={_elapsed()}"
         )
         return _make_file_restore_success_envelope(
-            umo=umo, file=file_path, directory=directory,
-            elapsed_ms=_elapsed()
+            umo=umo,
+            file=file_path,
+            directory=directory,
+            scope=scope,
+            elapsed_ms=_elapsed(),
         )
