@@ -4162,9 +4162,53 @@ class SPCodeToolkit(star.Star):
                 directory=directory, elapsed_ms=_elapsed()
             )
 
-        # TODO: git status 预检 + git checkout(后续 task)
-        return _make_file_restore_empty_envelope(
+        # 11. git status --porcelain 预检(区分 not_modified / untracked_file)
+        status = await _run_git_async(
+            [self._git_binary(), "-C", directory, "status", "--porcelain", "--",
+             file_path],
+            encoding="utf-8",
+        )
+        if status["ok"]:
+            porcelain = status["stdout"]
+            if not porcelain.strip():
+                # working tree 与 index 一致 → 无可恢复
+                return _make_file_restore_empty_envelope(
+                    umo=umo, file=file_path, reason="not_modified",
+                    directory=directory, elapsed_ms=_elapsed()
+                )
+            first = porcelain.splitlines()[0] if porcelain else ""
+            if first.startswith("??") or first.startswith("!!"):
+                return _make_file_restore_empty_envelope(
+                    umo=umo, file=file_path, reason="untracked_file",
+                    directory=directory, stderr=porcelain,
+                    elapsed_ms=_elapsed()
+                )
+
+        # 12. 执行 git checkout -- <file>
+        result = await _run_git_async(
+            [self._git_binary(), "-C", directory, "-c", "color.ui=never",
+             "checkout", "--", file_path],
+            encoding="utf-8",
+        )
+
+        if not result["ok"]:
+            stderr = result.get("stderr", "")
+            lower = stderr.lower()
+            if "did not match any file" in lower or "unknown revision" in lower:
+                reason = "untracked_file"
+            else:
+                reason = "git_error"
+            return _make_file_restore_empty_envelope(
+                umo=umo, file=file_path, reason=reason,
+                directory=directory, stderr=stderr, elapsed_ms=_elapsed()
+            )
+
+        # 13. 成功:审计日志 + success envelope
+        logger.info(
+            f"[file-restore] restored: file={file_path!r} "
+            f"worktree={directory!r} umo={umo!r} elapsed_ms={_elapsed()}"
+        )
+        return _make_file_restore_success_envelope(
             umo=umo, file=file_path, directory=directory,
-            reason="file_not_found",  # 占位:让现有测试通过
             elapsed_ms=_elapsed()
         )

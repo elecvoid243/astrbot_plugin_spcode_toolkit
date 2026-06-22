@@ -262,3 +262,118 @@ async def test_restore_file_not_found(plugin, tmp_path, monkeypatch):
     _patch_post_body(monkeypatch, body={"file": "does_not_exist.py"})
     result = await plugin.handle_post_file_restore()
     assert result["data"]["reason"] == "file_not_found"
+
+
+# ── T4: git status 预检 + git checkout + 成功路径 ────────
+
+
+async def test_restore_not_modified_returns_not_modified(
+    plugin, tmp_path, monkeypatch
+):
+    """文件无改动时返回 not_modified(无可恢复内容)。"""
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"file": "README.md"})
+    result = await plugin.handle_post_file_restore()
+    data = result["data"]
+    assert data["restored"] is False
+    assert data["reason"] == "not_modified"
+
+
+async def test_restore_untracked_file_returns_untracked(
+    plugin, tmp_path, monkeypatch
+):
+    """未 ``git add -N`` 的新文件返回 untracked_file,stderr 含 git 输出。"""
+    _init_git_repo(tmp_path)
+    (tmp_path / "new.py").write_text("print('hi')\n", encoding="utf-8")
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"file": "new.py"})
+    result = await plugin.handle_post_file_restore()
+    data = result["data"]
+    assert data["restored"] is False
+    assert data["reason"] == "untracked_file"
+    assert data["stderr"] != ""  # git status --porcelain 输出
+
+
+async def test_restore_modifies_file_back_to_index(
+    plugin, tmp_path, monkeypatch
+):
+    """修改文件后 restore,内容真的回到 HEAD。"""
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("modified content", encoding="utf-8")
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"file": "README.md"})
+    result = await plugin.handle_post_file_restore()
+    data = result["data"]
+    assert data["restored"] is True
+    assert data["reason"] is None
+    assert data["file"] == "README.md"
+    # 文件内容真的被还原到 HEAD
+    assert (tmp_path / "README.md").read_text(encoding="utf-8") == "init"
+
+
+async def test_restore_intent_to_add_file(plugin, tmp_path, monkeypatch):
+    """``git add -N new.py`` 后写内容,restore 取消新增意图。"""
+    _init_git_repo(tmp_path)
+    (tmp_path / "new.py").write_text("print('hi')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-N", "new.py"], cwd=tmp_path, check=True)
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"file": "new.py"})
+    result = await plugin.handle_post_file_restore()
+    data = result["data"]
+    assert data["restored"] is True
+    # 新增意图被取消(文件重新变回 untracked 但内容仍在)
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=tmp_path,
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "new.py" in status
+
+
+async def test_restore_response_envelope_shape(plugin, tmp_path, monkeypatch):
+    """成功响应字段齐全且类型正确。"""
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("x", encoding="utf-8")
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"umo": "u:m", "file": "README.md"})
+    result = await plugin.handle_post_file_restore()
+    data = result["data"]
+    # 必含字段
+    for key in (
+        "restored", "directory", "umo", "worktree", "file", "scope",
+        "elapsed_ms", "stderr", "reason",
+    ):
+        assert key in data, f"missing key: {key}"
+    # 类型
+    assert data["restored"] is True
+    assert isinstance(data["directory"], str)
+    assert data["scope"] == "unstaged"
+    assert isinstance(data["elapsed_ms"], int)
+
+
+async def test_restore_logs_audit_trail(
+    plugin, tmp_path, monkeypatch
+):
+    """成功路径有 INFO 级别审计日志(通过 monkeypatch 拦截 logger.info)。
+
+    AstrBot 的 ``logger`` 来自 ``astrbot.api``,其内部包装了标准 logging,
+    不会向 pytest 的 caplog 传播。因此用 monkeypatch 替换 ``info`` 方法,
+    验证 handler 在成功路径调了一次 ``info("...file-restore...")``。
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("x", encoding="utf-8")
+    _load_project(plugin, "u:m", str(tmp_path))
+    _patch_post_body(monkeypatch, body={"umo": "u:m", "file": "README.md"})
+
+    # 拦截 handler 模块的 logger.info
+    import astrbot_plugin_spcode_toolkit.main as _m
+    info_calls: list[str] = []
+    original_info = _m.logger.info
+    _m.logger.info = lambda msg, *args, **kwargs: info_calls.append(msg)
+    try:
+        await plugin.handle_post_file_restore()
+    finally:
+        _m.logger.info = original_info
+
+    # 至少 1 条含 "file-restore" 标记的 INFO
+    assert any("file-restore" in c for c in info_calls), info_calls
