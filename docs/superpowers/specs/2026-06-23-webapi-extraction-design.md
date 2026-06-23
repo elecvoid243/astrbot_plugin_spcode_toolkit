@@ -2,8 +2,8 @@
 
 > **For agentic workers:** 这是 brainstorming 阶段的产出。设计经用户审核通过后,下一步调用 writing-plans 技能输出实现计划。
 
-**状态**: 🔄 v3 — 修正 v2 reviewer 1 个新 blocking + 5 个 advisory
-**作者**: elecvoid243 @ 2026-06-23 08:46(spec v1)/ v2 修正 @ 08:55 / v3 修正 @ 09:05
+**状态**: 🔄 v4 — 修正 v3 reviewer 2 个新 blocking(test_git_diff monkeypatch 漏列 + Pattern A/B 调用规范) + 5 个 advisory
+**作者**: elecvoid243 @ 2026-06-23 08:46(spec v1)/ v2 修正 @ 08:55 / v3 修正 @ 09:05 / v4 修正 @ 09:18
 **目标插件**: `astrbot_plugin_spcode_toolkit`(主干)
 **前置版本**: 当前 HEAD(6 个 `/spcode/*` 端点全部已交付,本 spec 是工程重构,不改变任何端点的对外契约)
 **配套 UI**: 无(纯服务端重构;dashboard 不感知)
@@ -11,6 +11,7 @@
 **修正历史**:
 - v2(2026-06-23 08:55):spec reviewer 找到 4 个 blocking 问题(适配器漏 `scope`/`path`、`_run_git_async` 跨端点归类矛盾、虚构 3 个不存在函数名、`_record` 误归 webapi) + 4 个 advisory(行数误导、常量未枚举、类名误写、file_restore body 迁移不清)。本版本全部修正。
 - v3(2026-06-23 09:05):v2 reviewer 找到 1 个新 blocking(`_JSONResponseCompat` 实际有 4 处 webapi 用途,必须移入 `webapi/_helpers.py` 不能留 main.py)+ 5 个 advisory(残留 1170 行/16 个/StarToolkitPlugin 未清理、`test_run_git_async.py` 漏列、webapi/_helpers.py 命名避免 pytest 误采)。本版本全部修正。
+- v4(2026-06-23 09:18):v3 reviewer 找到 2 个新 blocking(`test_git_diff.py` 4 处 `monkeypatch.setattr(main_mod, "_run_git_async", ...)` 漏列,搬迁后必须改路径;handler 调用 `_run_git_async` 必须采用 `from . import _helpers as _helpers` + `_helpers._run_git_async(...)` 模式,否则 monkeypatch 失效)+ 5 个 advisory(空 `_envelopes.py` 矛盾、Q1 行数 50→45、`_JSONResponseCompat` 误置 §4.4、import 路径细节、测试迁移顺序)。本版本全部修正。
 
 ## 背景与目标
 
@@ -25,6 +26,8 @@
 
 **目标**:把 6 个 webapi 端点的代码全部从 `main.py` 抽到 `tools/webapi/` 子包;`main.py` 只保留插件类壳、命令路由(`/project`、`/codegraph` 等)、`register_webapi_routes()` 一次调用。最终 `main.py` 行数预计下降到 ~180 行(纯启动 + 命令分发)。
 
+**关于子包结构演变**:v1 规划 2 个共享文件(`_envelopes.py` + `_helpers.py`),v4 收回成 1 个(`_helpers.py`);理由见 Q3 决策记录与 §4.2。**最终结构 = `__init__.py` + `_helpers.py` + 6 个端点文件 = 8 个文件**。
+
 **硬约束(对外契约零变化)**:
 - 6 个端点 URL、HTTP method、request/response shape **完全不变**
 - dashboard / 前端不需要任何适配
@@ -35,9 +38,9 @@
 
 | Q | 决策 | 影响 |
 |---|------|------|
-| **Q1: 端点代码组织粒度** | **A** — 每端点一个独立文件(6 个端点 + 2 个共享文件) | 单文件最小(~50-400 行);单一职责 |
+| **Q1: 端点代码组织粒度** | **A** — 每端点一个独立文件(6 个端点 + 1 个共享文件;v4 收回 envelopes) | 单文件最小(~45-400 行);单一职责 |
 | **Q2: handler 函数形态** | **A** — 模块级协程函数(不绑 plugin 类) | 真正解耦;测试要小改 |
-| **Q3: 共享层拆分粒度** | **A** — `_envelopes.py` + `_helpers.py` 两个文件 | 响应骨架与通用工具分清楚 |
+| **Q3: 共享层拆分粒度** | **A** — v1 决定 2 个文件(`_envelopes.py` + `_helpers.py`);v4 收回成 1 个文件(`_helpers.py` 合并 envelope 工具) | 早期 YAGNI:没有"envelope 构造"被多端点共享的真实需求,3 个 `_make_xxx_empty_envelope` 各随端点走;`_helpers.py` 只放真正跨端点共享的 `_run_git_async` + `_JSONResponseCompat` |
 | **Q4: `_wrap` 适配层位置** | **A** — 内联在 `tools/webapi/__init__.py` | 6 段注册的胶水本就该集中 |
 | **Q5: 测试迁移方式** | **A** — 测试侧改 import + 调用(无 main.py shim) | 一次性固化契约,不背长期兼容债 |
 | **Q6: 旧 handler 兼容 shim** | **A** — 不留 | 信号清晰;新端点不会继续塞 plugin 类 |
@@ -52,8 +55,8 @@ astrbot_plugin_spcode_toolkit/
 └── tools/
     └── webapi/                    # 【新增】本任务产物
         ├── __init__.py            # HANDLERS + register_webapi_routes() + _wrap()
-        ├── _envelopes.py          # 共享响应骨架(empty envelope, _record 计时)
-        ├── _helpers.py            # 共享工具(_JSONResponseCompat 等)
+        ├── _envelopes.py          # 【v4 决定:删除本文件,合并到 __init__.py】
+        ├── _helpers.py            # 共享工具(_run_git_async + _JSONResponseCompat)
         ├── project_status.py      # GET /spcode/project-status
         ├── plan_mode.py           # GET /spcode/plan-mode
         ├── git_worktrees.py       # GET /spcode/git-worktrees
@@ -300,6 +303,20 @@ class _JSONResponseCompat(JSONResponse):
 
 > **不放在 `tools/_helpers.py` 的原因**:`tools/_helpers.py` 是给 LLM 工具层(CodeCheckTool / FileRemoveTool 等)共享的;`_run_git_async` 和 `_JSONResponseCompat` 仅 webapi 端点使用,放进去会增加跨层耦合,违反 §4.4 的"层级隔离"原则。
 
+> **handler 调用 `_run_git_async` 的强制模式**:在 `tools/webapi/git_diff.py` 和 `tools/webapi/file_restore.py` 中,handler **必须**采用 module-globally-bound 模式:
+> ```python
+> # 正确(Pattern B — module-globally-bound,pytest monkeypatch 生效)
+> from . import _helpers  # noqa: F401
+> ...
+> result = await _helpers._run_git_async(probe_cmd, cwd=directory, encoding=...)
+> 
+> # 错误(Pattern A — local binding,monkeypatch 无效)
+> from ._helpers import _run_git_async  # noqa
+> ...
+> result = await _run_git_async(probe_cmd, ...)  # pytest setattr 失败
+> ```
+> **理由**:`test_git_diff.py` 行 254/286/328/370/412 共 5 处 `monkeypatch.setattr(main_mod, "_run_git_async", ...)`,搬迁后改为 `monkeypatch.setattr("astrbot_plugin_spcode_toolkit.tools.webapi._helpers", "_run_git_async", ...)`。如果 handler 写 Pattern A,模块内 `_run_git_async` 是函数对象的本地副本,monkeypatch 改的是 `tools.webapi._helpers._run_git_async` 原符号,handler 内的 local binding 不变 → 测试 fail。Pattern B 通过 module attribute lookup(`_helpers._run_git_async`)保持动态解析,monkeypatch 立即生效。
+
 #### 4.3 端点专用模块级常量(随端点搬移)
 
 | 常量 | 归属 | 当前行号 | 用途 |
@@ -313,7 +330,6 @@ class _JSONResponseCompat(JSONResponse):
 | 项 | 当前行号 | 理由 |
 |----|----------|------|
 | `_record`(decorator) | 906 | **无 webapi 用途**:grep 全文 10 处使用,全在 LLM 工具 wrapper 方法(`CodeCheckTool`、`EsSearchTool`、`FileRemoveTool` 等),用于记录 tool 执行耗时;webapi 端点不需要。**保留在 main.py**。 |
-| `class _JSONResponseCompat` | 415 | **移到 `tools/webapi/_helpers.py`**(见 §4.2)。**不**留 main.py:git_diff(3023) + file_browser(4025, 4042)+ `_make_304_response`(412,随 file_browser 走) 4 处使用,留 main.py 会引入 `webapi → main` 反向 import 循环 |
 | `tools/_helpers.py` 中 9 个函数(`run_cmd` / `err_json` / `unwrap` / `detect_console_encoding` / `safe_decode_bytes` / `proposal_reply` / `_resolve_git_common_dir` / `_parse_git_worktree_porcelain` / `_validate_worktree_param`) | 18-251 | 这些是 LLM 工具层共享,**不是 webapi 专用**,**不在本次重构范围**;保持原位。`webapi/*` handler 仍按需 `from tools._helpers import _XXX` 直接使用(已存在的 import 模式)。 |
 
 > **范围澄清**:本次重构**只搬 webapi 端点代码 + 与 webapi 端点绑定的共享代码**,不触碰 LLM 工具层(CodeCheckTool / EsSearchTool / FileRemoveTool 等);`_record` 装饰器保留在 main.py,`tools/_helpers.py` 全部 9 个函数保持原状(`webapi/*` handler 仅 `from tools._helpers import` 三个真实存在的函数,见 §4.4)。
@@ -355,9 +371,24 @@ class _JSONResponseCompat(JSONResponse):
 
 4. **GET 端点 + if_none_match 改造**:`test_file_browser.py` 现有 v3.3 helper `call_file_browser(plugin, ...)` 模拟请求头;新写法为 `await handlers["handle_get_file_browser"](plugin, path=..., if_none_match=...)` 关键字传参;helper 删除或简化为一行
 
-5. **`_run_git_async` 搬迁连带测试改造**:`tests/test_run_git_async.py`(5,867 字节,2026-06-21 创建)当前 `from main import _run_git_async`,搬迁后改为 `from tools.webapi._helpers import _run_git_async`;函数签名/行为不变,纯 import 路径变更
+5. **`_run_git_async` 搬迁连带测试改造**(影响 2 个测试文件,**不是 1 个**):
+   - `tests/test_run_git_async.py`(5,867 字节,2026-06-21 创建)当前 6 处 `from astrbot_plugin_spcode_toolkit.main import _run_git_async`(行 25/39/52/64/75/82),搬迁后改为 `from astrbot_plugin_spcode_toolkit.tools.webapi._helpers import _run_git_async`;**函数签名/行为不变,纯 import 路径变更**
+   - **`tests/test_git_diff.py` 是被 v3 漏掉的第二处**:`grep -n "_run_git_async" tests/test_git_diff.py` 命中 ~12 处,其中 **5 处 monkeypatch**:
+     - 行 254:`monkeypatch.setattr(main_mod, "_run_git_async", _fake_run_git_async)`
+     - 行 286:`monkeypatch.setattr(_helpers, "run_cmd", ...)`(注意:这个是 `run_cmd`,不在 webapi 范围,**不**动)
+     - 行 328:`monkeypatch.setattr(main_mod, "run_cmd", _slow_run_cmd, raising=False)`(同上,**不**动)
+     - 行 362/370/412:封装 `_run_git_async` 的 wrapper 记录调用顺序;需要从 `main_mod._run_git_async` 改为 `webapi_helpers._run_git_async`
+   - **monkeypatch 路径改造**:
+     ```python
+     # 旧
+     from astrbot_plugin_spcode_toolkit import main as main_mod
+     monkeypatch.setattr(main_mod, "_run_git_async", fake)
+     # 新
+     from astrbot_plugin_spcode_toolkit.tools.webapi import _helpers as webapi_helpers
+     monkeypatch.setattr(webapi_helpers, "_run_git_async", fake)
+     ```
 
-6. **`_JSONResponseCompat` 搬迁连带测试改造**:`grep -rn "_JSONResponseCompat" tests/` 检查是否有测试直接引用;如果有,改 import 路径;如果没有(预期),仅 main.py 内部 import 变化
+6. **`_JSONResponseCompat` 搬迁连带测试改造**:`grep -rn "_JSONResponseCompat" tests/` 检查是否有测试直接引用;预期 0 命中(没有测试直接 mock 这个 class),仅 main.py 内部 import 变化
 
 **测试覆盖现状(基线)**:
 - `test_plan_mode.py`:有 5 个直接测试 `plugin.handle_get_plan_mode()`(`grep -c "plugin.handle_get_plan_mode" tests/test_plan_mode.py` ≈ 5)
@@ -428,7 +459,7 @@ class _JSONResponseCompat(JSONResponse):
 |------|------|----------|
 | `main.py` 行数 | ≤ 200 | `wc -l main.py` |
 | 端点 handler 全部外迁 | 6/6 | `grep -nE "def handle_get_\|def handle_post_" main.py` 0 命中 |
-| `tools/webapi/` 文件数 | 9(`__init__` + `_envelopes` + `_helpers` + 6 端点) | `ls tools/webapi/` |
+| `tools/webapi/` 文件数 | 8(`__init__` + `_helpers` + 6 端点;v4 收回 envelopes) | `ls tools/webapi/` |
 | webapi 专用辅助全部外迁 | 21/21 | `grep -nE "^def (_parse_diff_status_map\|_parse_numstat_counts\|_build_stat_text\|_compute_diff_etag\|_make_git_diff_empty_envelope\|_compute_file_etag\|_common_cache_headers\|_get_if_none_match\|_make_304_response\|_build_error_response\|_classify_entry\|_safe_lstat_mtime\|_make_entry\|_build_file_response\|_classify_oserror\|_build_directory_response\|_build_symlink_response\|_make_git_worktrees_empty_envelope\|_make_file_restore_empty_envelope\|_make_file_restore_success_envelope\|_validate_restore_file)\(" main.py` 0 命中 |
 | 跨端点 `_run_git_async` 归 webapi/_helpers.py | 1/1 | `grep -nE "^async def _run_git_async" main.py` 0 命中;`grep -nE "^async def _run_git_async" tools/webapi/_helpers.py` 1 命中 |
 | 跨端点 `_JSONResponseCompat` 归 webapi/_helpers.py | 1/1 | `grep -nE "^class _JSONResponseCompat" main.py` 0 命中;`grep -nE "^class _JSONResponseCompat" tools/webapi/_helpers.py` 1 命中 |
