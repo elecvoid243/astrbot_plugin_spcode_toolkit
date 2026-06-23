@@ -22,7 +22,7 @@ pytestmark = pytest.mark.asyncio
 
 async def test_run_git_async_returns_success_dict():
     """成功执行 → {ok=True, stdout, stderr, code}。"""
-    from astrbot_plugin_spcode_toolkit.main import _run_git_async
+    from astrbot_plugin_spcode_toolkit.tools.webapi._helpers import _run_git_async
 
     result = await _run_git_async(
         [sys.executable, "-c", "print('hi')"],
@@ -36,7 +36,7 @@ async def test_run_git_async_returns_success_dict():
 
 async def test_run_git_async_returns_nonzero_dict():
     """非零退出码 → {ok=False, stderr 含错误}。"""
-    from astrbot_plugin_spcode_toolkit.main import _run_git_async
+    from astrbot_plugin_spcode_toolkit.tools.webapi._helpers import _run_git_async
 
     result = await _run_git_async(
         [sys.executable, "-c", "import sys; sys.stderr.write('oops'); sys.exit(2)"],
@@ -49,7 +49,7 @@ async def test_run_git_async_returns_nonzero_dict():
 
 async def test_run_git_async_handles_missing_command():
     """命令不存在 → {ok=False, error='xxx 未安装或不在 PATH 中'}。"""
-    from astrbot_plugin_spcode_toolkit.main import _run_git_async
+    from astrbot_plugin_spcode_toolkit.tools.webapi._helpers import _run_git_async
 
     result = await _run_git_async(
         ["definitely-not-a-real-binary-12345", "foo"],
@@ -61,7 +61,7 @@ async def test_run_git_async_handles_missing_command():
 
 async def test_run_git_async_handles_timeout():
     """超时 → 进程被 kill + {ok=False, error='命令超时 (...)'}。"""
-    from astrbot_plugin_spcode_toolkit.main import _run_git_async
+    from astrbot_plugin_spcode_toolkit.tools.webapi._helpers import _run_git_async
 
     # sleep 5s 的 python 命令,timeout=0.5s
     result = await _run_git_async(
@@ -74,7 +74,7 @@ async def test_run_git_async_handles_timeout():
 
 async def test_run_git_async_uses_cwd(tmp_path: Path):
     """cwd 参数正确生效:在 tmp_path 下跑命令验证。"""
-    from astrbot_plugin_spcode_toolkit.main import _run_git_async
+    from astrbot_plugin_spcode_toolkit.tools.webapi._helpers import _run_git_async
 
     # python -c "import os; print(os.getcwd())"
     cmd = [
@@ -100,11 +100,11 @@ async def test_run_git_async_matches_run_cmd_format():
     ``await _run_git_async(...)`` 的前提条件。helper 必须保留 {ok, stdout, stderr, code}
     或 {ok=False, error} 两种 dict 形态,不能引入新字段或破坏旧字段。
     """
-    from astrbot_plugin_spcode_toolkit import main as _m
+    from astrbot_plugin_spcode_toolkit.tools.webapi import _helpers as _helpers_mod
     from tools import _helpers
 
     # 成功路径
-    async_result = await _m._run_git_async(
+    async_result = await _helpers_mod._run_git_async(
         [sys.executable, "-c", "print('ok')"], timeout=5.0
     )
     sync_result = _helpers.run_cmd([sys.executable, "-c", "print('ok')"], timeout=5)
@@ -113,7 +113,7 @@ async def test_run_git_async_matches_run_cmd_format():
     )
 
     # 失败路径(non-zero)
-    async_fail = await _m._run_git_async(
+    async_fail = await _helpers_mod._run_git_async(
         [sys.executable, "-c", "import sys; sys.exit(7)"], timeout=5.0
     )
     sync_fail = _helpers.run_cmd(
@@ -132,7 +132,7 @@ async def test_run_git_async_does_not_block_event_loop():
 
     P1 perf 核心目标:多并发 git-diff 请求时,worker 池不被占满。
     """
-    from astrbot_plugin_spcode_toolkit.main import _run_git_async
+    from astrbot_plugin_spcode_toolkit.tools.webapi._helpers import _run_git_async
 
     events: list[str] = []
 
