@@ -442,3 +442,919 @@ git status  # 应该 clean
 | ruff + pytest | pass | ruff + pytest |
 
 **Chunk 1 → Chunk 2 衔接**:进入 Chunk 2 前,确认 main.py 顶部 4 行 re-export 占位仍存在(`_run_git_async` + `_JSONResponseCompat`);这些占位将在 Chunk 4(git_diff 调用 `_run_git_async` 改 Pattern B)和 Chunk 3(file_browser 改 Pattern B)完成后,在 Chunk 5 集中删除。
+
+---
+
+# Chunk 2: 3 个小端点(`project_status` / `plan_mode` / `git_worktrees`)+ `__init__.py` 基础
+
+**Goal:** 把 `main.py` 中 3 个最小端点(`handle_get_project_status` / `handle_get_plan_mode` / `handle_get_git_worktrees`)+ 1 个 git_worktrees 专用辅助(`_make_git_worktrees_empty_envelope`) 搬到 `tools/webapi/`;`tools/webapi/__init__.py` 导出 `HANDLERS` 字典供测试用(不包含 `register_webapi_routes`,后者在 Chunk 5)。
+
+**可独立验证**:`pytest tests/test_plan_mode.py tests/test_git_worktrees.py tests/test_project_status.py -v` 全绿;`grep -nE "def handle_get_(project_status|plan_mode|git_worktrees)\b" main.py` 0 命中。
+
+---
+
+## Task 2.1: 搬移 `handle_get_project_status` → `tools/webapi/project_status.py`
+
+**Files:**
+- Create: `tools/webapi/project_status.py`
+- Modify: `main.py` (删除 `handle_get_project_status` 方法,约 2516-2640 行)
+
+- [ ] **Step 1: 读 main.py 中 `handle_get_project_status` 完整实现**
+
+Read: `main.py` line 2516-2640 周围(项目状态端点)
+**记录**:
+- 方法签名(可能有 `self, umo=None, ...` 参数)
+- 内部访问的 `self.xxx` 属性(改造时改 `plugin.xxx`)
+- 任何 `from tools._helpers import` 引用
+
+- [ ] **Step 2: 写 failing test**
+
+```python
+# tests/test_project_status.py(新文件,仅 1 个 smoke test)
+import pytest
+from tests.conftest import handlers
+
+
+async def test_handle_get_project_status_returns_dict(plugin):
+    """project_status 端点返回 dict(只检查不抛错,内容由 dashboard 端到端覆盖)。"""
+    result = await handlers["handle_get_project_status"](plugin, umo="test-umo")
+    assert isinstance(result, dict)
+    assert "status" in result
+```
+
+- [ ] **Step 3: 跑测试 → red**
+
+Run: `pytest tests/test_project_status.py -v`
+Expected: FAIL(`KeyError: 'handle_get_project_status'` 或 `AttributeError: module 'tools.webapi' has no attribute 'HANDLERS'`)。
+
+- [ ] **Step 4: 在 `tools/webapi/__init__.py` 导出 `HANDLERS` 字典骨架**
+
+在 `tools/webapi/__init__.py` 添加:
+```python
+HANDLERS: dict[str, object] = {
+    "handle_get_project_status": None,  # Task 2.5 step 3 替换
+}
+```
+
+- [ ] **Step 5: 创建 `tools/webapi/project_status.py`(模块级 handler)**
+
+```python
+# tools/webapi/project_status.py
+from __future__ import annotations
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from main import SPCodeToolkit
+
+
+async def handle(
+    plugin: "SPCodeToolkit",
+    *,
+    umo: str | None = None,
+) -> dict[str, Any]:
+    """GET /spcode/project-status 的处理器。
+    
+    从 main.py handle_get_project_status(line 2516-2640)整体迁移。
+    """
+    # ... 完整代码从 main.py 复制,所有 self.xxx 改为 plugin.xxx ...
+    ...
+```
+
+- [ ] **Step 6: 在 `HANDLERS` 注册新 handler**
+
+Edit `tools/webapi/__init__.py`:
+- old: `"handle_get_project_status": None,`
+- new: `"handle_get_project_status": __import__("tools.webapi.project_status", fromlist=["handle"]).handle,`
+
+或更简单,直接 import:
+```python
+from tools.webapi.project_status import handle as handle_get_project_status
+```
+
+然后 `HANDLERS = {"handle_get_project_status": handle_get_project_status, ...}`。
+
+- [ ] **Step 7: 从 main.py 删除原方法**
+
+Edit `main.py`:删除 `async def handle_get_project_status(self, ...) -> dict:` 完整方法(约 100 行)。
+
+- [ ] **Step 8: 跑测试 → green**
+
+Run: `pytest tests/test_project_status.py -v`
+Expected: PASS。
+
+- [ ] **Step 9: 跑全量测试,确认 main.py 调用点未引用此方法**
+
+Run: `pytest tests/ -q -k "not test_git_diff and not test_file_restore"`(临时跳过 git_diff/file_restore,因 Chunk 1 re-export 仍生效)
+Expected: PASS。
+
+- [ ] **Step 10: 提交**
+
+```bash
+git add tools/webapi/__init__.py tools/webapi/project_status.py tests/test_project_status.py main.py
+git commit -m "refactor(webapi): move handle_get_project_status to webapi/project_status.py"
+```
+
+---
+
+## Task 2.2: 搬移 `handle_get_plan_mode` → `tools/webapi/plan_mode.py`
+
+**Files:**
+- Create: `tools/webapi/plan_mode.py`
+- Modify: `main.py` (删除 `handle_get_plan_mode` 方法,约 2642-2765 行)
+- Modify: `tests/conftest.py` (确保 `handlers` fixture 暴露新 handler)
+- Modify: `tests/test_plan_mode.py` (5 处 `plugin.handle_get_plan_mode()` → `handlers["handle_get_plan_mode"](plugin)`)
+
+- [ ] **Step 1: 读 main.py 中 `handle_get_plan_mode` 完整实现 + 现有测试用法**
+
+Read: `main.py` line 2642-2765 + `tests/test_plan_mode.py` 5 处调用
+**记录**:
+- 方法签名
+- 现有测试用 `asyncio.run(plugin.handle_get_plan_mode())` 调用(注意是 `asyncio.run`,同步,不是 `await`)
+
+- [ ] **Step 2: 写 1 个额外的 failing test(sanity)**
+
+在 `tests/test_project_status.py` 末尾添加(临时),验证 plan_mode 在 `HANDLERS`:
+```python
+def test_plan_mode_in_handlers_dict():
+    from tools.webapi import HANDLERS
+    assert "handle_get_plan_mode" in HANDLERS
+    assert HANDLERS["handle_get_plan_mode"] is not None
+```
+
+- [ ] **Step 3: red → 创建 `tools/webapi/plan_mode.py` + 注册 → green**
+
+执行模式同 Task 2.1 Step 4-8:
+- 创建 `plan_mode.py`(`handle(plugin, *, umo=None) -> dict`,完整代码从 main.py 复制,`self` → `plugin`)
+- 在 `HANDLERS` 注册
+- main.py 删除原方法
+
+- [ ] **Step 4: 改造 `tests/test_plan_mode.py` 5 处调用**
+
+对每行 `await plugin.handle_get_plan_mode()`(实际是 `asyncio.run(plugin.handle_get_plan_mode())`):
+- old: `asyncio.run(plugin.handle_get_plan_mode())`
+- new: `asyncio.run(handlers["handle_get_plan_mode"](plugin))`
+
+(在文件顶部加 `from tests.conftest import handlers`)
+
+- [ ] **Step 5: 跑测试 → green**
+
+Run: `pytest tests/test_plan_mode.py -v`
+Expected: 5/5 PASS(基线)。
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add tools/webapi/plan_mode.py tests/test_plan_mode.py main.py tools/webapi/__init__.py
+git commit -m "refactor(webapi): move handle_get_plan_mode to webapi/plan_mode.py + test migration"
+```
+
+---
+
+## Task 2.3: 搬移 `handle_get_git_worktrees` + `_make_git_worktrees_empty_envelope`
+
+**Files:**
+- Create: `tools/webapi/git_worktrees.py`
+- Modify: `main.py` (删除 `handle_get_git_worktrees` 方法,约 2676-2790 行;删除 `_make_git_worktrees_empty_envelope` 辅助,约 750-770 行)
+- Modify: `tests/test_git_worktrees.py` (10+ 处调用改造)
+
+- [ ] **Step 1: 读 main.py 中 handler + 辅助 + 测试用法**
+
+Read: `main.py` line 2676-2790(handlelr) + line 750-770(envelope helper) + `tests/test_git_worktrees.py` 调用模式
+**记录**:
+- handler 接受哪些 query 参数(`umo` / `worktree` 等)
+- envelope helper 签名(可能无参,返回固定 dict)
+- 测试是否使用 `asyncio.run` 同步
+
+- [ ] **Step 2: failing test 验证 HANDLERS 存在 + handler 工作**
+
+在 `tests/test_git_worktrees.py` 顶部加 `from tests.conftest import handlers`,然后改造 1 个 test:
+```python
+# Before
+async def test_git_worktrees_basic(plugin, tmp_path):
+    result = await plugin.handle_get_git_worktrees()
+    ...
+
+# After(注意:asyncio.run 同步风格)
+async def test_git_worktrees_basic(plugin, tmp_path):
+    result = await handlers["handle_get_git_worktrees"](plugin)
+    ...
+```
+
+跑 → red(`KeyError`)。
+
+- [ ] **Step 3: 创建 `tools/webapi/git_worktrees.py`**
+
+```python
+# tools/webapi/git_worktrees.py
+from __future__ import annotations
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from main import SPCodeToolkit
+
+
+async def handle(
+    plugin: "SPCodeToolkit",
+    *,
+    umo: str | None = None,
+    worktree: str | None = None,
+) -> dict[str, Any]:
+    """GET /spcode/git-worktrees 的处理器。"""
+    # 完整代码从 main.py 复制,self → plugin
+    ...
+
+
+def _make_git_worktrees_empty_envelope(directory: str, ...) -> dict[str, Any]:
+    """main.py line 750-770 整体迁移。"""
+    ...
+```
+
+- [ ] **Step 4: 在 HANDLERS 注册**
+
+- [ ] **Step 5: 从 main.py 删除 handler + 辅助**
+
+- [ ] **Step 6: 跑 → green**
+
+Run: `pytest tests/test_git_worktrees.py -v`
+Expected:全部 PASS(基线)。
+
+- [ ] **Step 7: 提交**
+
+```bash
+git add tools/webapi/git_worktrees.py tests/test_git_worktrees.py main.py tools/webapi/__init__.py
+git commit -m "refactor(webapi): move handle_get_git_worktrees + _make_git_worktrees_empty_envelope"
+```
+
+---
+
+## Task 2.4: 验收 Chunk 2
+
+- [ ] **Step 1: 验证 main.py 已删 3 个 handler + 1 个辅助**
+
+Run: `cd F:\github\astrbot_plugin_spcode_toolkit && grep -nE "def handle_get_(project_status|plan_mode|git_worktrees)\b" main.py`
+Expected: 0 命中。
+
+Run: `grep -nE "^def _make_git_worktrees_empty_envelope" main.py`
+Expected: 0 命中。
+
+- [ ] **Step 2: 跑相关测试**
+
+Run: `pytest tests/test_project_status.py tests/test_plan_mode.py tests/test_git_worktrees.py -v`
+Expected: 全部 PASS。
+
+- [ ] **Step 3: ruff lint**
+
+Run: `ruff check tools/webapi/`
+Expected: 0 error。
+
+- [ ] **Step 4: main.py 行数监控**
+
+Run: `wc -l main.py`
+Expected: ≤ 4300 行(已减约 250-300 行)。
+
+---
+
+# Chunk 3: `file_browser` + `file_restore` 端点
+
+**Goal:** 搬移 `handle_get_file_browser` + 12 个 file_browser 辅助 + `handle_post_file_restore` + 4 个 file_restore 辅助 + file_browser 1 处 `_run_git_async` 调用(file_restore 3 处 Pattern B 改造)。
+
+**可独立验证**:`pytest tests/test_file_browser.py tests/test_file_restore.py -v` 全绿;`grep -nE "def handle_get_file_browser|def handle_post_file_restore" main.py` 0 命中。
+
+---
+
+## Task 3.1: 搬移 `handle_get_file_browser` + 12 个辅助
+
+**Files:**
+- Create: `tools/webapi/file_browser.py`
+- Modify: `main.py` (删除 `handle_get_file_browser` ~470 行 + 12 个辅助函数 + 1 处 `_make_304_response` 中的 `_JSONResponseCompat` 调用)
+
+- [ ] **Step 1: 读 main.py line 3991-4460(handle + 12 辅助)**
+
+Read: `main.py` line 3991-4460
+**记录**:
+- handler 签名(可能接受 `path` query)
+- 12 个辅助函数名 + 行号
+- `_JSONResponseCompat` 的 2 处调用点(file_browser 内部)
+
+- [ ] **Step 2: failing test**
+
+在 `tests/test_file_browser.py` 改 1 个 test 调用 + 头部加 `from tests.conftest import handlers`:
+```python
+# Before
+async def test_file_browser_returns_file_content(plugin, tmp_path):
+    result = await plugin.handle_get_file_browser(path=str(tmp_path / "a.txt"))
+    ...
+
+# After
+async def test_file_browser_returns_file_content(plugin, tmp_path):
+    result = await handlers["handle_get_file_browser"](plugin, path=str(tmp_path / "a.txt"))
+    ...
+```
+
+跑 → red。
+
+- [ ] **Step 3: 创建 `tools/webapi/file_browser.py`**
+
+```python
+# tools/webapi/file_browser.py
+from __future__ import annotations
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from main import SPCodeToolkit
+
+# Pattern B:_JSONResponseCompat 从 webapi/_helpers 引用,保持 module-globally-bound
+from . import _helpers  # noqa: F401
+
+
+async def handle(
+    plugin: "SPCodeToolkit",
+    *,
+    path: str = "",
+    if_none_match: str | None = None,
+) -> dict[str, Any]:
+    """GET /spcode/file-browser 的处理器。"""
+    # 完整代码从 main.py 复制,self → plugin
+    # 所有 _JSONResponseCompat(...) → _helpers._JSONResponseCompat(...)
+    ...
+
+
+# 12 个辅助函数(从 main.py 整体复制,包括 _make_304_response)
+def _make_304_response(headers: dict[str, str]):
+    return _helpers._JSONResponseCompat({}, status_code=304, headers=headers)
+
+# ... 其他 11 个辅助 ...
+```
+
+**关键**:所有 `_JSONResponseCompat(...)` 调用改为 `_helpers._JSONResponseCompat(...)`(Pattern B),包括 `_make_304_response` 内的 line 412。
+
+- [ ] **Step 4: 在 HANDLERS 注册**
+
+- [ ] **Step 5: 从 main.py 删除 handler + 12 辅助**
+
+- [ ] **Step 6: 跑 → green**
+
+Run: `pytest tests/test_file_browser.py -v`
+Expected:全部 PASS。
+
+- [ ] **Step 7: 提交**
+
+```bash
+git add tools/webapi/file_browser.py tests/test_file_browser.py main.py tools/webapi/__init__.py
+git commit -m "refactor(webapi): move file_browser handler + 12 helpers to webapi/file_browser.py"
+```
+
+---
+
+## Task 3.2: 搬移 `handle_post_file_restore` + 4 辅助 + 3 处 `_run_git_async` Pattern B 改造
+
+**Files:**
+- Create: `tools/webapi/file_restore.py`
+- Modify: `main.py` (删除 `handle_post_file_restore` ~320 行 + 4 辅助 + 3 处 `await _run_git_async(...)` 改 `_helpers._run_git_async(...)`)
+- Modify: `tests/test_file_restore.py` (~30 处调用改造 + 删除 `_patch_post_body` helper)
+
+- [ ] **Step 1: 读 main.py line 4100-4460(handler + 4 辅助)**
+
+Read: `main.py` line 4100-4460
+**记录**:
+- handler 签名(接受 `umo` / `worktree` query,body 含 `file`)
+- 4 辅助函数名 + 行号
+- 3 处 `await _run_git_async(...)`(line 4174/4236/4348)
+
+- [ ] **Step 2: failing test**
+
+在 `tests/test_file_restore.py` 改 1 个 test + 头部加 `from tests.conftest import handlers`:
+```python
+# Before
+async def test_file_restore_basic(plugin, tmp_path, monkeypatch):
+    _patch_post_body(monkeypatch, body={"file": "a.txt"})
+    result = await plugin.handle_post_file_restore(umo="...")
+    ...
+
+# After
+async def test_file_restore_basic(plugin, tmp_path):
+    result = await handlers["handle_post_file_restore"](plugin, body={"file": "a.txt"}, umo="...")
+    ...
+```
+
+跑 → red。
+
+- [ ] **Step 3: 创建 `tools/webapi/file_restore.py`**
+
+```python
+# tools/webapi/file_restore.py
+from __future__ import annotations
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from main import SPCodeToolkit
+
+from . import _helpers  # noqa: F401 — Pattern B
+
+
+async def handle(
+    plugin: "SPCodeToolkit",
+    *,
+    umo: str | None = None,
+    worktree: str | None = None,
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """POST /spcode/file-restore 的处理器。"""
+    # 完整代码从 main.py 复制
+    # 3 处 await _run_git_async(...) 改为 await _helpers._run_git_async(...)
+    # body = body or {}  # 安全默认值
+    ...
+
+
+# 4 辅助
+def _make_file_restore_empty_envelope(...):
+    ...
+
+def _make_file_restore_success_envelope(...):
+    ...
+
+def _validate_restore_file(...):
+    ...
+```
+
+- [ ] **Step 4: 在 HANDLERS 注册**
+
+- [ ] **Step 5: 从 main.py 删除 handler + 4 辅助 + 3 处 `_run_git_async` 改 Pattern B**
+
+**关键**:main.py 中也要把 3 处 `await _run_git_async(...)` 改为 `await _webapi_helpers_run_git._run_git_async(...)`(利用 Chunk 1 的 re-export 占位);或直接 `await _helpers._run_git_async(...)`(import 一下)。
+
+- [ ] **Step 6: 跑 → green**
+
+Run: `pytest tests/test_file_restore.py -v`
+Expected:全部 PASS。
+
+- [ ] **Step 7: 删除 `_patch_post_body` helper + 全面改造 test_file_restore.py 调用**
+
+对每行:
+- 删除 `_patch_post_body(monkeypatch, body={...})` 之前的 monkeypatch.setattr
+- 改为直接传 `body={...}` 到 `handlers["handle_post_file_restore"](plugin, body=..., umo=...)`
+- 删除 `_patch_post_body` 函数定义(行 66-83)
+
+- [ ] **Step 8: 跑 → green(二次验证)**
+
+Run: `pytest tests/test_file_restore.py -v`
+Expected:全部 PASS。
+
+- [ ] **Step 9: 提交**
+
+```bash
+git add tools/webapi/file_restore.py tests/test_file_restore.py main.py tools/webapi/__init__.py
+git commit -m "refactor(webapi): move file_restore + 4 helpers + Pattern B for _run_git_async"
+```
+
+---
+
+## Task 3.3: 验收 Chunk 3
+
+- [ ] **Step 1: 验证 main.py 已删 2 handler + 16 辅助**
+
+Run:
+```bash
+cd F:\github\astrbot_plugin_spcode_toolkit
+grep -nE "def handle_get_file_browser|def handle_post_file_restore" main.py
+grep -nE "^def (_compute_file_etag|_common_cache_headers|_get_if_none_match|_make_304_response|_build_error_response|_classify_entry|_safe_lstat_mtime|_make_entry|_build_file_response|_classify_oserror|_build_directory_response|_build_symlink_response|_make_file_restore_empty_envelope|_make_file_restore_success_envelope|_validate_restore_file|_make_git_worktrees_empty_envelope)\(" main.py
+```
+Expected: 全部 0 命中(注意 git_worktrees 已经在 Chunk 2 删除)。
+
+- [ ] **Step 2: 跑 file_browser + file_restore 测试**
+
+Run: `pytest tests/test_file_browser.py tests/test_file_restore.py -v`
+Expected:全部 PASS。
+
+- [ ] **Step 3: ruff lint**
+
+Run: `ruff check tools/webapi/`
+Expected: 0 error。
+
+- [ ] **Step 4: main.py 行数监控**
+
+Run: `wc -l main.py`
+Expected: ≤ 3600 行。
+
+---
+
+# Chunk 4: `git_diff` 端点(最大)
+
+**Goal:** 搬移 `handle_get_git_diff` + 7 个 git-diff 专用辅助 + 3 个 git-diff 模块级常量 + 4 处 `_run_git_async` Pattern B 改造。
+
+**可独立验证**:`pytest tests/test_git_diff.py tests/test_git_diff_worktree.py -v` 全绿;`grep -nE "def handle_get_git_diff|^(MAX_GIT_DIFF_BYTES|_GIT_DIFF_ENCODING|_DIFF_ETAG_CACHE_MAX)" main.py` 0 命中。
+
+---
+
+## Task 4.1: 搬移 `handle_get_git_diff` + 7 辅助 + 3 常量 + 4 处 Pattern B
+
+**Files:**
+- Create: `tools/webapi/git_diff.py`
+- Modify: `main.py` (删除 `handle_get_git_diff` ~243 行 + 7 辅助 + 3 常量 + 4 处 `await _run_git_async(...)` 改 Pattern B)
+- Modify: `tests/test_git_diff.py` (15+ 处调用改造 + 4 处 monkeypatch 改路径)
+- Modify: `tests/test_git_diff_worktree.py` (10+ 处调用改造)
+
+- [ ] **Step 1: 读 main.py line 172-358 + 2803-3045**
+
+Read: `main.py` line 172-358(7 辅助: `_parse_diff_status_map` / `_parse_numstat_counts` / `_build_stat_text` / `_compute_diff_etag` / `_make_git_diff_empty_envelope` / ...)+ line 2803-3045(handler)+ line 135-146(3 常量)+ 4 处 `_run_git_async` 调用(line 332/2941/2988/3002)
+**记录**:
+- 7 辅助完整函数体
+- 3 常量值
+- 4 处调用行号 + 参数
+
+- [ ] **Step 2: failing test 验证 HANDLERS + 改 1 个 test**
+
+在 `tests/test_git_diff.py` 头部加 `from tests.conftest import handlers`,改 1 个 test:
+```python
+# Before
+result = await plugin.handle_get_git_diff()
+
+# After
+result = await handlers["handle_get_git_diff"](plugin)
+```
+
+跑 → red。
+
+- [ ] **Step 3: 创建 `tools/webapi/git_diff.py`**
+
+```python
+# tools/webapi/git_diff.py
+from __future__ import annotations
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from main import SPCodeToolkit
+
+from . import _helpers  # noqa: F401 — Pattern B
+from .._helpers import detect_console_encoding  # 复用 tools._helpers.detect_console_encoding
+
+# 3 个 git-diff 专用常量
+MAX_GIT_DIFF_BYTES = 1 * 1024 * 1024
+_GIT_DIFF_ENCODING = detect_console_encoding()
+_DIFF_ETAG_CACHE_MAX = 64
+
+
+async def handle(
+    plugin: "SPCodeToolkit",
+    *,
+    umo: str | None = None,
+    worktree: str | None = None,
+    scope: str = "unstaged",
+) -> dict[str, Any]:
+    """GET /spcode/git-diff 的处理器。"""
+    # 完整代码从 main.py 复制
+    # 4 处 await _run_git_async(...) → await _helpers._run_git_async(...)
+    # 所有 MAX_GIT_DIFF_BYTES / _GIT_DIFF_ENCODING 保持原引用
+    ...
+
+
+# 7 辅助函数
+def _parse_diff_status_map(text: str) -> dict[str, str]:
+    ...
+
+# ... 其他 6 个 ...
+```
+
+- [ ] **Step 4: 在 HANDLERS 注册**
+
+- [ ] **Step 5: 从 main.py 删除 handler + 7 辅助 + 3 常量 + 4 处 Pattern B**
+
+**关键**:
+- 删除 line 135-146 的 3 个常量定义
+- 删除 7 个辅助函数(行号依 §4.1)
+- 删除 `handle_get_git_diff` 方法体(243 行)
+- 4 处 `await _run_git_async(...)` 改为 `await _webapi_helpers_run_git._run_git_async(...)`(利用 Chunk 1 re-export)
+
+- [ ] **Step 6: 跑 test_git_diff.py → green(初次)**
+
+Run: `pytest tests/test_git_diff.py -v`
+Expected: 15+ passed。
+
+- [ ] **Step 7: 改造 test_git_diff.py 4 处 monkeypatch 路径**
+
+```python
+# Before
+from astrbot_plugin_spcode_toolkit import main as main_mod
+monkeypatch.setattr(main_mod, "_run_git_async", fake)
+
+# After
+from astrbot_plugin_spcode_toolkit.tools.webapi import _helpers as _webapi_helpers
+monkeypatch.setattr(_webapi_helpers, "_run_git_async", fake)
+```
+
+涉及 5 处(行 254/370/412/...)的实际 `_run_git_async` monkeypatch。
+
+- [ ] **Step 8: 改造 test_git_diff.py 15+ 处调用**
+
+所有 `await plugin.handle_get_git_diff(...)` 改为 `await handlers["handle_get_git_diff"](plugin, ...)`。
+
+- [ ] **Step 9: 改造 test_git_diff_worktree.py 10+ 处调用**
+
+同上模式,注意 `worktree=` 关键字参数。
+
+- [ ] **Step 10: 跑 → green(二次验证)**
+
+Run: `pytest tests/test_git_diff.py tests/test_git_diff_worktree.py -v`
+Expected:全部 PASS。
+
+- [ ] **Step 11: 提交**
+
+```bash
+git add tools/webapi/git_diff.py tests/test_git_diff.py tests/test_git_diff_worktree.py main.py tools/webapi/__init__.py
+git commit -m "refactor(webapi): move git_diff handler + 7 helpers + 3 constants + Pattern B"
+```
+
+---
+
+## Task 4.2: 验收 Chunk 4
+
+- [ ] **Step 1: 验证 main.py 已删 1 handler + 7 辅助 + 3 常量**
+
+Run:
+```bash
+cd F:\github\astrbot_plugin_spcode_toolkit
+grep -nE "def handle_get_git_diff\b" main.py
+grep -nE "^def (_parse_diff_status_map|_parse_numstat_counts|_build_stat_text|_compute_diff_etag|_make_git_diff_empty_envelope|_compute_file_etag)\(" main.py
+grep -nE "^(MAX_GIT_DIFF_BYTES|_GIT_DIFF_ENCODING|_DIFF_ETAG_CACHE_MAX)\s*=" main.py
+grep -nE "await _run_git_async" main.py
+```
+Expected: 第 1-3 行 0 命中;第 4 行 3 命中(仅 file_restore 残留,file_restore handler 已搬到 webapi,此 3 处调用点应不在 main.py)。
+
+- [ ] **Step 2: 跑 git_diff 相关测试**
+
+Run: `pytest tests/test_git_diff.py tests/test_git_diff_worktree.py -v`
+Expected:全部 PASS。
+
+- [ ] **Step 3: ruff lint**
+
+Run: `ruff check tools/webapi/`
+Expected: 0 error。
+
+- [ ] **Step 4: main.py 行数监控**
+
+Run: `wc -l main.py`
+Expected: ≤ 2200 行(已减约 1400 行 = 4378 - 6 端点 + 7 辅助 + 3 常量 + 1 跨端点 class 等)。
+
+---
+
+# Chunk 5: `_wrap` + `register_webapi_routes` + main.py 瘦身 + 全量验证
+
+**Goal:** 完善 `tools/webapi/__init__.py` 的 `ROUTES` + `register_webapi_routes()` + `_wrap()` 适配层;替换 main.py 中 6 段 `register_web_api` 块;删除 4 行 re-export 占位;全量测试 + 验收。
+
+**可独立验证**:`pytest tests/` 全绿;`wc -l main.py` ≤ 200;`ruff check .` 0 error;6 个端点 dashboard 端到端 smoke test 通过。
+
+---
+
+## Task 5.1: 实现 `_wrap()` 适配层
+
+**Files:**
+- Modify: `tools/webapi/__init__.py` (添加 `_wrap` 私有函数 + `ROUTES` + `register_webapi_routes`)
+
+- [ ] **Step 1: 写 failing test 验证 `register_webapi_routes` 存在且能 mock 端点**
+
+```python
+# tests/test_webapi_helpers_smoke.py 末尾添加
+def test_register_webapi_routes_callable():
+    from tools.webapi import register_webapi_routes
+    assert callable(register_webapi_routes)
+
+
+def test_wrap_function_returns_async_callable():
+    from tools.webapi import _wrap
+    async def fake_handler(plugin, *, umo=None):
+        return {"status": "ok", "umo": umo}
+    wrapped = _wrap(fake_handler, plugin=None)
+    import inspect
+    assert inspect.iscoroutinefunction(wrapped) or asyncio.iscoroutinefunction(wrapped)
+```
+
+- [ ] **Step 2: red → green: 实现 `_wrap` + `register_webapi_routes`**
+
+在 `tools/webapi/__init__.py` 添加(完整代码从 spec §3 复制):
+
+```python
+import asyncio
+import inspect
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from main import SPCodeToolkit
+
+# ROUTES 列表
+from tools.webapi import (
+    file_browser, file_restore, git_diff, git_worktrees, plan_mode, project_status,
+)
+
+ROUTES: list[tuple[str, list[str], Callable, str]] = [
+    ("/spcode/project-status", ["GET"], project_status.handle, "..."),
+    ("/spcode/plan-mode", ["GET"], plan_mode.handle, "..."),
+    ("/spcode/git-worktrees", ["GET"], git_worktrees.handle, "..."),
+    ("/spcode/git-diff", ["GET"], git_diff.handle, "..."),
+    ("/spcode/file-browser", ["GET"], file_browser.handle, "..."),
+    ("/spcode/file-restore", ["POST"], file_restore.handle, "..."),
+]
+
+
+def _wrap(handler: Callable, plugin: "SPCodeToolkit") -> Callable:
+    """(完整实现见 spec §3, 复制)"""
+    sig = inspect.signature(handler)
+    accepts = set(sig.parameters) - {"plugin"}
+
+    async def view(*args, **kwargs):
+        request = kwargs.get("request") or (args[0] if args else None)
+        call_kwargs: dict[str, Any] = {}
+        # ... spec §3 完整实现 ...
+        return await handler(plugin, **call_kwargs)
+
+    return view
+
+
+def register_webapi_routes(plugin: "SPCodeToolkit") -> None:
+    """(完整实现见 spec §2, 复制)"""
+    for route, methods, handler, desc in ROUTES:
+        try:
+            plugin.context.register_web_api(
+                route=route,
+                view_handler=_wrap(handler, plugin),
+                methods=methods,
+                desc=desc,
+            )
+        except Exception as exc:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"注册 spcode {route} web API 失败: {exc!s}")
+
+
+# HANDLERS 字典
+HANDLERS: dict[str, Callable] = {
+    "handle_get_project_status": project_status.handle,
+    "handle_get_plan_mode": plan_mode.handle,
+    "handle_get_git_worktrees": git_worktrees.handle,
+    "handle_get_git_diff": git_diff.handle,
+    "handle_get_file_browser": file_browser.handle,
+    "handle_post_file_restore": file_restore.handle,
+}
+```
+
+- [ ] **Step 3: 跑 → green**
+
+Run: `pytest tests/test_webapi_helpers_smoke.py -v`
+Expected: 4 passed。
+
+- [ ] **Step 4: 提交**
+
+```bash
+git add tools/webapi/__init__.py tests/test_webapi_helpers_smoke.py
+git commit -m "feat(webapi): add _wrap() + register_webapi_routes() + ROUTES"
+```
+
+---
+
+## Task 5.2: 改造 main.py:删除 6 段 `register_web_api` + 4 行 re-export 占位 + 调用 `register_webapi_routes`
+
+**Files:**
+- Modify: `main.py` (line 约 50 + 6 段 register 块 + 4 行 re-export)
+
+- [ ] **Step 1: 定位 main.py 6 段 register 块**
+
+Run: `cd F:\github\astrbot_plugin_spcode_toolkit && grep -nE "register_web_api\(.*spcode" main.py`
+Expected: 6 处。
+
+- [ ] **Step 2: 替换 6 段为单次 `register_webapi_routes(self)`**
+
+Edit main.py:
+- 删除 6 段 `try/except register_web_api(route=..., view_handler=..., methods=..., desc=...)` 块
+- 在 `initialize()` 末尾加:
+  ```python
+  from tools.webapi import register_webapi_routes
+  register_webapi_routes(self)
+  ```
+
+- [ ] **Step 3: 删除 4 行 re-export 占位**
+
+Edit main.py 顶部:
+- 删除 `from tools.webapi import _helpers as _webapi_helpers_run_git`
+- 删除 `_run_git_async = _webapi_helpers_run_git._run_git_async`
+- 删除 `from tools.webapi._helpers import _JSONResponseCompat`
+- 删除任何 _make_304_response 等 webapi 内部引用(应已随 Chunk 3 搬走)
+
+- [ ] **Step 4: 验证 main.py 不再有 webapi 残留**
+
+Run:
+```bash
+cd F:\github\astrbot_plugin_spcode_toolkit
+grep -nE "register_web_api\(.*spcode" main.py
+grep -nE "^def handle_(get|post)_" main.py
+grep -nE "_run_git_async|_JSONResponseCompat" main.py
+grep -nE "^(MAX_GIT_DIFF_BYTES|_GIT_DIFF_ENCODING|_DIFF_ETAG_CACHE_MAX)\s*=" main.py
+```
+Expected: 全部 0 命中。
+
+- [ ] **Step 5: 跑全量测试 → green**
+
+Run: `pytest tests/ -v`
+Expected:全部 PASS。
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add main.py
+git commit -m "refactor(webapi): register all 6 routes via register_webapi_routes + clean shims"
+```
+
+---
+
+## Task 5.3: main.py 验收 + ruff 验收 + 文档更新
+
+**Files:**
+- Modify: `README.md`(可选,提及 webapi 已拆分)
+- Modify: `AGENTS.md`(更新 `tools/webapi/` 描述)
+
+- [ ] **Step 1: 行数验证**
+
+Run: `wc -l main.py`
+Expected: ≤ 200 行。
+
+- [ ] **Step 2: ruff 验证**
+
+Run: `ruff check .`
+Expected: 0 error。
+
+- [ ] **Step 3: 端到端 smoke test(模拟 dashboard 行为)**
+
+```python
+# tests/test_webapi_end_to_end.py(新文件,可选)
+import pytest
+from unittest.mock import MagicMock
+from tests.conftest import handlers
+
+
+async def test_all_six_handlers_callable():
+    """Smoke test: 6 个 handler 都可被调用且返回 dict。"""
+    plugin = MagicMock()
+    for name in handlers:
+        result = await handlers[name](plugin)
+        assert isinstance(result, dict)
+```
+
+Run: `pytest tests/test_webapi_end_to_end.py -v`
+Expected: PASS。
+
+- [ ] **Step 4: 更新 AGENTS.md 的"目录结构"段**
+
+Edit `AGENTS.md` 的目录树 + 工具层说明,加入 `tools/webapi/` 描述。
+
+- [ ] **Step 5: 跑全量 ruff + pytest 最终验证**
+
+Run:
+```bash
+cd F:\github\astrbot_plugin_spcode_toolkit
+ruff check .
+pytest tests/ -q
+```
+Expected: ruff 0 error + pytest 全部 PASS。
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add AGENTS.md tests/test_webapi_end_to_end.py
+git commit -m "docs: update AGENTS.md for tools/webapi/ + end-to-end smoke test"
+```
+
+---
+
+## Task 5.4: 最终验收(spec §验收标准逐项)
+
+- [ ] **Step 1: 验收矩阵**
+
+| 指标 | 验证命令 | 期望 |
+|------|----------|------|
+| main.py ≤ 200 行 | `wc -l main.py` | ≤ 200 |
+| 6 handler 全外迁 | `grep -nE "def handle_get_\|def handle_post_" main.py` | 0 命中 |
+| 8 个 webapi 文件 | `ls tools/webapi/` | 8 文件 |
+| 21 webapi 辅助全外迁 | `grep -E "^def (_parse_diff_status_map\|...)" main.py` | 0 命中(21 个) |
+| 跨端点 `_run_git_async` 归位 | `grep "async def _run_git_async" main.py` + `grep "async def _run_git_async" tools/webapi/_helpers.py` | main 0,helpers 1 |
+| 跨端点 `_JSONResponseCompat` 归位 | `grep "class _JSONResponseCompat" main.py` + `grep "class _JSONResponseCompat" tools/webapi/_helpers.py` | main 0,helpers 1 |
+| 3 个常量全外迁 | `grep "^(MAX_GIT_DIFF_BYTES\|_GIT_DIFF_ENCODING\|_DIFF_ETAG_CACHE_MAX)" main.py` | 0 命中 |
+| `_record` 保留 main.py | `grep "^def _record" main.py` | 1 命中 |
+| tools/_helpers.py 未动 | `git diff tools/_helpers.py` | 空 |
+| ruff | `ruff check .` | 0 error |
+| pytest | `pytest tests/ -q` | 全部 PASS |
+
+- [ ] **Step 2: 提交最终 commit(如需要)**
+
+如果验收通过且无变更,不需要新 commit。
+
+---
+
+# Plan Complete
+
+**总 commit 数预算**:约 12 个 commit
+- Chunk 1: 5 commit(1.1/1.2/1.3/1.4/1.5)
+- Chunk 2: 3 commit(2.1/2.2/2.3)
+- Chunk 3: 2 commit(3.1/3.2)
+- Chunk 4: 1 commit(4.1)
+- Chunk 5: 3 commit(5.1/5.2/5.3)
+
+**执行模式**:子代理驱动开发(subagent-driven-development),每 chunk 由 fresh subagent 执行,2 阶段 review(spec 路径 + 文件清单双重确认)。
+
