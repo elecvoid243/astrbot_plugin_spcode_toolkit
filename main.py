@@ -60,11 +60,16 @@ from .tools import agentsmd as _agentsmd_mod
 from .tools.inta_shell import tools as _inta_shell_tools
 from .tools.inta_shell.component import LocalInteractiveShellComponent
 from .tools._path_safety import is_path_safe as _is_path_safe
+from .tools._stats import _record
+from .tools._guidance_text import (
+    PROJECT_GUIDANCE_MARKER,
+    PROJECT_CODEGRAPH_GUIDANCE,
+    FILE_REMOVE_GUIDANCE_MARKER,
+    FILE_REMOVE_GUIDANCE,
+)
 import time as _time
 import datetime as _datetime
 
-# 让 main.py 可以动态添加 MethodType
-from collections import defaultdict
 
 
 
@@ -90,16 +95,7 @@ except ImportError:
     MCPShutdownTimeoutError = None  # type: ignore
     MCPInitTimeoutError = None  # type: ignore
 
-_stats: dict[str, dict] = defaultdict(lambda: {"count": 0, "last": 0.0})
-
-
-def _record(name: str) -> None:
-    try:
-        entry = _stats[name]
-        entry["count"] += 1
-        entry["last"] = _time.time()
-    except Exception:
-        pass
+# _stats + _record 已提取到 tools/_stats.py(PR-1 2026-06-23)
 
 
 _DEFAULT_CONFIG = {
@@ -146,31 +142,9 @@ class _ProjectLoadAbort(BaseException):
         super().__init__(step_label)
 
 
-# ── /project 命令注入文本常量(v2.7) ─────────────────────
-# 注入到 system_prompt 的防重复 marker。
-# 与 _agentsmd_mod.INJECTION_MARKER 同等用途——同一请求多次走钩子时不重复追加。
-_PROJECT_GUIDANCE_MARKER = "# Use Codegraph"
-
-# /project load 后注入到 system_prompt 末尾的指引。
-# 设计目标:让 LLM 优先使用 codegraph 工具组而非 astrbot_file_grep_tool,
-# 提升代码搜索/分析的效率与准确性(已建好语义索引,无需 grep 全文本)。
-_PROJECT_CODEGRAPH_GUIDANCE = f"""
-{_PROJECT_GUIDANCE_MARKER}
-A codegraph project is loaded. When dealing with the code for this project:
-- Priority use codegraph_* tool (e.g. codegraph_explore) for code lookup, call chain analysis, and symbol localization.
-- When the codegraph_* tool is unavailable or when viewing non code index files (e.g. configurations, logs), return to a generic lookup tool like `astrbot_file_grep_tool`
-"""
-
-
-# astrbot_file_remove_tool 启用时注入到 system_prompt 末尾的指引。
-# 设计目标:让 LLM 优先使用 file_remove 工具(自带路径安全 + 回收站)而非绕过。
-# 无 session state 依赖——只靠 self._tool_names 作为 gate。
-_FILE_REMOVE_GUIDANCE_MARKER = "# Delete only if when necessary"
-
-_FILE_REMOVE_GUIDANCE = f"""
-{_FILE_REMOVE_GUIDANCE_MARKER}
-Priority use 'astrbot_file_remove' for file or directory deletion. DO NOT use shell commands (such as' rm '/' del ') or Python calls to bypass it.
-"""
+# 注入文本常量已提取到 tools/_guidance_text.py(PR-1 2026-06-23)
+# 原 _PROJECT_GUIDANCE_MARKER / _PROJECT_CODEGRAPH_GUIDANCE /
+#     _FILE_REMOVE_GUIDANCE_MARKER / _FILE_REMOVE_GUIDANCE 4 个常量。
 
 
 # ── Tool 类定义 ──────────────────────────────────────
@@ -2331,7 +2305,7 @@ class SPCodeToolkit(star.Star):
         - 当前 umo 已在 self._loaded_projects 中
 
         实现要点:
-        - marker (`_PROJECT_GUIDANCE_MARKER`) 检测防重复
+        - marker (`PROJECT_GUIDANCE_MARKER`) 检测防重复
         - system_prompt = None 时用 lstrip("\n") 避免前置空行
         - 已存在 system_prompt 时追加在末尾
         """
@@ -2341,12 +2315,12 @@ class SPCodeToolkit(star.Star):
         if umo not in self._loaded_projects:
             return
         # 防重复(同一请求多次走钩子)
-        if _PROJECT_GUIDANCE_MARKER in (req.system_prompt or ""):
+        if PROJECT_GUIDANCE_MARKER in (req.system_prompt or ""):
             return
         if req.system_prompt is None or req.system_prompt == "":
-            req.system_prompt = _PROJECT_CODEGRAPH_GUIDANCE.lstrip("\n")
+            req.system_prompt = PROJECT_CODEGRAPH_GUIDANCE.lstrip("\n")
         else:
-            req.system_prompt = req.system_prompt + _PROJECT_CODEGRAPH_GUIDANCE
+            req.system_prompt = req.system_prompt + PROJECT_CODEGRAPH_GUIDANCE
         logger.debug(f"[project] 已向会话 {umo} 的 system_prompt 注入 codegraph 指引")
 
     @filter.on_llm_request()
@@ -2370,12 +2344,12 @@ class SPCodeToolkit(star.Star):
             or "astrbot_file_remove_tool" in self._tool_names
         ):
             return
-        if _FILE_REMOVE_GUIDANCE_MARKER in (req.system_prompt or ""):
+        if FILE_REMOVE_GUIDANCE_MARKER in (req.system_prompt or ""):
             return
         if req.system_prompt is None or req.system_prompt == "":
-            req.system_prompt = _FILE_REMOVE_GUIDANCE.lstrip("\n")
+            req.system_prompt = FILE_REMOVE_GUIDANCE.lstrip("\n")
         else:
-            req.system_prompt = req.system_prompt + _FILE_REMOVE_GUIDANCE
+            req.system_prompt = req.system_prompt + FILE_REMOVE_GUIDANCE
         logger.debug("[file_remove] 已向 system_prompt 注入优先使用指引")
 
     @filter.on_llm_request()

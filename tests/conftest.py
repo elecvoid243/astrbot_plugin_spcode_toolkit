@@ -1,14 +1,16 @@
 """Pytest config — path setup + module skips.
 
 Path setup:
-    自动定位 ``astrbot_plugin_spcode_toolkit`` 包的父目录并加入 ``sys.path``,
+    自动定位插件包根目录(含 main.py 的目录)并加入 ``sys.path``,
     使得 ``from astrbot_plugin_spcode_toolkit import main`` 在以下两种环境
-    中都能解析:
+    中都能解析(且 import 的是当前 worktree 的 main.py,而非主项目):
       - 主项目根: F:\\github\\astrbot_plugin_spcode_toolkit\\
       - Worktree:   F:\\github\\astrbot_plugin_spcode_toolkit\\.worktrees\\<branch>\\
-    原实现固定 ``Path(__file__).parent.parent.parent``(假设 3 层到主项目),
-    在 worktree 中会多出 .worktrees/<branch> 一级,导致找不到包。
-    这里改用 "向上查找直到遇到含 main.py 的包目录" 的策略。
+    原实现查找 ``parent/astrbot_plugin_spcode_toolkit/main.py``(假设 monorepo
+    结构),但本项目是单包结构(package IS the directory),worktree 场景下
+    conftest 会一路走到 F:\\github\\,导入到主项目的 main.py 而非 worktree 的,
+    导致 worktree 重构验证失效。PR-1 (2026-06-23) 修复为"向上查找最近的 main.py",
+    确保 import 命中当前目录树的 main.py。
 
 Module skips:
     - ``test_codegraph_cmd`` / ``test_codegraph_mcp`` 跳过(依赖外部 codegraph
@@ -30,18 +32,19 @@ from unittest.mock import MagicMock
 # WHY: 测试模块用 ``from astrbot_plugin_spcode_toolkit import main`` 直接
 # 导入插件包(因 main.py 顶层用了相对导入 ``from .tools import ...``,
 # 不能用裸路径 ``import main``)。我们必须在 pytest 收集阶段就把
-# 插件包父目录塞进 ``sys.path``,早于任何测试模块被 import。
+# 插件包目录塞进 ``sys.path``,早于任何测试模块被 import。
 #
-# 策略:从 conftest.py 自身出发向上走,寻找同时含
-#   ``astrbot_plugin_spcode_toolkit/main.py``
-# 的最近祖先目录。这能同时适配主项目与 worktree(在后者里会多走一层)。
+# 策略:从 conftest.py 自身出发向上走,寻找最近的"含 main.py 的祖先目录"。
+# 这能同时适配主项目与 worktree——前者找到 F:\\github\\astrbot_plugin_spcode_toolkit\\,
+# 后者找到 .worktrees/<branch>\\,确保 ``from astrbot_plugin_spcode_toolkit import main``
+# 命中当前 worktree 的 main.py(而非主项目的)。
 _PACKAGE_DIR_NAME = "astrbot_plugin_spcode_toolkit"
 
 
 def _find_package_root() -> Path | None:
     p = Path(__file__).resolve()
     for parent in (p, *p.parents):
-        if (parent / _PACKAGE_DIR_NAME / "main.py").exists():
+        if (parent / "main.py").exists():
             return parent
     return None
 
