@@ -2435,49 +2435,6 @@ class SPCodeToolkit(star.Star):
         """
         return sum(1 for active in self._plan_mode.values() if active)
 
-    async def handle_get_plan_mode(self) -> dict:
-        """Web API handler for ``GET /spcode/plan-mode``.
-
-        Query params:
-            umo (optional): the unified message origin to query. When
-                omitted the endpoint returns ``active=false`` (the
-                default build state) and the umo as ``None`` —
-                callers that don't know their umo should pass it
-                explicitly. Unlike ``/spcode/project-status`` we do
-                **not** fall back to "most recent plan-mode session"
-                because the plan/build switch is strictly per-session
-                and silently inheriting another session's mode would
-                be confusing.
-
-        Returns:
-            A JSON envelope of the form::
-
-                {
-                    "status": "ok",
-                    "data": {
-                        "active": bool,        # True == plan, False == build
-                        "umo": str | None,
-                        "all_active_count": int  # number of umos in plan mode
-                    }
-                }
-        """
-        # Late import to avoid circular issues with the plugin module.
-        from astrbot.api import web
-
-        umo: str | None = None
-        try:
-            umo = web.request.query.get("umo") or None
-        except Exception:
-            umo = None
-
-        return {
-            "status": "ok",
-            "data": {
-                "active": self._plan_mode_active(umo),
-                "umo": umo,
-                "all_active_count": self._plan_mode_active_count(),
-            },
-        }
 
     async def handle_get_git_worktrees(self) -> dict:
         """Web API handler for ``GET /spcode/git-worktrees``.
