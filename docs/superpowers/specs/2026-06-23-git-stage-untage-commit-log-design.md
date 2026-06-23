@@ -25,7 +25,7 @@
 - 写操作不做二次确认(API 层),由 dashboard 弹窗确认后调用
 - `commit` 严格最小:不支持 amend / allow-empty / GPG / 作者覆盖 / 跳过 hooks
 - `stage` / `unstage` 支持 `files` 列表 + `all:true` 两种互斥模式
-- `log` 支持 7 字段标准粒度 + 多维过滤参数 + 1.5s TTL ETag 缓存
+- `log` 支持 8 字段标准粒度(sha/author/date/subject + body/committer/parents/shortstat)+ 多维过滤参数 + 1.5s TTL ETag 缓存
 
 ## 用户环境约束
 
@@ -44,7 +44,7 @@
 | Q | 决策 | 影响 |
 |---|------|------|
 | **Q1: "git 暂存"语义** | **A** — `git add`(放入暂存区) | 三端点对应"选→暂→提"标准 git 流程 |
-| **Q2: git-log 字段粒度** | **B** — 标准(精简 + body + committer + parents + shortstat) | 4-in-1 git 调用;无需分页就能展示 Dashboard 90% 场景 |
+| **Q2: git-log 字段粒度** | **B** — 标准(sha / author / date / subject + body / committer / parents / shortstat 共 8 字段组) | 4-in-1 git 调用;无需分页就能展示 Dashboard 90% 场景 |
 | **Q3: git-commit 能力** | **A** — 严格最小(仅 commit staged,无 amend/empty/GPG) | 安全面小;hook 正常触发;高危操作全用显式 body 字段 |
 | **Q4: git-stage 粒度** | **B** — `files` 列表 + `all:true` 两种互斥模式 | 精细 stage 与全量快捷并存;UI 灵活 |
 | **Q5: 范围扩展** | 新增 `git-unstage` 端点 | 与 stage 对称;`git reset HEAD` 实现 |
@@ -145,8 +145,7 @@ class ReasonCode:
     INVALID_PARAM = "invalid_param"
     # 文件路径 / 范围类
     PATH_UNSAFE = "path_unsafe"
-    NOTHING_TO_COMMIT = "nothing_to_commit"
-    NOTHING_STAGED = "nothing_staged"
+    NOTHING_STAGED = "nothing_staged"   # git commit 无 staged 改动时(dashboard 友好文案)
     PRE_COMMIT_HOOK_FAILED = "pre_commit_hook_failed"
     EMPTY_REPOSITORY = "empty_repository"
 ```
@@ -181,7 +180,7 @@ class ReasonCode:
 
 - `files` 和 `all` 互斥;都不传 / 都传 → `invalid_body`
 - `files` 必须是非空字符串列表;任一元素空 / 非字符串 → `invalid_files`
-- `files` 长度 ≤ 1000(防滥发)→ 超长 `invalid_files`
+- `files` 长度 ≤ 1000(防滥发,**硬上限**;`all` 模式无 files 数组因此不受此限)→ 超长 `invalid_files`
 - `all` 必须是严格 `true`(不接受 1 / "true" / "yes" 字符串)→ 否则 `invalid_all`
 - 任何未知字段 → `invalid_body`(v1 严格白名单)
 - `files` 模式:每个 file 走 `_validate_repo_relative_file` 4 步防御 → 任一失败 `path_unsafe`
@@ -200,7 +199,7 @@ class ReasonCode:
     "directory": "...",
     "umo": "...",
     "worktree": "...",
-    "added_count": 2,                      // 实际成功的文件数
+    "staged_count": 2,                    // 实际 stage 成功的文件数(files 模式 = len(files);all 模式 = 0 或实际数量,见下方说明)
     "rejected": [],                        // files 模式时为空;all 模式始终 []
     "elapsed_ms": 45,
     "reason": null,
@@ -324,7 +323,7 @@ class ReasonCode:
 }
 
 // 失败
-{ "status": "ok", "data": { "committed": false, "reason": "nothing_to_commit", ... } }
+{ "status": "ok", "data": { "committed": false, "reason": "nothing_staged", ... } }
 ```
 
 #### git 调用
@@ -336,7 +335,7 @@ class ReasonCode:
 #### pre-commit hook 失败处理
 
 - git commit 返回非 0 + stderr 含 "hook" / "pre-commit" → 归类 `pre_commit_hook_failed`
-- git commit 返回非 0 + stderr 匹配 "nothing to commit" / "no changes added" → 归类 `nothing_to_commit`
+- git commit 返回非 0 + stderr 匹配 "nothing to commit" / "no changes added" → 归类 `nothing_staged`(dashboard 友好文案)
 - 其它 git 错误 → `git_error`
 - stderr 全文回显 `data.stderr`(截断到 2 KB,超出加 `"\n...[truncated, full=<N> bytes]"` 后缀)
 
@@ -402,7 +401,7 @@ class ReasonCode:
         "committer": { "name": "elecvoid243", "email": "x@y.com" },
         "date": "2026-06-23T22:00:00+08:00",   // ISO 8601
         "subject": "fix: handle null pointer in foo()",
-        "body": "Detailed explanation...",
+        "body": "Detailed explanation...",  // 无 body 时为 null(不是空字符串)
         "parents": ["9f8e7d6c..."],
         "shortstat": { "files": 2, "additions": 10, "deletions": 3 }
       }
@@ -416,7 +415,7 @@ class ReasonCode:
 #### git 调用(4 合 1 模式)
 
 - 单次 `git log --pretty=format:... --shortstat -n <N+1> <ref> [-- <path>] [--author=<a>] [--since=<s>] [--until=<u>]`
-- `pretty=format` 模板: `%H%x00%h%x00%an%x00%ae%x00%cn%x00%ce%x00%aI%x00%cI%x00%s%x00%b%x00%P%x00`(12 字段 NUL 分隔)
+- `pretty=format` 模板: `%H%x00%h%x00%an%x00%ae%x00%cn%x00%ce%x00%aI%x00%cI%x00%s%x00%b%x00%P%x00`(11 字段 NUL 分隔)
 - 解析在 Python 侧做(`_parse_log_format` + `_parse_log_shortstat`)
 - `has_more` 判定:实际 `git log -n <N+1>` 拿 N+1 条,如果返回 N+1 → `has_more=True`,丢弃第 N+1 条
 - 走 `_run_git_async`,asyncio 直接管理子进程,不占 worker
@@ -517,8 +516,8 @@ class ReasonCode:
 |------|--------|---------|
 | `tests/test_git_stage.py` | ~12 | 1) 精细 files 模式成功 2) all 模式成功 3) 两者都传→invalid_body 4) 都不传→invalid_body 5) invalid_files 6) invalid_all 7) path_unsafe(`.` 段、绝对路径、.git 内部)8) no_project_loaded 9) worktree_invalid 10) feature_disabled 11) not_a_git_repo 12) elapsed_ms 存在 |
 | `tests/test_git_unstage.py` | ~10 | 与 stage 对称,少 1~2 个(git 行为差异点) |
-| `tests/test_git_commit.py` | ~10 | 1) 成功 + sha/sha_short 正确 2) empty_message 3) message_too_long 4) nothing_to_commit 5) pre_commit_hook_failed 6) invalid_body(带未知字段)7) feature_disabled 8) no_project_loaded 9) worktree_invalid 10) git_error |
-| `tests/test_git_log.py` | ~14 | 1) 默认参数 20 条 2) n=5 3) n 超界截断 4) ref=branch 5) path 过滤 6) path_unsafe 7) author 过滤 8) since/until 9) invalid_param 10) empty_repository 11) ETag 304 12) 1.5s TTL 缓存命中 13) worktree 6 步防御 14) SHA 解析正确(含 12 字段 NUL 分隔) |
+| `tests/test_git_commit.py` | ~10 | 1) 成功 + sha/sha_short 正确 2) empty_message 3) message_too_long 4) nothing_staged 5) pre_commit_hook_failed 6) invalid_body(带未知字段)7) feature_disabled 8) no_project_loaded 9) worktree_invalid 10) git_error |
+| `tests/test_git_log.py` | ~14 | 1) 默认参数 20 条 2) n=5 3) n 超界截断 4) ref=branch 5) path 过滤 6) path_unsafe 7) author 过滤 8) since/until 9) invalid_param 10) empty_repository 11) ETag 304 12) 1.5s TTL 缓存命中 13) worktree 6 步防御 14) SHA 解析正确(含 11 字段 NUL 分隔) |
 
 ### 集成测试
 
@@ -551,7 +550,7 @@ async def test_stage_files_mode_calls_git_add_with_double_dash(plugin, tmp_path)
         body={"files": ["a.py", "b.md"]},
     )
     assert result["data"]["staged"] is True
-    assert result["data"]["added_count"] == 2
+    assert result["data"]["staged_count"] == 2
     # 二次确认:git status 应显示两个文件 staged
     status = await _run_git_async(["git", "-C", str(repo), "status", "--porcelain"])
     assert "A  a.py" in status["stdout"]
@@ -643,7 +642,7 @@ async def test_stage_rejects_unsafe_path(plugin, tmp_path):
 - 新:`tests/test_git_commit.py`
 
 **commit 拆分(5 个)**:
-1. `test(git-commit): add failing tests for happy path + empty/nothing_to_commit + hooks`
+1. `test(git-commit): add failing tests for happy path + empty/nothing_staged + hooks`
 2. `feat(git-commit): implement message validation (empty/too_long + no extra fields)`
 3. `feat(git-commit): implement preflight + git commit -m + rev-parse HEAD for sha`
 4. `feat(git-commit): implement git error classification (hook vs nothing vs generic)`
@@ -684,7 +683,7 @@ PR-1 (refactor infra)  ──┐
 | 风险 | 影响 | 缓解 |
 |------|------|------|
 | 改写 file_restore 内部委托时行为漂移 | file_restore 测试失败 | PR-1 完成后完整跑 test_file_restore.py;同时保留旧函数作为 alias 兜底 |
-| 4-in-1 git log 解析在 multiline commit message 边界出错 | log 返回错位数据 | 12 字段 NUL 分隔 + parser 强制断言字段数;测试覆盖含 `\n\n` 的 message |
+| 4-in-1 git log 解析在 multiline commit message 边界出错 | log 返回错位数据 | 11 字段 NUL 分隔 + parser 强制断言字段数;测试覆盖含 `\n\n` 的 message |
 | ETag 缓存让 dashboard 看不到刚 commit 的结果 | 误以为 commit 失败 | ETag 信号含 .git/index mtime,commit 必更新 index → 1 个 poll 周期内自动失效 |
 | 性能 regression(4 端点都打 git) | dashboard 轮询开销 | 复用 _run_git_async 释放 worker;log 走 1.5s TTL 缓存;stage/unstage/commit 不缓存(写必须真打) |
 | `files` 模式 + `--` 强制分隔符漏写 | 文件名撞 -x 选项被误解释 | 测试覆盖 `--upload-pack` 类恶意文件名;code review 重点 |
