@@ -55,7 +55,6 @@ astrbot_plugin_spcode_toolkit/
 └── tools/
     └── webapi/                    # 【新增】本任务产物
         ├── __init__.py            # HANDLERS + register_webapi_routes() + _wrap()
-        ├── _envelopes.py          # 【v4 决定:删除本文件,合并到 __init__.py】
         ├── _helpers.py            # 共享工具(_run_git_async + _JSONResponseCompat)
         ├── project_status.py      # GET /spcode/project-status
         ├── plan_mode.py           # GET /spcode/plan-mode
