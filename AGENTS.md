@@ -128,12 +128,21 @@ astrbot_plugin_spcode_toolkit/
     ├── file_compare.py           # [工具] 结构化文件差异
     ├── file_remove.py            # [工具] 沙箱化文件/目录删除
     ├── todo_list.py              # [工具-stub] v2.6+ 已拆分,保留兼容入口
-    └── inta_shell/               # 交互式 Shell 复合工具集
-        ├── __init__.py
-        ├── component.py          # 组件主逻辑
-        ├── paths.py              # 路径与会话工作目录
-        ├── session_models.py     # 数据模型(Session 等)
-        └── tools.py              # 5 个工具入口(start/send/read/stop/list)
+    ├── inta_shell/               # 交互式 Shell 复合工具集
+    │   ├── __init__.py
+    │   ├── component.py          # 组件主逻辑
+    │   ├── paths.py              # 路径与会话工作目录
+    │   ├── session_models.py     # 数据模型(Session 等)
+    │   └── tools.py              # 5 个工具入口(start/send/read/stop/list)
+    └── webapi/                   # v3.6+ Dashboard HTTP 端点(自 main.py 拆出)
+        ├── __init__.py           #   ROUTES 路由表 + _wrap() 适配层 + register_webapi_routes()
+        ├── _helpers.py           #   [内部] _run_git_async / _JSONResponseCompat 跨端点共享
+        ├── project_status.py     #   GET  /spcode/project-status
+        ├── plan_mode.py          #   GET  /spcode/plan-mode
+        ├── git_worktrees.py      #   GET  /spcode/git-worktrees
+        ├── git_diff.py           #   GET  /spcode/git-diff
+        ├── file_browser.py       #   GET  /spcode/file-browser
+        └── file_restore.py       #   POST /spcode/file-restore
 ```
 
 ### 架构分层
@@ -151,19 +160,31 @@ astrbot_plugin_spcode_toolkit/
    - **无下划线前缀** 模块(`xxx.py`):直接注册为 AstrBot 工具
    - **复合工具子目录**(如 `inta_shell/`):内部按职责再拆分为多个文件
 
-3. **测试层** `tests/`
+3. **Web API 层** `tools/webapi/`(v3.6+ 自 main.py 拆出)
+   - 每个端点一个文件,handler 命名固定为 `async def handle(plugin, ...) -> dict`
+   - `__init__.py` 拥有 `ROUTES` 路由表 + `_wrap()` 适配器 + `register_webapi_routes()`
+   - `main.py.initialize()` 调用一次 `register_webapi_routes(self)` 注册全部 6 个端点
+   - `_wrap()` 通过 `inspect.signature(handler)` 自动注入 `umo` / `worktree` /
+     `scope` / `path` / `if_none_match` / `body` 形参(handler 必须显式声明才注入)
+   - **新增 webapi 端点**流程:`tools/webapi/<name>.py` 写 `handle()` →
+     在 `ROUTES` 添加 `(route, methods, handler, desc)` → `tests/test_webapi_end_to_end.py`
+     添加 smoke → `tests/test_<name>.py` 单元测试
+
+4. **测试层** `tests/`
    - 与 `tools/` 模块一一对应,命名 `test_<模块名>.py`
    - `conftest.py` 提供共享 fixtures(workspace、临时目录等)
    - `tests/fixtures/` 存放静态样本
+   - `tests/test_webapi_end_to_end.py` 跨端点烟囱测试(6 路由表 + `_wrap` 注入 +
+     `register_webapi_routes` 注册流程)
 
-4. **数据层** `data/`
+5. **数据层** `data/`
    - `t2i_templates/`:HTML 模板资源
    - `workspaces/`:沙箱化操作的目标根目录(可由配置重定向)
    - `temp/`:临时文件存放
 
-5. **文档层** `docs/`
+6. **文档层** `docs/`
    - 设计评审、变更记录(如 `file_remove_review_2026-06-07.md`)
-   - 子模块 `superpowers/`
+   - 子模块 `superpowers/`(含 `specs/` 设计与 `plans/` 实施计划)
 
 ## 代码风格指南
 
