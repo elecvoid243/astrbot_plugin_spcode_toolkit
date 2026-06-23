@@ -11,10 +11,11 @@ Path setup:
     这里改用 "向上查找直到遇到含 main.py 的包目录" 的策略。
 
 Module skips:
-    - ``test_codegraph_*`` 全部跳过(依赖外部 codegraph MCP 服务,
-      当前开发环境未启动;按用户 2026-06-18 决定:codegraph 相关测试暂不跑)
-    - ``test_codegraph_cpp`` 还要在 tree-sitter-cpp 缺失时跳过
-      (由 ``pytest_collection_modifyitems`` 处理)
+    - ``test_codegraph_cmd`` / ``test_codegraph_mcp`` 跳过(依赖外部 codegraph
+      MCP 服务,当前开发环境未启动;按用户 2026-06-18 决定:codegraph 相关测试
+      暂不跑)。
+    - PR-0 (2026-06-23) 删除了 ``test_codegraph_cpp`` / ``test_codegraph_lifecycle``
+      (旧 codegraph 引擎测试)以及其对应的 tree-sitter-cpp skip hook。
 """
 
 from __future__ import annotations
@@ -23,8 +24,6 @@ import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
-
-import pytest
 
 # ── Path setup ─────────────────────────────────────────────
 #
@@ -59,35 +58,15 @@ if str(_root) not in sys.path:
 
 # ── Module skips ───────────────────────────────────────────
 #
-# 1. codegraph 相关测试依赖外部 MCP 服务,本开发环境不跑。
-#    用 collect_ignore 让 pytest 在 collect 阶段就跳过这些文件,
-#    避免 import 错误(它们的 import 路径假设 codegraph_* 工具已注册)。
-# 2. tree-sitter-cpp 缺失时再单独跳过 test_codegraph_cpp(见下方 hook)。
+# codegraph 相关测试依赖外部 MCP 服务,本开发环境不跑。
+# 用 collect_ignore 让 pytest 在 collect 阶段就跳过这些文件,
+# 避免 import 错误(它们的 import 路径假设 codegraph_* 工具已注册)。
+# PR-0 (2026-06-23) 删除 test_codegraph_cpp / test_codegraph_lifecycle
+# (旧 codegraph 引擎测试);tree-sitter-cpp skip hook 也已删除。
 collect_ignore_glob = [
     "test_codegraph_cmd.py",
-    "test_codegraph_lifecycle.py",
     "test_codegraph_mcp.py",
-    "test_codegraph_cpp.py",
 ]
-
-
-# ── tree-sitter-cpp 依赖探测 ───────────────────────────────
-try:
-    import tree_sitter  # noqa: F401
-    import tree_sitter_cpp  # noqa: F401
-
-    _HAS_CPP = True
-except ImportError:
-    _HAS_CPP = False
-
-
-def pytest_collection_modifyitems(config, items):
-    if _HAS_CPP:
-        return
-    skip = pytest.mark.skip(reason="tree-sitter-cpp not installed")
-    for item in items:
-        if "test_codegraph_cpp" in item.nodeid:
-            item.add_marker(skip)
 
 
 # ── 共享 test helper ────────────────────────────────────────
