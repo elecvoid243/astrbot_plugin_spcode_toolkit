@@ -16,32 +16,13 @@ from __future__ import annotations
 
 import asyncio
 import os
-from dataclasses import dataclass, field
-
 from pathlib import Path
 
-from astrbot.api import FunctionTool, logger, star
+from astrbot.api import logger, star
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
-from astrbot.api.star import StarTools
-from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import ToolExecResult
-from astrbot.core.astr_agent_context import AstrAgentContext
-from astrbot.api.star import register
+from astrbot.api.star import StarTools, register  # noqa: F401  (re-export for test compat: tests/test_todo_list.py uses main_mod.StarTools)
 
-from .tools import (
-    code_check,
-    es_search,
-    file_compare,
-    file_remove,
-    todo_list as _todo_list_mod,
-)
-from .tools._helpers import (
-    run_sync,
-    unwrap,
-    err_json,
-)
-  # run_cmd: 供 /spcode/git-diff & git-worktrees handler 使用
 from .tools._config_filter import ALL_TOOL_NAMES, filter_enabled_tools
 from .tools._codegraph_mcp import (
     SHELL_META_RE,
@@ -57,15 +38,32 @@ from .tools._codegraph_mcp import (
 from tools.webapi import register_webapi_routes
 from tools.webapi.git_diff import _GIT_DIFF_ENCODING
 from .tools import agentsmd as _agentsmd_mod
-from .tools.inta_shell import tools as _inta_shell_tools
 from .tools.inta_shell.component import LocalInteractiveShellComponent
 from .tools._path_safety import is_path_safe as _is_path_safe
-from .tools._stats import _record
 from .tools._guidance_text import (
     PROJECT_GUIDANCE_MARKER,
     PROJECT_CODEGRAPH_GUIDANCE,
     FILE_REMOVE_GUIDANCE_MARKER,
     FILE_REMOVE_GUIDANCE,
+)
+# PR-2 (2026-06-23): 13 个 FunctionTool 类 + ALL_TOOL_CLASSES 集中注册表。
+# 模块级导入以便 tests/test_*.py 中 `main_mod.TodoCreateTool` / `main_mod.StarTools`
+# 等旧用法继续可用(下划线开头的 _common / _TodoToolBase 不在 re-export 列表)。
+from .tools.function_tools import (
+    ALL_TOOL_CLASSES,
+    CodeCheckTool,  # noqa: F401  (re-export for test compat)
+    EsSearchTool,  # noqa: F401
+    FileDiffTool,  # noqa: F401
+    FileRemoveTool,  # noqa: F401
+    IntaShellListTool,  # noqa: F401
+    IntaShellReadTool,  # noqa: F401
+    IntaShellSendTool,  # noqa: F401
+    IntaShellStartTool,  # noqa: F401
+    IntaShellStopTool,  # noqa: F401
+    TodoClearTool,  # noqa: F401
+    TodoCreateTool,  # noqa: F401  (used in tests/test_todo_list.py)
+    TodoModifyTool,  # noqa: F401
+    TodoQueryTool,  # noqa: F401
 )
 import time as _time
 import datetime as _datetime
@@ -78,9 +76,8 @@ import datetime as _datetime
 
 
 
-# inta_shell 组件单例(v2.5: 由 initialize 设置,FunctionTool 通过模块级引用访问)
-_inta_component: LocalInteractiveShellComponent | None = None
-_inta_default_cwd: str = ""
+# inta_shell 组件单例 + 默认 cwd 已迁移到 tools/inta_shell/runtime.py(PR-2 2026-06-23)
+# 5 个 IntaShell*Tool 类从 tools.function_tools.* 引用
 
 # 防御性:老版本 AstrBot 可能没有 MCP 异常类
 try:
@@ -147,856 +144,18 @@ class _ProjectLoadAbort(BaseException):
 #     _FILE_REMOVE_GUIDANCE_MARKER / _FILE_REMOVE_GUIDANCE 4 个常量。
 
 
-# ── Tool 类定义 ──────────────────────────────────────
-
-
-@dataclass
-class CodeCheckTool(FunctionTool):
-    name: str = "code_check"
-    description: str = (
-        "Unified syntax + style check for a single Python or C/C++ source file. "
-        "For both languages a single linter covers BOTH syntax errors and style "
-        "issues, so one call replaces a 'syntax check then lint' workflow. "
-        "Auto-detects the linter from the file extension: "
-        ".py → ruff (PEP 8 + common lint rules); "
-        ".c/.cpp/.cc/.cxx/.h/.hpp/.hxx → cpplint (Google C++ Style Guide). "
-        "Returns a structured list of issues; the first 5 include surrounding "
-        "source-context lines (→ marks the offending line). "
-        "Other extensions (e.g. .js/.ts/.go/.nim) are NOT supported by this "
-        "tool. Requires the linter to be installed: "
-        "pip install ruff (Python) or pip install cpplint (C/C++)."
-    )
-    parameters: dict = field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "filepath": {
-                    "type": "string",
-                    "description": (
-                        "Path to the source file. Extension determines the linter: "
-                        ".py → ruff; .c/.cpp/.cc/.cxx/.h/.hpp/.hxx → cpplint."
-                    ),
-                },
-                "linter": {
-                    "type": "string",
-                    "enum": ["auto", "ruff", "cpplint"],
-                    "description": (
-                        "Override the linter. 'auto' (default) picks by extension."
-                    ),
-                    "default": "auto",
-                },
-            },
-            "required": ["filepath"],
-        }
-    )
-
-    async def call(
-        self,
-        context: ContextWrapper[AstrAgentContext],
-        filepath: str,
-        linter: str = "auto",
-        **kwargs,
-    ) -> ToolExecResult:
-        _record(self.name)
-        try:
-            result = await run_sync(code_check.check, filepath, linter)
-            return unwrap(result)
-        except Exception as e:
-            return err_json(f"code_check 失败: {e}")
-
-
-@dataclass
-class EsSearchTool(FunctionTool):
-    name: str = "es_search"
-    description: str = (
-        "Fast FILENAME search (does not search file contents). "
-        "Prefer this over reading whole directory trees to locate a file. "
-        "Supports wildcards, regex, extension and path filters, case/whole-word"
-        "toggles, and size/date sorting."
-    )
-    parameters: dict = field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": (
-                        "Filename or pattern. Examples: '*.py', 'main', 'config.json'. "
-                        "On Windows, supports Everything syntax (ext:py, path:C:\\src). "
-                        "On POSIX, basic wildcards only. "
-                        "Must NOT start with '/' or '-' unless regex=true."
-                    ),
-                },
-                "path": {
-                    "type": "string",
-                    "description": (
-                        "Limit search to this directory. Omit to search the whole system."
-                    ),
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum number of results to return.",
-                    "default": 100,
-                },
-                "regex": {
-                    "type": "boolean",
-                    "description": "Treat query as a regular expression (Windows only).",
-                    "default": False,
-                },
-                "case_sensitive": {
-                    "type": "boolean",
-                    "description": "Case-sensitive matching.",
-                    "default": False,
-                },
-                "whole_word": {
-                    "type": "boolean",
-                    "description": "Match whole words only (Windows only).",
-                    "default": False,
-                },
-                "file_type": {
-                    "type": "string",
-                    "enum": ["all", "file", "folder"],
-                    "description": "Restrict result type to files, folders, or both.",
-                    "default": "all",
-                },
-                "sort_by": {
-                    "type": "string",
-                    "enum": [
-                        "name",
-                        "path",
-                        "size",
-                        "ext",
-                        "date_modified",
-                        "date_created",
-                        "date_accessed",
-                        "run_count",
-                    ],
-                    "description": (
-                        "Sort field. Most options work on Windows; "
-                        "POSIX backends only support name/path/size/date_modified."
-                    ),
-                },
-                "ext": {
-                    "type": "string",
-                    "description": (
-                        "Filter by file extension WITHOUT the leading dot, e.g. 'py', "
-                        "'xlsx', 'exe'."
-                    ),
-                },
-            },
-            "required": ["query"],
-        }
-    )
-
-    async def call(
-        self,
-        context: ContextWrapper[AstrAgentContext],
-        query: str,
-        path: str | None = None,
-        max_results: int = 100,
-        regex: bool = False,
-        case_sensitive: bool = False,
-        whole_word: bool = False,
-        file_type: str = "all",
-        sort_by: str | None = None,
-        ext: str | None = None,
-        **kwargs,
-    ) -> ToolExecResult:
-        _record(self.name)
-        try:
-            result = await run_sync(
-                es_search.search,
-                query,
-                path,
-                max_results,
-                regex,
-                case_sensitive,
-                whole_word,
-                file_type,
-                sort_by,
-                ext,
-            )
-            return unwrap(result)
-        except Exception as e:
-            return err_json(f"es_search 失败: {e}")
-
-
-@dataclass
-class FileRemoveTool(FunctionTool):
-    name: str = "astrbot_file_remove"
-    description: str = (
-        "Delete an entire file or directory. Before deleting, it is necessary to ask the user. "
-        "If delete fragments instead of the entire file, use `astrbot_file_edit_tool`. "
-        "Deleting a DIRECTORY requires parameter 'confirm=true'. "
-        "If a directory contains more than max_items files, the call returns a "
-        "proposal asking for batch confirmation INSTEAD of deleting — read the "
-        "proposal/options, then retry with confirm=true. "
-        "Single files are deleted without confirm. "
-        "Items are sent to the system recycle bin (recoverable), not permanently deleted."
-    )
-    parameters: dict = field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": (
-                        "Absolute path of the file or directory to remove. "
-                        "Must not contain '..' segments and must not be inside a "
-                        "protected system directory or the user-configured "
-                        "blacklist (see plugin config 'file_remove_blacklist')."
-                    ),
-                },
-                "confirm": {
-                    "type": "boolean",
-                    "description": (
-                        "Set to true to confirm a directory deletion. "
-                        "Required for directories; ignored for single files."
-                    ),
-                    "default": False,
-                },
-                "max_items": {
-                    "type": "integer",
-                    "description": (
-                        "If a directory contains more than this many files, return a "
-                        "proposal for batch confirmation instead of deleting. "
-                        "Defaults to 50."
-                    ),
-                    "default": 50,
-                },
-            },
-            "required": ["path"],
-        }
-    )
-    # 用户自定义黑名单（从插件配置 file_remove_blacklist 注入），
-    # 不暴露给 LLM 作为 function parameter——是服务端策略。
-    custom_blacklist: list[str] = field(default_factory=list)
-
-    async def call(
-        self,
-        context: ContextWrapper[AstrAgentContext],
-        path: str,
-        confirm: bool = False,
-        max_items: int = 50,
-        **kwargs,
-    ) -> ToolExecResult:
-        _record(self.name)
-        try:
-            result = await run_sync(
-                file_remove.remove,
-                path,
-                confirm,
-                max_items,
-                list(self.custom_blacklist),
-            )
-            return unwrap(result)
-        except Exception as e:
-            return err_json(f"file_remove 失败: {e}")
-
-
-@dataclass
-class FileDiffTool(FunctionTool):
-    name: str = "astrbot_file_compare"
-    description: str = (
-        "Compares two text files and returns a structured diff: counts of added and "
-        "removed lines, plus a unified diff. Files larger than 50MB are rejected. "
-        "Reads as UTF-8 with a GBK fallback for Windows-encoded Chinese text. "
-        "Use this to review the impact of an edit or to compare candidate alternatives."
-    )
-    parameters: dict = field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "file_a": {
-                    "type": "string",
-                    "description": "Path of the first (baseline) file.",
-                },
-                "file_b": {
-                    "type": "string",
-                    "description": "Path of the second (modified) file.",
-                },
-            },
-            "required": ["file_a", "file_b"],
-        }
-    )
-
-    async def call(
-        self,
-        context: ContextWrapper[AstrAgentContext],
-        file_a: str,
-        file_b: str,
-        **kwargs,
-    ) -> ToolExecResult:
-        _record(self.name)
-        try:
-            result = await run_sync(file_compare.compare, file_a, file_b)
-            return unwrap(result)
-        except Exception as e:
-            return err_json(f"file_compare 失败: {e}")
-
-
-@dataclass
-class _TodoToolBase(FunctionTool):
-    """4 个 todo_* 工具的公共基类。
-
-    封装 umo 提取、TodoStore 初始化、async dispatch。
-    子类只需定义自己的 parameters / call()，其余样板代码继承自此基类。
-
-    所有 call() 方法返回 ToolExecResult (JSON 字符串):
-    - 成功路径经 _dispatch → unwrap() → JSON 字符串
-    - 失败路径经 _err() 直接生成 JSON 字符串
-    """
-
-    def _err(self, error: str, proposal: str = "") -> str:
-        """Build a JSON error response string with optional proposal.
-
-        永远返回 JSON 字符串(与 unwrap() 风格一致),保证 call() 协议统一。
-        """
-        import json as _json
-
-        payload: dict = {"ok": False, "error": error}
-        if proposal:
-            payload["proposal"] = proposal
-        return _json.dumps(payload, ensure_ascii=False)
-
-    def _setup(self, context) -> tuple | dict:
-        """提取 umo,创建 store,返回 (store, umo) 元组。
-
-        失败时返回 dict 错误响应(供 _dispatch 透传给 unwrap 包成 JSON 字符串)。
-
-        v2.11: 隔离键从 sender_key (platform:sender_id) 切到 umo (unified_msg_origin)。
-        """
-        try:
-            event = context.context.event
-        except AttributeError:
-            return {"ok": False, "error": "无 event 上下文"}
-        umo = _todo_list_mod.extract_umo(event)
-        data_dir = str(StarTools.get_data_dir())
-        todos_dir = os.path.join(data_dir, "todos")
-        store = _todo_list_mod.TodoStore(todos_dir)
-        return store, umo
-
-    async def _dispatch(self, context, fn, *args, **kwargs) -> str:
-        """通用 dispatch: 记录调用 + setup + 异步执行 fn(store, umo, *args, **kwargs)。
-
-        返回: 永远为 JSON 字符串(与 unwrap() 风格一致)。
-        - setup 失败 → 直接 unwrap(setup_dict) 透传 proposal 字段
-        - 业务异常 → err_json 包装
-        """
-        _record(self.name)
-        try:
-            setup = self._setup(context)
-            if isinstance(setup, dict):  # 错误响应,经 unwrap 包成 JSON 字符串
-                return unwrap(setup)
-            store, umo = setup
-            result = await run_sync(lambda: fn(store, umo, *args, **kwargs))
-            return unwrap(result)
-        except Exception as e:
-            return err_json(f"{self.name} 失败: {e}")
-
-
-@dataclass
-class TodoCreateTool(_TodoToolBase):
-    """Create a new todo list. Overwrites any existing list for current umo (session channel)."""
-
-    name: str = "todo_create"
-    description: str = (
-        "Create a new todo list (overwrites existing). "
-        "Use to start tracking multi-step work. "
-        "Returns full list + stats. "
-        "4 statuses: pending `[ ]`, in_progress `[~]`, done `[x]`, cancelled `[-]`."
-    )
-    parameters: dict = field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "title": {"type": "string"},
-                            "status": {
-                                "type": "string",
-                                "enum": ["pending", "in_progress", "done", "cancelled"],
-                            },
-                            "notes": {"type": "string"},
-                        },
-                        "required": ["title"],
-                    },
-                    "minItems": 1,
-                    "description": (
-                        "Initial items. Each: {title, status?, notes?}. "
-                        "status defaults to 'pending' if omitted. "
-                        "Cannot be empty. "
-                        "Mutually exclusive with from_path."
-                    ),
-                },
-                "from_path": {
-                    "type": "string",
-                    "description": (
-                        "Absolute path to a .md todo file to import (adopt semantics). "
-                        "Format: same as TodoStore.render_md output — "
-                        "frontmatter (umo/title/created_at/...) + H1 + "
-                        "checkbox items (`[ ]` pending / `[x]` done / `[~]` in_progress / `[-]` cancelled). "
-                        "Mutually exclusive with items. Size limit 1MB. "
-                        "Adopt: the imported list takes your umo (current session) and now() timestamp; "
-                        "item IDs are renumbered from 1. "
-                        "Must be an absolute path; relative paths are rejected."
-                    ),
-                },
-                "title": {
-                    "type": "string",
-                    "description": (
-                        "List title. "
-                        "items 模式下: 空 = auto-generated from umo. "
-                        "from_path 模式下: 非空覆盖文件中的 title; 空 (falsy, 不含纯空白) = 保留文件中的 title. "
-                        "Whitespace-only title 视为有值(覆盖),与 v2.2.0 一致."
-                    ),
-                },
-            },
-            # required 留空 —— XOR 在 call() 内校验,工具 schema 不强制
-        }
-    )
-
-    async def call(
-        self,
-        context,
-        items: list[dict] | None = None,
-        from_path: str = "",
-        title: str = "",
-        **kwargs,
-    ) -> ToolExecResult:
-        """XOR 校验 + 分发到 items 模式 / from_path 模式.
-
-        v2.9 新增 from_path: 接受 .md 文件路径,领养(覆盖当前用户的现有 list,
-        重排 ID 从 1,时间戳 = now,保留文件中的 status/notes)。
-        """
-        # XOR 校验
-        if from_path and items:
-            return self._err(
-                "items 与 from_path 必须二选一,不能同时传",
-                proposal="items=[{...}] 或 from_path='/abs/path/to/file.md'",
-            )
-        if not from_path and not items:
-            return self._err(
-                "items 与 from_path 必须二选一,不能都不传",
-                proposal="items=[{...}] 或 from_path='/abs/path/to/file.md'",
-            )
-
-        # from_path 模式
-        if from_path:
-            items_parsed, parsed_title, err = _todo_list_mod.import_from_path(from_path)
-            if err:
-                return self._err(err, proposal="检查文件路径/格式/大小后重试")
-            return await self._dispatch(
-                context,
-                lambda s, k: s.create(
-                    k, title=title or parsed_title, items=items_parsed
-                ),
-            )
-
-        # items 模式(v2.2.0 现状,行为不变)
-        return await self._dispatch(
-            context, lambda s, k: s.create(k, title=title, items=items)
-        )
-
-
-@dataclass
-class TodoQueryTool(_TodoToolBase):
-    """Read current todo list with full stats and attention items."""
-
-    name: str = "todo_query"
-    description: str = (
-        "Read current todo list. Returns list + stats + attention_items. "
-        "attention_items = IDs of in_progress items with non-empty notes "
-        "(stuck/blocked items needing attention). "
-        "If no list exists, returns proposal to call todo_create."
-    )
-    parameters: dict = field(
-        default_factory=lambda: {"type": "object", "properties": {}}
-    )
-
-    async def call(self, context, **kwargs) -> ToolExecResult:
-        return await self._dispatch(context, lambda s, k: s.query(k))
-
-
-@dataclass
-class TodoModifyTool(_TodoToolBase):
-    """Modify todo list with 3 modes: add / update / delete."""
-
-    name: str = "todo_modify"
-    description: str = (
-        "Modify an existing todo list. Pick exactly one mode:\n"
-        "• mode='add':    todo_modify(mode='add', items=[{title, status?, notes?}, ...])\n"
-        "• mode='update': todo_modify(mode='update', item_ids=N or [N,...], status=?, notes=?)\n"
-        "• mode='delete': todo_modify(mode='delete', item_ids=N or [N,...])\n"
-        "Returns full list + stats. Any invalid id → all-or-nothing rollback."
-    )
-    parameters: dict = field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "mode": {
-                    "type": "string",
-                    "enum": ["add", "update", "delete"],
-                    "description": "Operation mode.",
-                },
-                "items": {
-                    "type": "array",
-                    "items": {"type": "object"},
-                    "minItems": 1,
-                    "description": "[Required for add mode] Items to append. Each: {title, status?, notes?}.",
-                },
-                "item_ids": {
-                    "anyOf": [
-                        {"type": "integer"},
-                        {"type": "array", "items": {"type": "integer"}, "minItems": 1},
-                    ],
-                    "description": "[Required for update/delete mode] Target item id(s). ",
-                },
-                "status": {
-                    "type": "string",
-                    "enum": ["pending", "in_progress", "done", "cancelled"],
-                    "description": "[Required for update mode] New status. Omit = keep existing.",
-                },
-                "notes": {
-                    "type": "string",
-                    "description": (
-                        "[update mode] New notes value. "
-                        'OVERWRITE: pass a non-empty string, e.g. "blocked on review". '
-                        'CLEAR: pass the empty string "". '
-                        "KEEP: OMIT this key entirely from the JSON object — "
-                        "do NOT write null, \"\", or any placeholder to express 'keep'; "
-                        "leaving the key out means 'leave the existing notes unchanged'."
-                    ),
-                },
-            },
-            "required": ["mode"],
-            "additionalProperties": False,
-        }
-    )
-
-    async def call(
-        self,
-        context,
-        mode: str,
-        items: list[dict] | None = None,
-        item_ids: int | list[int] | None = None,
-        status: str = "",
-        notes: str | None = _todo_list_mod.UNSET_NOTES,
-        **kwargs,
-    ) -> ToolExecResult:
-        """notes 三态语义:
-        - notes=None (未传) → 保留旧值
-        - notes=""   (空串) → 清空 notes
-        - notes="x"  (内容) → 覆盖 notes
-        """
-        if mode == "add" and (items is None or not items):
-            return self._err(
-                "add 模式必须提供非空 items",
-                proposal="传入 items=[{...}, ...]",
-            )
-        if mode in ("update", "delete") and item_ids is None:
-            return self._err(
-                f"{mode} 模式必须提供 item_ids",
-                proposal="传入 item_ids=3 或 item_ids=[1, 3, 5]",
-            )
-        return await self._dispatch(
-            context,
-            lambda s, k: s.modify(
-                k,
-                mode=mode,
-                items=items,
-                item_ids=item_ids,
-                status=status,
-                notes=notes,
-            ),
-        )
-
-
-@dataclass
-class TodoClearTool(_TodoToolBase):
-    """Delete the entire todo list (remove file) for current umo (session channel)."""
-
-    name: str = "todo_clear"
-    description: str = (
-        "Delete the entire todo list for current umo (session channel) (removes the file). "
-        "Use this to start fresh. "
-        "For removing individual items, use todo_modify(mode='delete', item_ids=...)."
-    )
-    parameters: dict = field(
-        default_factory=lambda: {"type": "object", "properties": {}}
-    )
-
-    async def call(self, context, **kwargs) -> ToolExecResult:
-        return await self._dispatch(context, lambda s, k: s.clear(k))
-
-
-# ── inta_shell 工具(v2.5 从 interactive_shell 插件集成) ─
-
-
-@dataclass
-class IntaShellStartTool(FunctionTool):
-    name: str = "astrbot_inta_shell_start"
-    description: str = (
-        "Start a long-running interactive shell session for commands that need "
-        "multiple rounds of input (e.g. npm init, python REPL, git add -p, "
-        "interactive installers), or an always-on application (e.g. launch a server). Returns a session_id — keep using "
-        "inta_shell_send / inta_shell_read to drive the session, and ALWAYS "
-        "call inta_shell_stop when done. Does NOT support full TTY programs "
-        "(vim, nano, less). For one-off non-interactive commands, prefer the "
-        "regular `astrbot_execute_shell` tool."
-    )
-    parameters: dict = field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": (
-                        "Interactive command to start. If a non-interactive "
-                        "form exists (e.g. `npm init -y` instead of `npm init`), "
-                        "prefer that and use the regular execute_shell tool."
-                    ),
-                },
-                "env": {
-                    "type": "object",
-                    "description": (
-                        "Optional env-var dict. Keys and values must be strings."
-                    ),
-                },
-            },
-            "required": ["command"],
-        }
-    )
-
-    async def call(
-        self,
-        context: ContextWrapper[AstrAgentContext],
-        command: str,
-        env: dict | None = None,
-        **kwargs,
-    ) -> ToolExecResult:
-        _record(self.name)
-        try:
-            event = context.context.event
-            # WHY: tools.inta_shell.tools.start() 内部已通过 _ok/_deny
-            # 返回 JSON 字符串。如果再走 unwrap(str),会触发
-            # "工具返回了非预期类型: str" 错误(虽然底层进程已被启动)。
-            # 直接透传字符串结果即可。
-            return await _inta_shell_tools.start(
-                _inta_component,
-                event.unified_msg_origin,
-                command,
-                env=env,
-                default_cwd=_inta_default_cwd,
-            )
-        except Exception as e:
-            return err_json(f"inta_shell_start 失败: {e}")
-
-
-@dataclass
-class IntaShellSendTool(FunctionTool):
-    name: str = "astrbot_inta_shell_send"
-    description: str = (
-        "Send input text to an active inta_shell session to drive the program "
-        "forward. Auto-appends a newline if missing. Common uses: answer "
-        "prompts with 'y' / 'n' / empty (default), or type the next command. "
-        "Pair with inta_shell_read to see the response."
-    )
-    parameters: dict = field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "session_id": {
-                    "type": "string",
-                    "description": "Session ID returned by inta_shell_start.",
-                },
-                "input": {
-                    "type": "string",
-                    "description": "Text to send to the interactive program.",
-                },
-                "send_eof": {
-                    "type": "boolean",
-                    "description": (
-                        "If true, close stdin after sending (signals "
-                        "end-of-input to the program)."
-                    ),
-                    "default": False,
-                },
-            },
-            "required": ["session_id", "input"],
-        }
-    )
-
-    async def call(
-        self,
-        context: ContextWrapper[AstrAgentContext],
-        session_id: str,
-        input: str,
-        send_eof: bool = False,
-        **kwargs,
-    ) -> ToolExecResult:
-        _record(self.name)
-        try:
-            # WHY: tools.inta_shell.tools.send() 内部已通过 _ok/_deny
-            # 返回 JSON 字符串。直接透传,绕过 unwrap() 的 dict 类型校验。
-            return await _inta_shell_tools.send(
-                _inta_component, session_id, input, send_eof=send_eof
-            )
-        except Exception as e:
-            return err_json(f"inta_shell_send 失败: {e}")
-
-
-@dataclass
-class IntaShellReadTool(FunctionTool):
-    name: str = "astrbot_inta_shell_read"
-    description: str = (
-        "Read output from an active inta_shell session. Blocks up to "
-        "`timeout` seconds for new output. A prompt (e.g. `[Y/n]`, `>>>`) "
-        "in the returned text usually means the program is waiting for "
-        "inta_shell_send input."
-    )
-    parameters: dict = field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "session_id": {
-                    "type": "string",
-                    "description": "Session ID returned by inta_shell_start.",
-                },
-                "timeout": {
-                    "type": "number",
-                    "description": (
-                        "Max seconds to wait for output. Increase for slow programs."
-                    ),
-                    "default": 5.0,
-                },
-                "max_chars": {
-                    "type": "number",
-                    "description": ("Max characters to read. Caps large outputs."),
-                    "default": 4096,
-                },
-            },
-            "required": ["session_id"],
-        }
-    )
-
-    async def call(
-        self,
-        context: ContextWrapper[AstrAgentContext],
-        session_id: str,
-        timeout: float = 5.0,
-        max_chars: int = 4096,
-        **kwargs,
-    ) -> ToolExecResult:
-        _record(self.name)
-        try:
-            # WHY: tools.inta_shell.tools.read() 内部已通过 _ok/_deny
-            # 返回 JSON 字符串。直接透传,绕过 unwrap() 的 dict 类型校验。
-            return await _inta_shell_tools.read(
-                _inta_component, session_id, timeout=timeout, max_chars=max_chars
-            )
-        except Exception as e:
-            return err_json(f"inta_shell_read 失败: {e}")
-
-
-@dataclass
-class IntaShellStopTool(FunctionTool):
-    name: str = "astrbot_inta_shell_stop"
-    description: str = (
-        "Terminate an inta_shell session. ALWAYS call this when done to free "
-        "resources (each session holds a process and pipes). Default: send "
-        "Ctrl+C for graceful exit, then force-kill on timeout. Use `force=true` "
-        "only if the session is fully unresponsive. Use inta_shell_list first "
-        "to see what's still running."
-    )
-    parameters: dict = field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "session_id": {
-                    "type": "string",
-                    "description": "Session ID to terminate.",
-                },
-                "force": {
-                    "type": "boolean",
-                    "description": (
-                        "If true, kill immediately without sending Ctrl+C. "
-                        "Use only when the session is fully unresponsive."
-                    ),
-                    "default": False,
-                },
-            },
-            "required": ["session_id"],
-        }
-    )
-
-    async def call(
-        self,
-        context: ContextWrapper[AstrAgentContext],
-        session_id: str,
-        force: bool = False,
-        **kwargs,
-    ) -> ToolExecResult:
-        _record(self.name)
-        try:
-            # WHY: tools.inta_shell.tools.stop() 内部已通过 _ok/_deny
-            # 返回 JSON 字符串。直接透传,绕过 unwrap() 的 dict 类型校验。
-            return await _inta_shell_tools.stop(
-                _inta_component, session_id, force=force
-            )
-        except Exception as e:
-            return err_json(f"inta_shell_stop 失败: {e}")
-
-
-@dataclass
-class IntaShellListTool(FunctionTool):
-    name: str = "astrbot_inta_shell_list"
-    description: str = (
-        "List all active inta_shell sessions. Use to check what needs cleanup "
-        "with inta_shell_stop before finishing a task."
-    )
-    parameters: dict = field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {},
-        }
-    )
-
-    async def call(
-        self,
-        context: ContextWrapper[AstrAgentContext],
-        **kwargs,
-    ) -> ToolExecResult:
-        _record(self.name)
-        try:
-            # WHY: tools.inta_shell.tools.list_sessions() 内部已通过 _ok/_deny
-            # 返回 JSON 字符串。直接透传,绕过 unwrap() 的 dict 类型校验。
-            return await _inta_shell_tools.list_sessions(_inta_component)
-        except Exception as e:
-            return err_json(f"inta_shell_list 失败: {e}")
+# 13 个 FunctionTool 类(CodeCheck / EsSearch / FileRemove / FileDiff /
+# TodoCreate / TodoQuery / TodoModify / TodoClear / IntaShellStart / IntaShellSend /
+# IntaShellRead / IntaShellStop / IntaShellList) + 1 个 _TodoToolBase 已提取到
+# tools/function_tools/(PR-2 2026-06-23)。原 main.py 第 153-980 行 ~830 行整体下沉。
 
 
 # ── 插件入口 ────────────────────────────────────────
 
 
-_PLUGINS_TOOLS = [
-    CodeCheckTool(),
-    EsSearchTool(),
-    FileRemoveTool(),
-    FileDiffTool(),
-    TodoCreateTool(),
-    TodoQueryTool(),
-    TodoModifyTool(),
-    TodoClearTool(),
-    IntaShellStartTool(),
-    IntaShellSendTool(),
-    IntaShellReadTool(),
-    IntaShellStopTool(),
-    IntaShellListTool(),
-]
+# PR-2 (2026-06-23): 工具实例化从硬编码列表改为 ALL_TOOL_CLASSES 迭代。
+# 每个类继续用默认参数实例化(无状态差异,保持 v2.5 行为)。
+_PLUGINS_TOOLS = [cls() for cls in ALL_TOOL_CLASSES]
 
 
 def _build_allowed_ids(context, config: dict) -> set[str]:
@@ -1169,9 +328,13 @@ class SPCodeToolkit(star.Star):
             session_timeout_seconds=cfg["session_timeout"],
             enable_block=cfg["block_unsafe"],
         )
-        global _inta_component, _inta_default_cwd
-        _inta_component = component
-        _inta_default_cwd = cfg["default_cwd"]
+        # PR-2 (2026-06-23): 组件 + cwd 写入 tools.inta_shell.runtime 模块级单例
+        # (替代 main.py 原模块级 _inta_component / _inta_default_cwd,便于 5 个
+        # IntaShell*Tool 类从外部引用)
+        from .tools.inta_shell import runtime as _inta_runtime
+
+        _inta_runtime.component = component
+        _inta_runtime.default_cwd = cfg["default_cwd"]
         logger.info(
             "[inta_shell] initialized: max_sessions=%d, session_timeout=%ds, "
             "block_unsafe=%s, default_cwd=%s",
@@ -1759,13 +922,15 @@ class SPCodeToolkit(star.Star):
 
     async def terminate(self):
         """Star 框架在插件卸载/重载时调用。"""
-        global _inta_component, _inta_default_cwd
+        # PR-2 (2026-06-23): 组件状态从 main.py 模块级变量改为
+        # tools.inta_shell.runtime 单例。这里延迟 import 避免循环依赖。
+        from .tools.inta_shell import runtime as _inta_runtime
 
         # 0. 停 inta_shell 交互式 Shell 组件
-        if _inta_component is not None:
+        if _inta_runtime.component is not None:
             try:
                 logger.info("[inta_shell] terminating component...")
-                summary = await _inta_component.shutdown()
+                summary = await _inta_runtime.component.shutdown()
                 logger.info(
                     "[inta_shell] terminated: %d session(s) cleaned (graceful=%d forced=%d)",
                     summary.get("total", 0),
@@ -1775,8 +940,8 @@ class SPCodeToolkit(star.Star):
             except Exception as e:
                 logger.warning("[inta_shell] shutdown error: %s", e)
             finally:
-                _inta_component = None
-                _inta_default_cwd = ""
+                _inta_runtime.component = None
+                _inta_runtime.default_cwd = ""
 
         mgr = self.context.get_llm_tool_manager()
 
