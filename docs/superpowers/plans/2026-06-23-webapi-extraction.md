@@ -30,6 +30,7 @@
 | **Create** | `tools/webapi/file_browser.py` | `handle()` for `GET /spcode/file-browser` + 12 辅助 |
 | **Create** | `tools/webapi/file_restore.py` | `handle()` for `POST /spcode/file-restore` + 4 辅助 |
 | **Create** | `tests/test_project_status.py` | 新 smoke test(`handle_get_project_status` 之前无直接测试) |
+| **Create** | `tests/test_webapi_helpers_smoke.py` | Chunk 1 smoke test:验证 `_run_git_async` + `_JSONResponseCompat` 可从 `tools.webapi._helpers` import |
 | **Modify** | `main.py`(多处) | 删除 6 handler / 6 register 块 / 21 辅助 / 2 跨端点 / 3 常量 / `class _JSONResponseCompat`;`initialize()` 改为 `register_webapi_routes(self)` |
 | **Modify** | `tests/conftest.py` | 新增 `handlers` fixture,导出 `HANDLERS` 字典 |
 | **Modify** | `tests/test_plan_mode.py` | 5 处 `plugin.handle_get_plan_mode` → `handlers["handle_get_plan_mode"](plugin)` |
@@ -210,19 +211,28 @@ git commit -m "feat(webapi): add _run_git_async to webapi/_helpers.py"
 
 ---
 
-## Task 1.3: 从 `main.py` 删除 `_run_git_async` 定义 + 处理 6 处调用点
+## Task 1.3: 从 `main.py` 删除 `_run_git_async` 定义 + 处理 7 处调用点
 
 **Files:**
-- Modify: `main.py` (line 73-130 删除;2941/2988/3002 git_diff 调用;4174/4236/4348 file_restore 调用)
+- Modify: `main.py` (line 73-130 删除;7 处 `await _run_git_async(...)` 调用点保留不动,后续 chunk 处理)
 
-- [ ] **Step 1: 验证 main.py 当前调用 `_run_git_async` 的位置**
+- [ ] **Step 1: 验证 main.py 当前调用 `_run_git_async` 的位置(精确 7 处)**
 
 Run: `cd F:\github\astrbot_plugin_spcode_toolkit && grep -nE "_run_git_async" main.py`
-Expected: 看到 6 处 `await _run_git_async(...)` 调用(git_diff 3 处 + file_restore 3 处)+ 1 处 `async def _run_git_async` 定义。
+Expected: 看到 **7 处** `await _run_git_async(...)` 调用:
+- line 332(`head_result = await _run_git_async(...)` 在 `handle_get_git_diff` 内,P1 perf 改造)
+- line 2941(`probe = await _run_git_async(...)`)
+- line 2988(`raw_result = await _run_git_async(...)`)
+- line 3002(`numstat_result = await _run_git_async(...)`)
+- line 4174(file_restore `probe`)
+- line 4236(file_restore `status`)
+- line 4348(file_restore `restore_cmd`)
 
-> **重要**:此 Task **不**修改调用点代码(只删定义)。调用点改造属于 Chunk 4(git_diff)和 Chunk 3(file_restore)的 Pattern B 改造。本 Task 只确保 "删定义后调用点临时 fail 之前能跑通测试"。
+加 1 处 `async def _run_git_async(...)` 定义(line 80)。
+
+> **重要**:此 Task **不**修改调用点代码(只删定义)。调用点改造属于 Chunk 4(git_diff 4 处:332/2941/2988/3002)和 Chunk 3(file_restore 3 处:4174/4236/4348)的 Pattern B 改造。本 Task 只确保"删定义后调用点临时 fail 之前能跑通测试"。
 >
-> **本 Task 的实际工作**:仅在调用点临时加 `from .webapi import _helpers as _webapi_helpers` 等待 Chunk 3/4 处理;但更简洁的方案是**先 commit 删定义的失败,再在 Chunk 3/4 各自处理**。此处采用简洁方案。
+> **本 Task 的实际工作**:仅在 main.py 顶部加临时 re-export 占位,让 7 处调用通过 `main._run_git_async` 仍能找到符号;这些占位在 Chunk 5 集中删除。
 
 - [ ] **Step 2: 从 main.py 删除 `_run_git_async` 函数定义(line 73-130)**
 
@@ -252,59 +262,93 @@ Expected: 看到 6 处 `await _run_git_async(...)`(调用未变)+ 2 行 re-expor
 ```bash
 cd F:\github\astrbot_plugin_spcode_toolkit
 git add main.py
-git commit -m "refactor(webapi): remove _run_git_async from main.py, re-export from webapi/_helpers"
+git commit -m "refactor(webapi): remove _run_git_async from main.py, re-export from webapi/_helpers (TEMP, removed in Chunk 5)"
 ```
 
 ---
 
-## Task 1.4: 迁移 `tests/test_run_git_async.py` import 路径
+## Task 1.4: 迁移 `tests/test_run_git_async.py` import 路径(7 处)
 
 **Files:**
-- Modify: `tests/test_run_git_async.py` (6 处 `from astrbot_plugin_spcode_toolkit.main import _run_git_async`)
+- Modify: `tests/test_run_git_async.py` (6 处 `from main import _run_git_async` + 1 处 `from main import main as _m` + 2 处 `_m._run_git_async` 调用)
 
-- [ ] **Step 1: 定位全部 6 处 import**
+- [ ] **Step 1: 定位全部 7 处需要修改的位置**
 
-Run: `cd F:\github\astrbot_plugin_spcode_toolkit && grep -nE "from astrbot_plugin_spcode_toolkit.main import _run_git_async" tests/test_run_git_async.py`
-Expected: 6 行命中(行 25/39/52/64/75/82 附近)。
+Run: `cd F:\github\astrbot_plugin_spcode_toolkit && grep -nE "from astrbot_plugin_spcode_toolkit.main import _run_git_async|from astrbot_plugin_spcode_toolkit import main as _m" tests/test_run_git_async.py`
+Expected: 7 行命中(直接 import 6 处 + `_m` alias 1 处):
+- line 25, 39, 52, 64, 77, 135: `from astrbot_plugin_spcode_toolkit.main import _run_git_async`
+- line 103: `from astrbot_plugin_spcode_toolkit import main as _m`
 
-- [ ] **Step 2: 批量替换(逐行使用 `astrbot_file_edit_tool`)**
+加上 line 107/116 的 `_m._run_git_async(...)` 调用(line 103 的 import 改了之后,line 107/116 也要相应改)。
+
+- [ ] **Step 2: 批量替换直接 import(6 处,逐行使用 `astrbot_file_edit_tool`)**
 
 对每行 `from astrbot_plugin_spcode_toolkit.main import _run_git_async`:
 - old: `from astrbot_plugin_spcode_toolkit.main import _run_git_async`
 - new: `from astrbot_plugin_spcode_toolkit.tools.webapi._helpers import _run_git_async`
 
-- [ ] **Step 3: 跑测试验证 green**
+- [ ] **Step 3: 替换 `_m` alias + 2 处调用(3 处修改)**
+
+line 103:
+- old: `from astrbot_plugin_spcode_toolkit import main as _m`
+- new: `from astrbot_plugin_spcode_toolkit.tools.webapi import _helpers as _helpers_mod`
+
+line 107 与 line 116 的 `_m._run_git_async(...)`:
+- old: `await _m._run_git_async(...)`
+- new: `await _helpers_mod._run_git_async(...)`
+
+- [ ] **Step 4: 跑测试验证 green**
 
 Run: `cd F:\github\astrbot_plugin_spcode_toolkit && pytest tests/test_run_git_async.py -v`
 Expected: 全部测试 PASS(基线 6 passed)。
 
-- [ ] **Step 4: 跑项目全量测试,确认未破坏其他文件**
+- [ ] **Step 5: 跑项目全量测试,确认未破坏其他文件**
 
 Run: `cd F:\github\astrbot_plugin_spcode_toolkit && pytest tests/ -q`
-Expected:全部 PASS(基线)。**`tests/test_git_diff.py` 可能 fail,因为它的 monkeypatch 仍指向 main.py 的 re-export 占位;如果 fail,记录在 CHANGELOG 但不修复(Chunk 4 处理)**。
+Expected:大部分 PASS;**`tests/test_git_diff.py` 可能 fail**,因为它的 monkeypatch 仍指向 main.py 的 re-export 占位 → 实际指向 `tools.webapi._helpers._run_git_async`(通过 re-export shim),monkeypatch 改 main.py 符号,**不影响 _helpers 模块内部符号**,所以 test_git_diff monkeypatch 暂时失效,测试会 fail。**这是预期,Chunk 4 处理**。在本 Task Step 5 提交时,记录此 baseline break。
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 6: 提交**
 
 ```bash
 cd F:\github\astrbot_plugin_spcode_toolkit
 git add tests/test_run_git_async.py
-git commit -m "test(webapi): point test_run_git_async imports to webapi/_helpers"
+git commit -m "test(webapi): point test_run_git_async imports to webapi/_helpers (7 sites)"
 ```
 
 ---
 
-## Task 1.5: 把 `class _JSONResponseCompat` 移到 `tools/webapi/_helpers.py`
+## Task 1.5: 把 `class _JSONResponseCompat` 移到 `tools/webapi/_helpers.py`(TDD: test-first)
 
 **Files:**
 - Create: `tools/webapi/_helpers.py` (添加 class)
-- Modify: `main.py` (line 415 删除 class 定义;412/3023/4025/4042 调用点用 Pattern B 改造)
+- Create: `tests/test_webapi_helpers_smoke.py` (扩展)
+- Modify: `main.py` (line 415 删除 class 定义)
 
 - [ ] **Step 1: 读 `main.py` 中 `_JSONResponseCompat` 完整定义**
 
 Read: `main.py` line 415 附近
 Expected: `class _JSONResponseCompat(JSONResponse):` + 完整类体。**记录 import 依赖**(`from astrbot.api.web import JSONResponse`)。
 
-- [ ] **Step 2: 添加 `class _JSONResponseCompat` 到 `tools/webapi/_helpers.py`**
+- [ ] **Step 2: 写一个最小失败的 import 测试(red)**
+
+在 `tests/test_webapi_helpers_smoke.py` 末尾添加:
+```python
+def test_json_response_compat_importable_from_webapi_helpers():
+    """`_JSONResponseCompat` 必须能 import 且继承自某个基类。"""
+    from tools.webapi._helpers import _JSONResponseCompat
+    assert _JSONResponseCompat is not None
+    assert isinstance(_JSONResponseCompat, type)  # 是类
+    # 基类检查:JSONResponse 是 starlette/fastapi 的标准基类
+    from astrbot.api.web import JSONResponse
+    assert issubclass(_JSONResponseCompat, JSONResponse)
+```
+
+- [ ] **Step 3: 跑测试,确认 red**
+
+Run: `cd F:\github\astrbot_plugin_spcode_toolkit && pytest tests/test_webapi_helpers_smoke.py::test_json_response_compat_importable_from_webapi_helpers -v`
+Expected: FAIL,`ImportError: cannot import name '_JSONResponseCompat' from 'tools.webapi._helpers'`。
+
+- [ ] **Step 4: 在 `tools/webapi/_helpers.py` 添加 class 实现**
 
 在 `tools/webapi/_helpers.py` 末尾添加:
 ```python
@@ -313,52 +357,42 @@ from astrbot.api.web import JSONResponse  # 实际 import,不是 TYPE_CHECKING
 
 class _JSONResponseCompat(JSONResponse):
     """JSONResponse 兼容 shim:某些 AstrBot 版本不接受 headers kw。
-    
+
     在 main.py 时期被 webapi handler 4 处使用(详见 spec §4.2)。
     搬迁到本文件以避免 webapi → main 反向 import 循环。
     """
-    # 复制 main.py 原类的完整类体
-    ...
+    # 复制 main.py 原类的完整类体(从 main.py line 415 起复制)
+    def __init__(self, content=None, status_code: int = 200, headers: dict | None = None, **kwargs):
+        # ... 实际类体从 main.py 复制 ...
+        ...
 ```
 
-具体类体内容请从 `main.py` line 415 复制,**不改**任何方法体。
+**重要**:Step 4 的代码块**必须**包含从 `main.py` line 415 起的完整类体(所有 `__init__` / `render` / `__call__` 等方法)。**完整复制**,不做任何修改。
 
-- [ ] **Step 3: 写一个最小失败的 import 测试(red)**
-
-在 `tests/test_webapi_helpers_smoke.py` 添加:
-```python
-def test_json_response_compat_importable_from_webapi_helpers():
-    from tools.webapi import _helpers
-    assert hasattr(_helpers, "_JSONResponseCompat")
-    from tools.webapi._helpers import _JSONResponseCompat
-    assert issubclass(_JSONResponseCompat, object)  # 简化基类检查
-```
-
-- [ ] **Step 4: 运行测试,确认 red → green**
+- [ ] **Step 5: 跑测试,确认 green**
 
 Run: `cd F:\github\astrbot_plugin_spcode_toolkit && pytest tests/test_webapi_helpers_smoke.py -v`
-Expected: PASS,2 passed。
+Expected: PASS,2 passed(原 `_run_git_async` 1 个 + 新 `_JSONResponseCompat` 1 个)。
 
-- [ ] **Step 5: 从 main.py 删除 `class _JSONResponseCompat` 定义 + 临时 re-export**
+- [ ] **Step 6: 从 main.py 删除 `class _JSONResponseCompat` 定义 + 临时 re-export**
 
-同 Task 1.3 Step 2-3 模式:
 - 删除 main.py line 415 的 class 定义
-- main.py 顶部添加 re-export:
+- main.py 顶部(Task 1.3 加的 re-export 之后)添加 re-export:
   ```python
-  from tools.webapi._helpers import _JSONResponseCompat  # TEMPORARY
+  from tools.webapi._helpers import _JSONResponseCompat  # TEMPORARY,removed in Chunk 5
   ```
 
-- [ ] **Step 6: 验证 main.py 仍可 import**
+- [ ] **Step 7: 验证 main.py 仍可 import + 类仍可被引用**
 
 Run: `cd F:\github\astrbot_plugin_spcode_toolkit && python -c "from astrbot_plugin_spcode_toolkit import main; print(main._JSONResponseCompat.__module__)"`
 Expected: 打印 `tools.webapi._helpers`。
 
-- [ ] **Step 7: 提交**
+- [ ] **Step 8: 提交**
 
 ```bash
 cd F:\github\astrbot_plugin_spcode_toolkit
 git add tools/webapi/_helpers.py tests/test_webapi_helpers_smoke.py main.py
-git commit -m "refactor(webapi): move _JSONResponseCompat to webapi/_helpers.py"
+git commit -m "refactor(webapi): move _JSONResponseCompat to webapi/_helpers.py (TEMP shim, removed in Chunk 5)"
 ```
 
 ---
