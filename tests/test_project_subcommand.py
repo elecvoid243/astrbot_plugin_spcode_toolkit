@@ -104,11 +104,11 @@ def _patch_substeps_success(plugin):
         setattr(plugin.agentsmd, method_name, m)
     # agentsmd 同步方法 — plugin.agentsmd.unload
     plugin.agentsmd.unload = MagicMock(return_value="mock-unload-ok")
-    # codegraph 子方法 — 暂留 plugin._codegraph_*(PR-6 才搬)
-    for name in ("_codegraph_init_or_uninit", "_codegraph_set_project"):
+    # codegraph 子方法 — PR-6 (2026-06-23) 已搬到 plugin.codegraph.<method>
+    for method_name in ("init", "set_project"):
         m = MagicMock()
         m.side_effect = _ok
-        setattr(plugin, name, m)
+        setattr(plugin.codegraph, method_name, m)
 
 
 @pytest.fixture

@@ -133,12 +133,20 @@ def _patch_internal_methods(plugin, *, agentsmd_md_exists=False, custom_async_ge
         m.return_value = ret_val
         setattr(plugin.agentsmd, method_name, m)
         mocks[method_name] = m
-    # codegraph 方法(暂留 plugin.*,PR-6 才会搬)
-    for name in ("_codegraph_init_or_uninit", "_codegraph_set_project"):
+    # PR-6 (2026-06-23): codegraph 业务搬到 tools.codegraph 子包,
+    # main.py 现在调 self.codegraph.init / .set_project。
+    codegraph_async = {
+        "init": lambda *a, **kw: None,
+        "set_project": lambda *a, **kw: None,
+    }
+    for method_name, _ in codegraph_async.items():
         m = MagicMock()
-        m.side_effect = custom_async_gens.get(name, _async_gen_ok)
-        setattr(plugin, name, m)
-        mocks[name] = m
+        # mock dict key 改用 ``codegraph_<method>`` 形式,
+        # 避免与 agentsmd 自己的 "init" key 冲突。
+        mock_key = f"codegraph_{method_name}"
+        m.side_effect = custom_async_gens.get(mock_key, _async_gen_ok)
+        setattr(plugin.codegraph, method_name, m)
+        mocks[mock_key] = m
     return mocks
 
 
@@ -309,8 +317,8 @@ def test_project_load_happy_path_calls_all_steps(tmp_path):
     # 4 个核心方法都被调用(顺序: agentsmd_init, agentsmd_load, codegraph_init, codegraph_set)
     mocks["init"].assert_called_once()
     mocks["load"].assert_called_once()
-    mocks["_codegraph_init_or_uninit"].assert_called_once()
-    mocks["_codegraph_set_project"].assert_called_once()
+    mocks["codegraph_init"].assert_called_once()
+    mocks["codegraph_set_project"].assert_called_once()
     # _agentsmd_unload 不该被调
     mocks["unload"].assert_not_called()
     # 调用顺序: 严格按 spec 1→2→3
@@ -319,16 +327,16 @@ def test_project_load_happy_path_calls_all_steps(tmp_path):
     for name in [
         "init",
         "load",
-        "_codegraph_init_or_uninit",
-        "_codegraph_set_project",
+        "codegraph_init",
+        "codegraph_set_project",
     ]:
         all_calls.extend((name, c) for c in mocks[name].mock_calls)
     actual_order = [n for n, _ in all_calls]
     assert actual_order == [
         "init",
         "load",
-        "_codegraph_init_or_uninit",
-        "_codegraph_set_project",
+        "codegraph_init",
+        "codegraph_set_project",
     ], f"调用顺序不符 spec,实际: {actual_order}"
 
     # 状态已记录
@@ -345,7 +353,7 @@ def test_project_load_happy_path_calls_all_steps(tmp_path):
 # 导致 AGENTS.md init/load 或 codegraph init/set 任一失败时,
 # 仍会无条件 yield "✅ 项目已加载" 并把假成功登记到 _loaded_projects。
 # 这些测试验证修复:子方法 yield "❌" 即立刻中止,不再继续后续步骤。
-# "⚠️" 不算失败(_codegraph_init_or_uninit 内部 retry 路径会用到)。
+# "⚠️" 不算失败(codegraph.init 内部 retry 路径会用到)。
 
 
 def test_project_load_aborts_on_agentsmd_init_error(tmp_path):
@@ -379,8 +387,8 @@ def test_project_load_aborts_on_agentsmd_init_error(tmp_path):
     mocks["init"].assert_called_once()
     # 3. 后续 3 个子方法**未被调**(stop at first error)
     mocks["load"].assert_not_called()
-    mocks["_codegraph_init_or_uninit"].assert_not_called()
-    mocks["_codegraph_set_project"].assert_not_called()
+    mocks["codegraph_init"].assert_not_called()
+    mocks["codegraph_set_project"].assert_not_called()
     # 4. 中止总结消息出现
     assert any("失败" in m and "中止" in m for m in msgs), (
         f"应出现 abort 总结消息,实际: {msgs}"
@@ -415,8 +423,8 @@ def test_project_load_aborts_on_agentsmd_load_error(tmp_path):
     # load 被调了一次
     mocks["load"].assert_called_once()
     # codegraph 步骤**未启动**
-    mocks["_codegraph_init_or_uninit"].assert_not_called()
-    mocks["_codegraph_set_project"].assert_not_called()
+    mocks["codegraph_init"].assert_not_called()
+    mocks["codegraph_set_project"].assert_not_called()
     # 错误消息 + 中止总结
     assert any("❌ 模拟:AGENTS.md 加载失败" in m for m in msgs)
     assert any("失败" in m and "中止" in m for m in msgs)
@@ -434,7 +442,7 @@ def test_project_load_aborts_on_codegraph_init_error(tmp_path):
     mocks = _patch_internal_methods(
         plugin,
         custom_async_gens={
-            "_codegraph_init_or_uninit": _make_error_gen(
+            "codegraph_init": _make_error_gen(
                 "❌ 模拟:codegraph CLI 找不到"
             ),
         },
@@ -446,9 +454,9 @@ def test_project_load_aborts_on_codegraph_init_error(tmp_path):
     # 前 3 步都被调
     mocks["init"].assert_called_once()
     mocks["load"].assert_called_once()
-    mocks["_codegraph_init_or_uninit"].assert_called_once()
+    mocks["codegraph_init"].assert_called_once()
     # 最后一步 set **未被调**
-    mocks["_codegraph_set_project"].assert_not_called()
+    mocks["codegraph_set_project"].assert_not_called()
     # 错误消息 + 中止总结
     assert any("❌ 模拟:codegraph CLI 找不到" in m for m in msgs)
     assert any("失败" in m and "中止" in m for m in msgs)
@@ -461,7 +469,7 @@ def test_project_load_aborts_on_codegraph_init_error(tmp_path):
 def test_project_load_aborts_on_codegraph_set_error(tmp_path):
     """前 3 步都成功,codegraph_set 失败 → 中止,状态不登记。
 
-    验证 _codegraph_set_project 是最后一道关卡,它的失败也能被正确捕获。
+    验证 codegraph.set_project 是最后一道关卡,它的失败也能被正确捕获。
     """
     p = tmp_path / "proj"
     p.mkdir()
@@ -469,7 +477,7 @@ def test_project_load_aborts_on_codegraph_set_error(tmp_path):
     mocks = _patch_internal_methods(
         plugin,
         custom_async_gens={
-            "_codegraph_set_project": _make_error_gen("❌ 模拟:MCP 重启失败"),
+            "codegraph_set_project": _make_error_gen("❌ 模拟:MCP 重启失败"),
         },
     )
     event = _make_event(umo="test:umo")
@@ -479,8 +487,8 @@ def test_project_load_aborts_on_codegraph_set_error(tmp_path):
     # 前 3 步都被调
     mocks["init"].assert_called_once()
     mocks["load"].assert_called_once()
-    mocks["_codegraph_init_or_uninit"].assert_called_once()
-    mocks["_codegraph_set_project"].assert_called_once()
+    mocks["codegraph_init"].assert_called_once()
+    mocks["codegraph_set_project"].assert_called_once()
     # 错误消息 + 中止总结
     assert any("❌ 模拟:MCP 重启失败" in m for m in msgs)
     assert any("失败" in m and "中止" in m for m in msgs)
@@ -491,7 +499,7 @@ def test_project_load_aborts_on_codegraph_set_error(tmp_path):
 
 
 def test_project_load_does_not_abort_on_warning(tmp_path):
-    """⚠️ 不触发中止 — _codegraph_init_or_uninit 内部 retry 路径会用到。
+    """⚠️ 不触发中止 — codegraph.init 内部 retry 路径会用到。
 
     _codegraph_init_or_uninit 在 "目标已初始化 → 自动 --force 重试" 路径上
     以 "⚠️ ..." 起头,但最终会成功(返回 ✅)。这期间不能被误判为失败。
@@ -506,7 +514,7 @@ def test_project_load_does_not_abort_on_warning(tmp_path):
     mocks = _patch_internal_methods(
         plugin,
         custom_async_gens={
-            "_codegraph_init_or_uninit": _warning_gen,
+            "codegraph_init": _warning_gen,
         },
     )
     event = _make_event(umo="test:umo")
@@ -516,8 +524,8 @@ def test_project_load_does_not_abort_on_warning(tmp_path):
     # 后续方法**全部被调**(warning 不中止)
     mocks["init"].assert_called_once()
     mocks["load"].assert_called_once()
-    mocks["_codegraph_init_or_uninit"].assert_called_once()
-    mocks["_codegraph_set_project"].assert_called_once()
+    mocks["codegraph_init"].assert_called_once()
+    mocks["codegraph_set_project"].assert_called_once()
     # 状态已登记
     assert "test:umo" in plugin._loaded_projects
     # 成功消息
@@ -581,9 +589,9 @@ def test_project_unload_with_default_project_set():
 
     # agentsmd unload + codegraph set 都应被调
     mocks["unload"].assert_called_once()
-    mocks["_codegraph_set_project"].assert_called_once()
-    # _codegraph_set_project 的参数应为默认项目
-    call_args = mocks["_codegraph_set_project"].call_args
+    mocks["codegraph_set_project"].assert_called_once()
+    # codegraph.set_project 的参数应为默认项目
+    call_args = mocks["codegraph_set_project"].call_args
     assert "/default/proj" in str(call_args), (
         f"set 应回退到 /default/proj,实际: {call_args}"
     )
@@ -609,7 +617,7 @@ def test_project_unload_without_default_project():
     # agentsmd unload 应被调
     mocks["unload"].assert_called_once()
     # codegraph set 不应被调
-    mocks["_codegraph_set_project"].assert_not_called()
+    mocks["codegraph_set_project"].assert_not_called()
     # 提示跳过
     assert any("codegraph_project 未配置" in m for m in msgs)
     # 状态被清空(即便 set 跳过)

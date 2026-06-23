@@ -24,13 +24,14 @@ from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import StarTools, register  # noqa: F401  (re-export for test compat: tests/test_todo_list.py uses main_mod.StarTools)
 
 from .tools._config_filter import ALL_TOOL_NAMES, filter_enabled_tools
-from .tools._codegraph_mcp import (
-    SHELL_META_RE,
-    build_cli_launcher,
-    detect_codegraph_launcher,
-    ensure_stdio_allowlist,
-    resolve_project_path,
+# PR-6 (2026-06-23): 移除 _codegraph_mcp 5 个 import — 业务已迁到
+# tools/codegraph/{bootstrap,manager}.py;main.py 只保留插件入口职责。
+from .tools.codegraph import (
+    CodegraphManager,
+    bootstrap_mcp,
+    shutdown_mcp,
 )
+from .tools.codegraph import state as _codegraph_state
 # spcode webapi handlers all live in tools/webapi/*; main.py no longer
 # re-exports them.  The 6 endpoints are registered in one shot via
 # ``register_webapi_routes`` below.  We still import the git-diff
@@ -87,18 +88,9 @@ import datetime as _datetime
 # inta_shell 组件单例 + 默认 cwd 已迁移到 tools/inta_shell/runtime.py(PR-2 2026-06-23)
 # 5 个 IntaShell*Tool 类从 tools.function_tools.* 引用
 
-# 防御性:老版本 AstrBot 可能没有 MCP 异常类
-try:
-    from astrbot.core.provider.func_tool_manager import (  # type: ignore
-        MCPShutdownTimeoutError,
-        MCPInitTimeoutError,
-    )
-
-    _HAS_MCP_EXCEPTIONS = True
-except ImportError:
-    _HAS_MCP_EXCEPTIONS = False
-    MCPShutdownTimeoutError = None  # type: ignore
-    MCPInitTimeoutError = None  # type: ignore
+# PR-6 (2026-06-23): MCP 异常类(MCPShutdownTimeoutError / MCPInitTimeoutError) +
+# _HAS_MCP_EXCEPTIONS 标志全部搬到 tools/codegraph/bootstrap.py。main.py
+# 不再直接处理 MCP shutdown 超时。
 
 # _stats + _record 已提取到 tools/_stats.py(PR-1 2026-06-23)
 
@@ -207,10 +199,6 @@ class SPCodeToolkit(star.Star):
             "cppcheck_shortcircuit", "all"
         )
 
-        # codegraph 异步启动的 task 引用 + 并发锁
-        self._codegraph_task: asyncio.Task | None = None
-        self._codegraph_dir_locks: dict[str, asyncio.Lock] = {}
-
         # AGENTS.md 子系统(PR-5 2026-06-23):
         # 持有 per-umo AgentsState(替代原 main.py 的 self._loaded_agents dict),
         # 暴露 init/load/unload/update/on_llm_request 方法供 main.py 命令薄壳委托。
@@ -218,6 +206,12 @@ class SPCodeToolkit(star.Star):
             plugin=self,
             is_path_safe=_is_path_safe,
         )
+
+        # codegraph 子系统(PR-6 2026-06-23):
+        # 业务逻辑(/codegraph init/uninit/set + MCP bootstrap/shutdown)搬到
+        # tools/codegraph/ 子包;main.py 只持有 manager 实例做薄壳委托。
+        # task 引用 + per-dir lock 走 tools.codegraph.state 模块级单例。
+        self.codegraph = CodegraphManager(self)
 
         # 已加载项目(per-umo)。/project load 时填充,/project unload 时清空。
         # 与 self.agentsmd.state 平行——一个跟踪 AGENTS.md,一个跟踪整个项目组合状态。
@@ -261,9 +255,11 @@ class SPCodeToolkit(star.Star):
                 "请在 WebUI 配置页勾选要启用的工具后重启 AstrBot。"
             )
 
-        # 异步启动 codegraph MCP(不阻塞插件加载)
+        # 异步启动 codegraph MCP(不阻塞插件加载,PR-6 2026-06-23)
+        # task 引用登记到 tools.codegraph.state 模块级单例,
+        # shutdown_mcp 在 terminate() 取消。
         if _config.get("codegraph_enabled", True):
-            self._codegraph_task = asyncio.create_task(self._bootstrap_codegraph_mcp())
+            _codegraph_state.set_task(asyncio.create_task(bootstrap_mcp(self)))
 
         # ── git 可用性探测 ──
         # 启动期一次同步探测,缺失不阻塞插件加载(端点注册照常);
@@ -585,11 +581,11 @@ class SPCodeToolkit(star.Star):
             ):
                 yield msg
 
-            # 步骤 2/3: codegraph init + set
+            # 步骤 2/3: codegraph init + set(PR-6 2026-06-23 委托给 manager)
             yield event.plain_result(f"⏳ [2/3] codegraph init: {target}")
             async for msg in self._project_load_step(
                 event,
-                self._codegraph_init_or_uninit(event, str(target), init=True),
+                self.codegraph.init(event, str(target)),
                 "[2/3] codegraph init",
             ):
                 yield msg
@@ -597,7 +593,7 @@ class SPCodeToolkit(star.Star):
             yield event.plain_result(f"⏳ [2/3] codegraph set: {target}")
             async for msg in self._project_load_step(
                 event,
-                self._codegraph_set_project(event, str(target)),
+                self.codegraph.set_project(event, str(target)),
                 "[2/3] codegraph set",
             ):
                 yield msg
@@ -666,7 +662,7 @@ class SPCodeToolkit(star.Star):
         default_project = (self._config.get("codegraph_project") or "").strip()
         if default_project:
             yield event.plain_result(f"⏳ codegraph set 回默认项目: {default_project}")
-            async for msg in self._codegraph_set_project(event, default_project):
+            async for msg in self.codegraph.set_project(event, default_project):
                 yield msg
         else:
             yield event.plain_result(
@@ -749,8 +745,9 @@ class SPCodeToolkit(star.Star):
         """/codegraph init <directory>
 
         初始化指定目录为 codegraph 项目(创建 .codegraph/ 索引)。
+        PR-6 (2026-06-23): 薄壳委托给 self.codegraph.init(manager)。
         """
-        async for msg in self._codegraph_init_or_uninit(event, directory, init=True):
+        async for msg in self.codegraph.init(event, directory):
             yield msg
 
     @codegraph.command("uninit")
@@ -758,8 +755,9 @@ class SPCodeToolkit(star.Star):
         """/codegraph uninit <directory>
 
         反初始化指定目录(删除 .codegraph/ 索引)。
+        PR-6 (2026-06-23): 薄壳委托给 self.codegraph.uninit(manager)。
         """
-        async for msg in self._codegraph_init_or_uninit(event, directory, init=False):
+        async for msg in self.codegraph.uninit(event, directory):
             yield msg
 
     @codegraph.command("set")
@@ -768,8 +766,9 @@ class SPCodeToolkit(star.Star):
 
         修改 codegraph 的默认执行目录。后续 LLM 调用的 codegraph_* 工具
         会以新目录为根。
+        PR-6 (2026-06-23): 薄壳委托给 self.codegraph.set_project(manager)。
         """
-        async for msg in self._codegraph_set_project(event, directory):
+        async for msg in self.codegraph.set_project(event, directory):
             yield msg
 
     # ── /agentsmd 命令组(v2.4 合并自独立 agentsmd 插件)──
@@ -822,70 +821,13 @@ class SPCodeToolkit(star.Star):
         async for msg in self.agentsmd.update(event):
             yield msg
 
-    def _build_mcp_cfg(self) -> dict | None:
-        """根据当前 _config 构造 codegraph MCP 启动配置。
-
-        供 _bootstrap_codegraph_mcp 和 _codegraph_set_project 复用。
-        Returns None 如果 install_dir 未配置或验证失败(详细原因已在 _detect_from_install_dir 内 log)。
-        """
-        install_dir = (self._config.get("codegraph_install_dir") or "").strip()
-        if not install_dir:
-            return None
-        cfg = detect_codegraph_launcher(install_dir=install_dir)
-        if not cfg:
-            return None
-        # 若用户在插件配置了 codegraph_project,作为默认项目注入
-        project = (self._config.get("codegraph_project") or "").strip()
-        if project and not SHELL_META_RE.search(project):
-            cfg = dict(cfg)  # 浅拷贝避免污染
-            cfg["args"] = list(cfg["args"]) + ["--path", project]
-        return cfg
-
-    async def _bootstrap_codegraph_mcp(self) -> None:
-        """插件加载后异步拉起 codegraph MCP server。失败不抛异常。"""
-        # 防御性:即便 __init__ 已 gate,函数本身也再 check 一次,便于单测
-        if not self._config.get("codegraph_enabled", True):
-            return
-        try:
-            # v2.1: 必须显式配置 install_dir 才会启动 MCP(去除 auto-detect)
-            install_dir = (self._config.get("codegraph_install_dir") or "").strip()
-            if not install_dir:
-                logger.info(
-                    "codegraph_install_dir 未配置,跳过 MCP 集成"
-                    "(spcode 其它工具照常工作;如需启用请配置 codegraph_install_dir)"
-                )
-                return
-
-            ensure_stdio_allowlist()
-            cfg = self._build_mcp_cfg()
-            if not cfg:
-                # install_dir 已配置但 _detect_from_install_dir 验证失败,
-                # 详细原因已在 _detect_from_install_dir 内 log warning
-                logger.warning(
-                    f"codegraph_install_dir 验证失败,MCP 不启动: {install_dir!r}"
-                )
-                return
-
-            mgr = self.context.get_llm_tool_manager()
-            # 兼容用户在 mcp_server.json 手写过 codegraph 的情况
-            if "codegraph" in mgr.mcp_server_runtime:
-                logger.info("检测到已注册的 codegraph MCP,先停掉再用插件配置重启")
-                await mgr.disable_mcp_server("codegraph")
-
-            await mgr.enable_mcp_server(
-                name="codegraph",
-                config=cfg,
-                timeout=180,  # 与 AstrBot DEFAULT_ENABLE_MCP_TIMEOUT_SECONDS 一致
-            )
-            logger.info(
-                f"codegraph MCP 已启动: {Path(cfg['command']).name} "
-                f"{' '.join(cfg['args'])}"
-            )
-        except Exception as e:
-            logger.warning(f"codegraph MCP 启动失败,spcode 其它工具不受影响: {e}")
-
     async def terminate(self):
-        """Star 框架在插件卸载/重载时调用。"""
+        """Star 框架在插件卸载/重载时调用。
+
+        PR-6 (2026-06-23):
+        - 业务代理给 tools.codegraph.shutdown_mcp(取消 task + 停 MCP)
+        - 保留 inta_shell 关闭段(与 codegraph 无关,业务在 tools.inta_shell.runtime)
+        """
         # PR-2 (2026-06-23): 组件状态从 main.py 模块级变量改为
         # tools.inta_shell.runtime 单例。这里延迟 import 避免循环依赖。
         from .tools.inta_shell import runtime as _inta_runtime
@@ -914,243 +856,12 @@ class SPCodeToolkit(star.Star):
                 _inta_runtime.component = None
                 _inta_runtime.default_cwd = ""
 
-        mgr = self.context.get_llm_tool_manager()
+        # PR-6 (2026-06-23): 取消 task + 停 MCP 都搬到 tools.codegraph.shutdown_mcp
+        await shutdown_mcp(self)
 
-        # 1. 取消还在跑的 bootstrap 任务
-        if self._codegraph_task and not self._codegraph_task.done():
-            self._codegraph_task.cancel()
-            try:
-                await self._codegraph_task
-            except (asyncio.CancelledError, Exception):
-                pass
-
-        # 2. 停 codegraph MCP server (只杀 serve --mcp 代理子进程)
-        if "codegraph" in mgr.mcp_server_runtime:
-            try:
-                await mgr.disable_mcp_server("codegraph", timeout=15)
-            except Exception as e:
-                if (
-                    _HAS_MCP_EXCEPTIONS
-                    and MCPShutdownTimeoutError
-                    and isinstance(e, MCPShutdownTimeoutError)
-                ):
-                    logger.warning("codegraph MCP 关闭超时,可能留有僵尸代理子进程")
-                else:
-                    raise
-
-    async def _codegraph_set_project(self, event, directory: str):
-        """`/codegraph set <dir>` 命令实现:修改 codegraph 的默认项目根目录。
-
-        行为:
-        1. 校验目录(必须存在)
-        2. 更新 self._config["codegraph_project"]
-        3. 如果 MCP server 正在跑,重启它以应用新的 --path 参数
-        4. 后续 LLM 调用的 codegraph_* 工具会以新项目为默认根
-        """
-        # 1. 路径校验(必须存在的目录)
-        target = resolve_project_path(
-            directory,
-            init=True,
-            user_blacklist=self._config.get("file_remove_blacklist") or [],
-        )
-        if isinstance(target, str):  # 错误消息
-            yield event.plain_result(target)
-            return
-
-        target_str = str(target)
-        # 2. 更新配置
-        old = (self._config.get("codegraph_project") or "").strip()
-        self._config["codegraph_project"] = target_str
-        logger.info(f"codegraph_project: {old!r} → {target_str!r}")
-
-        mgr = self.context.get_llm_tool_manager()
-        mcp_running = "codegraph" in mgr.mcp_server_runtime
-
-        # 3a. 如果 MCP 没在跑(可能 install_dir 未配置 / 验证失败),
-        # 不重启,只更新 config;bootstrap 或下次重启会生效
-        if not mcp_running:
-            yield event.plain_result(
-                f"✅ codegraph_project 已更新为: {target_str}\n"
-                "   (MCP 当前未运行,新项目将在下次启动 codegraph MCP 时生效)"
-            )
-            return
-
-        # 3b. MCP 在跑 → 重启以应用新 --path
-        try:
-            yield event.plain_result(
-                f"🔄 正在重启 codegraph MCP 以应用新项目: {target_str}..."
-            )
-            await mgr.disable_mcp_server("codegraph", timeout=15)
-        except Exception as e:
-            logger.warning(f"codegraph MCP 关闭失败(可能 zombie 进程): {e}")
-            # 继续尝试启动新实例
-
-        try:
-            ensure_stdio_allowlist()
-            cfg = self._build_mcp_cfg()
-            if not cfg:
-                yield event.plain_result(
-                    f"⚠️ 已更新 codegraph_project,但无法构造新 MCP 配置"
-                    f"(install_dir 可能已失效)。新值: {target_str}"
-                )
-                return
-            await mgr.enable_mcp_server(
-                name="codegraph",
-                config=cfg,
-                timeout=180,
-            )
-            yield event.plain_result(
-                f"✅ codegraph 已切换到新项目: {target_str}\n"
-                "   后续 LLM 调用的 codegraph_* 工具默认在此目录下操作"
-            )
-            logger.info(f"codegraph MCP 已重启,新 --path: {target_str}")
-        except Exception as e:
-            logger.warning(f"codegraph MCP 重启失败: {e}")
-            yield event.plain_result(
-                f"❌ codegraph MCP 重启失败: {e}\n"
-                f"   (codegraph_project 已更新为 {target_str},"
-                f"重启 AstrBot 后生效)"
-            )
-
-    async def _codegraph_init_or_uninit(self, event, directory: str, *, init: bool):
-        """共享实现,init/uninit 只差一个 subcommand。"""
-        # 1. 路径校验
-        #    v2.9: init 时要求目录下至少存在一个代码文件(对齐 /agentsmd init);
-        #    uninit 故意跳过此检查(允许对空目录 uninit,语义上无害)。
-        target = resolve_project_path(
-            directory,
-            init=init,
-            user_blacklist=self._config.get("file_remove_blacklist") or [],
-            require_code_files=init,
-        )
-        if isinstance(target, str):  # 错误消息
-            yield event.plain_result(target)
-            return
-
-        # 2. 找 codegraph CLI 启动器
-        # 优先用用户配置的 install_dir;若未配置(单次命令场景),fallback 到 auto-detect
-        install_dir = (self._config.get("codegraph_install_dir") or "").strip() or None
-        mcp_cfg = detect_codegraph_launcher(install_dir=install_dir)
-        cli_launcher = build_cli_launcher(mcp_cfg)
-        if not cli_launcher:
-            yield event.plain_result(
-                "❌ 找不到 codegraph CLI,请先 `npm install -g @colbymchenry/codegraph`"
-            )
-            return
-
-        # 3. 并发锁(防止同目录并发 init/uninit 把 .codegraph/ 写坏)
-        target_str = str(target)
-        lock = self._codegraph_dir_locks.setdefault(target_str, asyncio.Lock())
-        if lock.locked():
-            yield event.plain_result(
-                f"⏳ 目录 {target_str} 已有 codegraph 操作在跑,请等待完成"
-            )
-            return
-        async with lock:
-            # 4. 立即回应
-            action = "初始化" if init else "反初始化"
-            yield event.plain_result(
-                f"⏳ 正在 {action} codegraph 项目 {target_str}...\n"
-                f"   (大型项目可能耗时数分钟,期间请勿重复执行)"
-            )
-
-            # 5. 异步执行
-            sub = "init" if init else "uninit"
-            cmd_args = cli_launcher["args"] + [sub, target_str]
-            if not init:
-                cmd_args.append("--force")
-
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    cli_launcher["command"],
-                    *cmd_args,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-            except FileNotFoundError as e:
-                yield event.plain_result(f"❌ 启动 codegraph 失败: {e}")
-                return
-
-            try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-            except asyncio.TimeoutError:
-                proc.kill()
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=5)
-                except asyncio.TimeoutError:
-                    pass
-                yield event.plain_result(f"❌ codegraph {sub} 超时(300s),已终止")
-                return
-
-            if proc.returncode == 0:
-                if init:
-                    yield event.plain_result(
-                        f"✅ codegraph 初始化完成: {target_str}\n"
-                        f"   下一步:在对话中用 codegraph_status 验证索引,"
-                        f"或直接用 codegraph_explore 触发懒加载建索引"
-                    )
-                else:
-                    yield event.plain_result(
-                        f"✅ codegraph 反初始化完成: {target_str}\n"
-                        f"   (.codegraph/ 目录已删除)"
-                    )
-            else:
-                err = (
-                    (stderr or stdout or b"").decode("utf-8", errors="replace").strip()
-                )
-                err_lower = err.lower()
-                if init and ("not found" in err_lower or "no such file" in err_lower):
-                    yield event.plain_result(
-                        f"❌ 目录不存在: {target_str}\n   请先创建或检查路径"
-                    )
-                elif init and (
-                    "already initialized" in err_lower or "exists" in err_lower
-                ):
-                    # 自动用 --force 重试一次
-                    yield event.plain_result(
-                        "⚠️ 目标目录已初始化 codegraph,自动用 --force 重试..."
-                    )
-                    retry_args = cli_launcher["args"] + [
-                        sub,
-                        target_str,
-                        "--force",
-                    ]
-                    proc2 = await asyncio.create_subprocess_exec(
-                        cli_launcher["command"],
-                        *retry_args,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    try:
-                        stdout2, stderr2 = await asyncio.wait_for(
-                            proc2.communicate(), timeout=180
-                        )
-                        if proc2.returncode == 0:
-                            yield event.plain_result(
-                                f"✅ codegraph 重新初始化完成: {target_str}"
-                            )
-                        else:
-                            err2 = (
-                                (stderr2 or stdout2 or b"")
-                                .decode("utf-8", errors="replace")
-                                .strip()
-                            )
-                            yield event.plain_result(
-                                f"❌ --force 重试也失败:\n{err2[:1500]}"
-                            )
-                    except asyncio.TimeoutError:
-                        proc2.kill()
-                        yield event.plain_result("❌ --force 重试超时")
-                elif (not init) and (
-                    "not initialized" in err_lower or "no .codegraph" in err_lower
-                ):
-                    yield event.plain_result(
-                        "ℹ️ 目标目录未初始化 codegraph(没有 .codegraph/),无需 uninit"
-                    )
-                else:
-                    yield event.plain_result(
-                        f"❌ codegraph {sub} 失败(退出码 {proc.returncode}):\n{err[:1500]}"
-                    )
+    # ── /codegraph 业务方法已提取到 tools/codegraph/ 子包(PR-6 2026-06-23) ───
+    # 4 个 /codegraph 命令(init/uninit/set)的实现 + MCP bootstrap/shutdown
+    # 都委托给 self.codegraph (CodegraphManager 实例),详见 tools/codegraph/。
 
     # ── /agentsmd 业务方法已提取到 tools/agentsmd/ 子包(PR-5 2026-06-23) ───
     # 4 个 /agentsmd 命令(init/load/unload/update)的实现 + on_llm_request 钩子
