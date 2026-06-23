@@ -342,6 +342,31 @@ class SPCodeToolkit(star.Star):
         async for msg in self.agentsmd.update(event):
             yield msg
 
+    @filter.on_llm_request()
+    async def _agentsmd_inject_to_llm_request(
+        self, event: AstrMessageEvent, req: ProviderRequest
+    ):
+        """/agentsmd load 后,每次 LLM 请求前把 AGENTS.md 注入到 system_prompt 末尾。
+
+        委托给 ``self.agentsmd.on_llm_request``,业务实现在
+        ``tools/agentsmd/_handlers.py:AgentsmdHandlers.on_llm_request``。
+
+        WHY 必须挂在 ``SPCodeToolkit`` 上:
+            ``@filter.on_llm_request()`` 是 AstrBot 装饰器,仅识别 ``Star``
+            子类的方法作为 hook;``AgentsmdSubsystem`` 是普通类,其上的
+            ``on_llm_request`` 方法框架不会调用,必须经由本方法转发。
+            (PR-5 2026-06-23 拆分时漏接,导致所有 system_prompt 注入失效)
+
+        Args:
+            event: AstrBot 消息事件对象。
+            req: LLM 请求对象,直接修改 ``req.system_prompt`` 字段。
+
+        Author: elecvoid243, 2026-06-23
+        """
+        if not self._config.get("agentsmd_enabled", True):
+            return
+        await self.agentsmd.on_llm_request(event, req)
+
     async def terminate(self) -> None:
         """Star 框架在插件卸载/重载时调用。"""
         from .tools.inta_shell import runtime as _inta_runtime
