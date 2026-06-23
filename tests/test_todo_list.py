@@ -1048,9 +1048,7 @@ def test_build_filename_sha256_fallback_for_long_umo(tmp_path: Path):
 
     expected_hash = hashlib.sha256(umo.encode("utf-8")).hexdigest()[:16]
     expected = f"{expected_hash}_202606131201.md"
-    assert fname == expected, (
-        f"Expected sha256 fallback for long umo, got {fname!r}"
-    )
+    assert fname == expected, f"Expected sha256 fallback for long umo, got {fname!r}"
     # Sanity: fallback 路径应 < MAX_FILENAME_LEN
     assert len(fname) <= todo_list.MAX_FILENAME_LEN
     # Sanity: 时间戳部分仍在末尾
@@ -1182,9 +1180,7 @@ def test_modify_update_mode_modifies_items(tmp_path: Path):
 def test_modify_delete_mode_removes_items(tmp_path: Path):
     """modify(mode='delete') 等价于 delete(item_ids=...)。"""
     store = _new_store(tmp_path)
-    store.create(
-        UMO, title="t", items=[{"title": "a"}, {"title": "b"}, {"title": "c"}]
-    )
+    store.create(UMO, title="t", items=[{"title": "a"}, {"title": "b"}, {"title": "c"}])
     r = store.modify(UMO, mode="delete", item_ids=[1, 3])
     assert r["ok"] is True
     assert r["deleted"] == 2
@@ -1570,7 +1566,9 @@ def test_todo_create_tool_from_path_happy_path(tmp_path: Path, monkeypatch):
     """from_path 正常 → 落盘文件存在,文件名前缀是 mock umo 清洗后的字符串。"""
     # 把 StarTools.get_data_dir 引导到 tmp_path,避免污染真实 data_dir
     monkeypatch.setattr(
-        main_mod.StarTools, "get_data_dir", classmethod(lambda cls: str(tmp_path))
+        main_mod.StarTools,
+        "get_data_dir",
+        classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
     # 写 fixture
     src = _write_md(tmp_path, _SAMPLE_PLAN_MD, name="src.md")
@@ -1591,14 +1589,14 @@ def test_todo_create_tool_from_path_and_items_both_returns_xor_error(
 ):
     """from_path + items 同时传 → XOR error。"""
     monkeypatch.setattr(
-        main_mod.StarTools, "get_data_dir", classmethod(lambda cls: str(tmp_path))
+        main_mod.StarTools,
+        "get_data_dir",
+        classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
     src = _write_md(tmp_path, _SAMPLE_PLAN_MD)
     tool = main_mod.TodoCreateTool()
     ctx = _mock_context()
-    result = asyncio.run(
-        tool.call(ctx, items=[{"title": "x"}], from_path=str(src))
-    )
+    result = asyncio.run(tool.call(ctx, items=[{"title": "x"}], from_path=str(src)))
     assert '"ok": false' in result
     assert "必须二选一" in result
     assert "不能同时传" in result
@@ -1609,7 +1607,9 @@ def test_todo_create_tool_neither_from_path_nor_items_returns_xor_error(
 ):
     """from_path 与 items 都缺(None) → XOR error。"""
     monkeypatch.setattr(
-        main_mod.StarTools, "get_data_dir", classmethod(lambda cls: str(tmp_path))
+        main_mod.StarTools,
+        "get_data_dir",
+        classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
     tool = main_mod.TodoCreateTool()
     ctx = _mock_context()
@@ -1622,7 +1622,9 @@ def test_todo_create_tool_neither_from_path_nor_items_returns_xor_error(
 def test_todo_create_tool_from_path_title_override(tmp_path: Path, monkeypatch):
     """from_path + title="X" → 落盘 title == "X" (覆盖文件中的 title)。"""
     monkeypatch.setattr(
-        main_mod.StarTools, "get_data_dir", classmethod(lambda cls: str(tmp_path))
+        main_mod.StarTools,
+        "get_data_dir",
+        classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
     src = _write_md(tmp_path, _SAMPLE_PLAN_MD)
     tool = main_mod.TodoCreateTool()
@@ -1641,7 +1643,9 @@ def test_todo_create_tool_from_path_title_override(tmp_path: Path, monkeypatch):
 def test_todo_create_tool_from_path_title_passthrough(tmp_path: Path, monkeypatch):
     """from_path 无 title → 保留文件中的 title。"""
     monkeypatch.setattr(
-        main_mod.StarTools, "get_data_dir", classmethod(lambda cls: str(tmp_path))
+        main_mod.StarTools,
+        "get_data_dir",
+        classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
     src = _write_md(tmp_path, _SAMPLE_PLAN_MD)
     tool = main_mod.TodoCreateTool()
@@ -1656,7 +1660,9 @@ def test_todo_create_tool_from_path_title_passthrough(tmp_path: Path, monkeypatc
 def test_todo_create_tool_from_path_cross_user_adopt(tmp_path: Path, monkeypatch):
     """跨用户: 导入 webchat fixture → 新文件前缀是 mock 用户的 qq_official。"""
     monkeypatch.setattr(
-        main_mod.StarTools, "get_data_dir", classmethod(lambda cls: str(tmp_path))
+        main_mod.StarTools,
+        "get_data_dir",
+        classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
     # 直接写 fixture 内容到一个临时位置
     fixture_path = tmp_path / "src.md"
@@ -1676,7 +1682,9 @@ def test_todo_create_tool_from_path_cross_user_adopt(tmp_path: Path, monkeypatch
 def test_todo_create_tool_from_path_file_not_exists(tmp_path: Path, monkeypatch):
     """from_path 指向不存在的文件 → ok=False + error 含 '文件不存在'。"""
     monkeypatch.setattr(
-        main_mod.StarTools, "get_data_dir", classmethod(lambda cls: str(tmp_path))
+        main_mod.StarTools,
+        "get_data_dir",
+        classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
     tool = main_mod.TodoCreateTool()
     ctx = _mock_context()
@@ -1692,7 +1700,9 @@ def test_todo_create_tool_from_path_end_to_end_preserves_status(
 ):
     """端到端: 导入 fixture → IDs 从 1 重排,status 保留(cancelled 仍是 cancelled)。"""
     monkeypatch.setattr(
-        main_mod.StarTools, "get_data_dir", classmethod(lambda cls: str(tmp_path))
+        main_mod.StarTools,
+        "get_data_dir",
+        classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
     fixture_path = tmp_path / "src.md"
     fixture_path.write_text(
@@ -1723,7 +1733,9 @@ def test_todo_create_tool_from_path_end_to_end_preserves_status(
 def test_todo_create_tool_from_path_none_returns_xor_error(tmp_path: Path, monkeypatch):
     """from_path=None (LLM 传 JSON null) → XOR 防御性触发,error 含 '必须二选一'。"""
     monkeypatch.setattr(
-        main_mod.StarTools, "get_data_dir", classmethod(lambda cls: str(tmp_path))
+        main_mod.StarTools,
+        "get_data_dir",
+        classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
     tool = main_mod.TodoCreateTool()
     ctx = _mock_context()
@@ -1737,7 +1749,9 @@ def test_todo_create_tool_from_path_none_returns_xor_error(tmp_path: Path, monke
 def test_todo_create_tool_from_path_relative_path_rejected(tmp_path: Path, monkeypatch):
     """from_path 相对路径 → ok=False + error 含 '路径必须是绝对路径'。"""
     monkeypatch.setattr(
-        main_mod.StarTools, "get_data_dir", classmethod(lambda cls: str(tmp_path))
+        main_mod.StarTools,
+        "get_data_dir",
+        classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
     tool = main_mod.TodoCreateTool()
     ctx = _mock_context()

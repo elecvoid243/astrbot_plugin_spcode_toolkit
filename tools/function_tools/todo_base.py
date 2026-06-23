@@ -7,6 +7,7 @@
 - 成功路径经 _dispatch → unwrap() → JSON 字符串
 - 失败路径经 _err() 直接生成 JSON 字符串
 """
+
 from __future__ import annotations
 
 import json as _json
@@ -43,7 +44,10 @@ class _TodoToolBase(FunctionTool):
         except AttributeError:
             return {"ok": False, "error": "无 event 上下文"}
         umo = _todo_list_mod.extract_umo(event)
-        data_dir = str(StarTools.get_data_dir())
+        # Pass plugin name explicitly: this module lives in a submodule of the
+        # plugin, so StarTools.get_data_dir()'s stack-based auto-detection cannot
+        # resolve star_map (which only registers the main entry module).
+        data_dir = str(StarTools.get_data_dir("astrbot_plugin_spcode_toolkit"))
         todos_dir = os.path.join(data_dir, "todos")
         store = _todo_list_mod.TodoStore(todos_dir)
         return store, umo
