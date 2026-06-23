@@ -148,12 +148,21 @@ def _make_plugin() -> Any:
     used by tests/test_project_subcommand.py.
 
     v3.2: 从 test_git_diff.py 迁移到 conftest.py,供 test_file_browser.py 复用。
+    PR-7 (2026-06-23): 把 ``plugin.get_loaded_project`` 直接绑定到
+    ``tools.project.state.get``。生产 ``__init__`` 会设 ``self.project =
+    ProjectManager(self)``,但这里 ``__new__`` 绕过了 ``__init__``,所以
+    ``self.project`` 仍是类级 ``@filter.command_group`` 方法对象,
+    ``self.project.get_loaded_project(umo)`` 会 AttributeError。
+    直接绑方法跳过该断点,测试与生产语义等价。
     """
     # 惰性导入避免模块级循环(与 test_git_diff.py 原 import 行为一致)
     from astrbot_plugin_spcode_toolkit.main import SPCodeToolkit
+    from tools.project import state as _proj_state
 
     plugin = SPCodeToolkit.__new__(SPCodeToolkit)
     plugin.context = MagicMock()
+    # PR-7 (2026-06-23): 兼容老代码残留的 ``plugin._loaded_projects``
+    # 读取,实际生效走 state。
     plugin._loaded_projects = {}
     plugin._loaded_agents = {}
     plugin._codegraph_projects = {}
@@ -165,4 +174,7 @@ def _make_plugin() -> Any:
         "file_remove_blacklist": None,
         "git_path": "",
     }
+    # PR-7 (2026-06-23): 详见 docstring — 直接绑 state.get 替代
+    # ``self.project.get_loaded_project`` 链路。
+    plugin.get_loaded_project = _proj_state.get
     return plugin

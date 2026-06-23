@@ -34,6 +34,7 @@ if str(_PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(_PROJECT_DIR))
 
 from astrbot_plugin_spcode_toolkit import main as _main_mod  # noqa: E402
+from tools.project import state as _proj_state  # noqa: E402
 from tools.webapi import git_diff as _git_diff  # noqa: E402
 
 SPCodeToolkit = _main_mod.SPCodeToolkit
@@ -46,6 +47,8 @@ SPCodeToolkit = _main_mod.SPCodeToolkit
 def _make_plugin() -> Any:
     plugin = SPCodeToolkit.__new__(SPCodeToolkit)
     plugin.context = MagicMock()
+    # PR-7 (2026-06-23): ``_loaded_projects`` 不再是实例属性,
+    # 但保留赋值以免早期 MagicMock 测试断言该属性存在时报 AttributeError。
     plugin._loaded_projects = {}
     plugin._loaded_agents = {}
     plugin._codegraph_projects = {}
@@ -56,6 +59,9 @@ def _make_plugin() -> Any:
         "file_remove_blacklist": None,
         "git_path": "",
     }
+    # PR-7 (2026-06-23): handler 通过 ``plugin.get_loaded_project(umo)``
+    # 走 state,所以把方法代理到 state。
+    plugin.get_loaded_project = _proj_state.get
     return plugin
 
 
@@ -74,10 +80,17 @@ def _init_git_repo(path: Path) -> None:
 
 
 def _load_project(plugin: Any, umo: str, directory: str) -> None:
-    plugin._loaded_projects[umo] = {
+    plugin._loaded_projects[umo] = {  # 兼容性保留(详见 PR-7 注释);实际生效走 state
         "directory": str(directory),
         "loaded_at": time.time(),
     }
+    _proj_state.put(
+        umo,
+        {
+            "directory": str(directory),
+            "loaded_at": time.time(),
+        },
+    )
 
 
 def _mock_query(monkeypatch, **values):

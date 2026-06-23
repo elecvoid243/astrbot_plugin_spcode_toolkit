@@ -3,10 +3,11 @@
 Handler 从 main.py 搬出,行为不变。
 """
 from __future__ import annotations
+
 from unittest.mock import MagicMock
 
 import pytest
-
+from tools.project import state as _proj_state
 from tools.webapi import git_worktrees
 
 # 启用 pytest-asyncio 严格模式
@@ -29,7 +30,8 @@ def test_make_git_worktrees_empty_envelope_has_required_fields():
 async def test_handle_returns_no_project_loaded_envelope():
     """空 _loaded_projects 时,返回 no_project_loaded envelope。"""
     plugin = MagicMock()
-    plugin._loaded_projects = {}
+    plugin.get_loaded_project.side_effect = lambda umo: _proj_state.get(umo)
+    _proj_state.reset()
     result = await git_worktrees.handle(plugin)
     assert result["status"] == "ok"
     assert result["data"]["loaded"] is False

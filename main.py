@@ -32,8 +32,8 @@ from .tools.codegraph import (
 )
 from .tools.codegraph import state as _codegraph_state
 from .tools.project import ProjectManager
-from tools.webapi import register_webapi_routes
-from tools.webapi.git_diff import _GIT_DIFF_ENCODING
+from .tools.webapi import register_webapi_routes
+from .tools.webapi.git_diff import _GIT_DIFF_ENCODING
 from .tools.inta_shell.component import LocalInteractiveShellComponent
 from .tools._path_safety import is_path_safe as _is_path_safe
 from .tools.security import PlanModeController, check_is_admin
@@ -376,11 +376,16 @@ class SPCodeToolkit(star.Star):
     async def _project_inject_codegraph_guidance(
         self, event: AstrMessageEvent, req: ProviderRequest
     ):
-        """/project load 后,把 codegraph 优先使用指引注入到 system_prompt 末尾。"""
+        """/project load 后,把 codegraph 优先使用指引注入到 system_prompt 末尾。
+
+        PR-7 (2026-06-23): 已加载项目的存储已从 ``self._loaded_projects`` 迁到
+        ``tools.project.state`` 模块级单例。沿用 ``get_loaded_project()``
+        公开接口,避免直接触达内部 state。
+        """
         if not self._config.get("codegraph_enabled", True):
             return
         umo = event.unified_msg_origin
-        if umo not in self._loaded_projects:
+        if self.get_loaded_project(umo) is None:
             return
         if inject_guidance(req, PROJECT_CODEGRAPH_GUIDANCE, PROJECT_GUIDANCE_MARKER):
             logger.debug(

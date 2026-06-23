@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     from main import SPCodeToolkit
 
-from tools.webapi import (
+from . import (
     file_browser,
     file_restore,
     git_diff,

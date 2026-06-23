@@ -40,10 +40,10 @@ if str(_PROJECT_DIR) not in sys.path:
 # _build_stat_text, _compute_diff_etag, _DIFF_ETAG_CACHE/TL, _run_git_async)
 # 都从 main._X 改到 _gd._X(handler 入口也从 plugin.handle_get_git_diff()
 # 改为 _gd.handle(plugin))。
-from tools.webapi import git_diff as _gd  # noqa: E402
-
 # SPCodeToolkit 类本身仍来自 main(用于测试中 _make_plugin 构造)
 from astrbot_plugin_spcode_toolkit import main as _main_mod  # noqa: E402
+from tools.project import state as _proj_state  # noqa: E402
+from tools.webapi import git_diff as _gd  # noqa: E402
 
 SPCodeToolkit = _main_mod.SPCodeToolkit
 
@@ -73,11 +73,19 @@ def _init_git_repo(path: Path) -> None:
 
 
 def _load_project(plugin: Any, umo: str, directory: str) -> None:
-    """Inject a project into plugin._loaded_projects bypassing /project load."""
-    plugin._loaded_projects[umo] = {
-        "directory": str(directory),
-        "loaded_at": time.time(),
-    }
+    """Inject a project into tools.project.state bypassing /project load.
+
+    PR-7 (2026-06-23): 数据源迁到 ``tools.project.state`` 模块级单例后,
+    测试也必须直接写入 state(handler 读 ``plugin.get_loaded_project(umo)``,
+    内部委托给 ``state.get(umo)``)。
+    """
+    _proj_state.put(
+        umo,
+        {
+            "directory": str(directory),
+            "loaded_at": time.time(),
+        },
+    )
 
 
 def _make_event(umo: str = "test:umo") -> MagicMock:
@@ -171,7 +179,7 @@ async def test_handle_git_diff_truncates_large_output(plugin, tmp_path):
 # --- T7-T11: gating (no project, umo mismatch, fallback, feature flag) -
 
 async def test_handle_git_diff_no_project_loaded(plugin):
-    plugin._loaded_projects.clear()
+    _proj_state.reset()
     result = await _gd.handle(plugin)
     data = result["data"]
     assert data["loaded"] is False
@@ -181,7 +189,7 @@ async def test_handle_git_diff_no_project_loaded(plugin):
 
 async def test_handle_git_diff_umo_not_in_loaded(plugin, tmp_path):
     # do NOT load any project; query a specific umo
-    plugin._loaded_projects.clear()
+    _proj_state.reset()
     result = await _gd.handle(plugin)
     data = result["data"]
     assert data["loaded"] is False
@@ -195,9 +203,9 @@ async def test_handle_git_diff_falls_back_to_most_recent(plugin, tmp_path):
     b.mkdir()
     _init_git_repo(a)
     _init_git_repo(b)
-    plugin._loaded_projects.clear()
-    plugin._loaded_projects["umo:1"] = {"directory": str(a), "loaded_at": 1.0}
-    plugin._loaded_projects["umo:2"] = {"directory": str(b), "loaded_at": 2.0}
+    _proj_state.reset()
+    _proj_state.put("umo:1", {"directory": str(a), "loaded_at": 1.0})
+    _proj_state.put("umo:2", {"directory": str(b), "loaded_at": 2.0})
     result = await _gd.handle(plugin)
     data = result["data"]
     assert data["loaded"] is True
@@ -225,10 +233,13 @@ async def test_handle_git_diff_feature_disabled_codegraph(plugin):
 # --- T12-T14: environment errors (directory / git) -------------------
 
 async def test_handle_git_diff_directory_missing(plugin):
-    plugin._loaded_projects["test:umo"] = {
-        "directory": "/nonexistent/path/that/does/not/exist",
-        "loaded_at": time.time(),
-    }
+    _proj_state.put(
+        "test:umo",
+        {
+            "directory": "/nonexistent/path/that/does/not/exist",
+            "loaded_at": time.time(),
+        },
+    )
     result = await _gd.handle(plugin)
     data = result["data"]
     assert data["loaded"] is False
@@ -324,6 +335,7 @@ async def test_handle_git_diff_git_calls_run_concurrently(plugin, tmp_path, monk
     _load_project(plugin, "test:umo", str(tmp_path))
 
     import time as _t
+
     from tools import _helpers
     real_run_cmd = _helpers.run_cmd
 
@@ -609,9 +621,10 @@ async def test_handle_git_diff_scope_invalid_value_returns_invalid_scope(
     plugin, tmp_path, monkeypatch
 ):
     """?scope=foo(未知值)→ loaded=False, reason='invalid_scope',且 git 命令一次也不跑。"""
-    from astrbot.api import web
     from tools import _helpers as _h
     from tools.webapi import git_diff as _mm
+
+    from astrbot.api import web
 
     real_run_cmd = _h.run_cmd
     call_count = {"n": 0}
@@ -921,8 +934,9 @@ async def test_handle_git_diff_304_skips_git_diff_invocation(
     v3.4 (2026-06-21) P0 perf:第一次请求填 ETag 缓存,第二次 304 命中走缓存,
     完全跳过 rev-parse HEAD。dashboard 5-10s 轮询时,N 个请求共用 1 个 git 进程。
     """
-    from tools.webapi import git_diff as _m
     from tools import _helpers
+    from tools.webapi import git_diff as _m
+
     from astrbot.api import web
 
     _init_git_repo(tmp_path)
@@ -981,6 +995,7 @@ async def test_compute_diff_etag_caches_across_requests(
     v3.4 (2026-06-21) P1 perf: P1-5 改用 _run_git_async,计数目标迁移。
     """
     from tools.webapi import git_diff as _m
+
     from astrbot.api import web
 
     _init_git_repo(tmp_path)
@@ -1027,6 +1042,7 @@ async def test_compute_diff_etag_invalidates_after_ttl(
     v3.4 P1-5:计数目标改为 _run_git_async。
     """
     from tools.webapi import git_diff as _m
+
     from astrbot.api import web
 
     _init_git_repo(tmp_path)
@@ -1119,6 +1135,7 @@ async def test_handle_git_diff_etag_changes_after_commit(
     index mtime 漏检窗口),由 dashboard 下一次自然轮询纠正。
     """
     from tools.webapi import git_diff as _m
+
     from astrbot.api import web
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
@@ -1155,7 +1172,7 @@ async def test_handle_git_diff_no_etag_on_error_envelope(
     """错误响应(no_project_loaded / feature_disabled 等)不带 ETag。"""
     from astrbot.api import web
     # 无项目
-    plugin._loaded_projects.clear()
+    _proj_state.reset()
     monkeypatch.setattr(web, "request", make_web_request_mock({}))
     r = await _gd.handle(plugin)
     # 错误响应是普通 dict,不是 _JSONResponseCompat
@@ -1273,8 +1290,9 @@ async def test_handle_git_diff_scope_combines_with_worktree_param(
 ):
     """?scope= 与 ?worktree= 正交。scope 解析通过后,worktree 校验失败应仍走
     worktree_invalid 路径(而非 invalid_scope)。"""
-    from astrbot.api import web
     from tools import _helpers as _h
+
+    from astrbot.api import web
 
     # 让 _validate_worktree_param 返回 worktree_invalid(模拟 6 步防御链失败)
     def _reject_validate(*args, **kwargs):

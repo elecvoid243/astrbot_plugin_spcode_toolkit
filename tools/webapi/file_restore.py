@@ -5,6 +5,7 @@ Spec: docs/superpowers/specs/2026-06-22-file-restore-endpoint-design.md
 v3.6: scope 自动检测(基于 git status X/Y 列)。
 """
 from __future__ import annotations
+
 import logging
 import os
 import time as _time
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .._helpers import _validate_worktree_param
+from ..project import state as _proj_state
 from ._helpers import _run_git_async
 
 if TYPE_CHECKING:
@@ -131,7 +133,7 @@ def _validate_restore_file(
 
 
 async def handle(
-    plugin: "SPCodeToolkit",
+    plugin: SPCodeToolkit,
 ) -> dict:
     """Web API handler for ``POST /spcode/file-restore``.
 
@@ -197,14 +199,17 @@ async def handle(
         )
 
     # 5. umo 解析与回退(与 git-diff 完全相同)
+    # PR-7 (2026-06-23): 数据源从 ``plugin._loaded_projects`` 迁移到
+    # ``tools.project.state`` 模块级单例 + ``plugin.get_loaded_project()``。
     if umo:
-        info = plugin._loaded_projects.get(umo)
+        info = plugin.get_loaded_project(umo)
     else:
-        if not plugin._loaded_projects:
+        all_items = _proj_state.items()
+        if not all_items:
             info = None
         else:
             _, info = max(
-                plugin._loaded_projects.items(),
+                all_items.items(),
                 key=lambda kv: kv[1].get("loaded_at", 0),
             )
     if info is None:

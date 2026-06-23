@@ -4,11 +4,13 @@
 Spec: docs/superpowers/specs/2026-06-18-git-worktree-switcher-design.md §2.2
 """
 from __future__ import annotations
+
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .._helpers import run_cmd, _parse_git_worktree_porcelain
+from .._helpers import _parse_git_worktree_porcelain, run_cmd
+from ..project import state as _proj_state
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ def _make_git_worktrees_empty_envelope(
 
 
 async def handle(
-    plugin: "SPCodeToolkit",
+    plugin: SPCodeToolkit,
 ) -> dict:
     """Web API handler for ``GET /spcode/git-worktrees``.
 
@@ -70,31 +72,28 @@ async def handle(
         umo = None
 
     # 2. 解析已加载项目
+    # PR-7 (2026-06-23): 数据源从 ``plugin._loaded_projects`` 迁移到
+    # ``tools.project.state`` 模块级单例 + ``plugin.get_loaded_project()``。
     if umo:
-        info = plugin._loaded_projects.get(umo)
+        info = plugin.get_loaded_project(umo)
     else:
-        if not plugin._loaded_projects:
+        all_items = _proj_state.items()
+        if not all_items:
             info = None
+            umo = None
         else:
-            # 退回到最近加载的项目
-            most_recent_umo = max(
-                plugin._loaded_projects,
-                key=lambda k: plugin._loaded_projects[k].get("loaded_at", 0.0),
+            # 退回到最近加载的项目。注意 ``state.items()`` 返回浅拷贝
+            # (dict comprehension),所以不能 ``v is info`` 反查 key —
+            # 直接从 max() 取出的元组中保留 umo。
+            umo, info = max(
+                all_items.items(),
+                key=lambda kv: kv[1].get("loaded_at", 0.0),
             )
-            info = plugin._loaded_projects[most_recent_umo]
 
     if info is None:
         return _make_git_worktrees_empty_envelope(
             umo=umo, reason="no_project_loaded", elapsed_ms=_elapsed()
         )
-
-    # If we fell back via the "most recent" path, promote the resolved umo.
-    if umo is None:
-        # Find the key that maps to `info` (small dict; linear scan is fine).
-        for k, v in plugin._loaded_projects.items():
-            if v is info:
-                umo = k
-                break
 
     directory = info.get("directory", "")
 

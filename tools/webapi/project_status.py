@@ -80,7 +80,7 @@ async def handle(
 
         # No umo provided: return the most-recently-loaded project as a
         # convenience for callers that don't track umos (e.g. the dashboard).
-        from tools.project import state as _proj_state
+        from ..project import state as _proj_state
 
         all_items = _proj_state.items()
         if not all_items:

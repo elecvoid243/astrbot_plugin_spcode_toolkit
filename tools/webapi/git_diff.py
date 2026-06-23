@@ -7,6 +7,7 @@ v3.1: scope 参数(un-staged/staged/all)
 v3.3: 4-in-1 git call(优化性能)
 """
 from __future__ import annotations
+
 import logging
 import time as _time
 from collections import OrderedDict
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .._helpers import _validate_worktree_param, detect_console_encoding
+from ..project import state as _proj_state
 from ._helpers import _JSONResponseCompat, _run_git_async
 from .file_browser import (
     _common_cache_headers,
@@ -39,7 +41,7 @@ _GIT_DIFF_ENCODING = detect_console_encoding()  # 进程内一次探测
 #      极端并发下只可能重复算 ETag,不会数据错乱。
 _DIFF_ETAG_TTL: float = 1.5  # seconds
 _DIFF_ETAG_CACHE_MAX = 64
-_DIFF_ETAG_CACHE: "OrderedDict[str, tuple[str, float]]" = OrderedDict()
+_DIFF_ETAG_CACHE: OrderedDict[str, tuple[str, float]] = OrderedDict()
 
 # ── git-diff scope 映射(v3.1) ──
 # 单一真相源:scope 名 → 传给 `git diff [args]` 的位置参数列表。
@@ -288,7 +290,7 @@ def _make_git_diff_empty_envelope(
 
 
 async def handle(
-    plugin: "SPCodeToolkit",
+    plugin: SPCodeToolkit,
 ) -> dict:
     """Web API handler for ``GET /spcode/git-diff``.
 
@@ -366,14 +368,17 @@ async def handle(
         )
 
     # 2. umo 解析与回退
+    # PR-7 (2026-06-23): 数据源从 ``plugin._loaded_projects`` 迁移到
+    # ``tools.project.state`` 模块级单例 + ``plugin.get_loaded_project()``。
     if umo:
-        info = plugin._loaded_projects.get(umo)
+        info = plugin.get_loaded_project(umo)
     else:
-        if not plugin._loaded_projects:
+        all_items = _proj_state.items()
+        if not all_items:
             info = None
         else:
             _, info = max(
-                plugin._loaded_projects.items(),
+                all_items.items(),
                 key=lambda kv: kv[1].get("loaded_at", 0),
             )
 

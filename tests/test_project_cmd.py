@@ -35,7 +35,9 @@ def _make_plugin(
         "codegraph_project": codegraph_project,
         "file_remove_blacklist": blacklist or [],
     }
-    plugin._loaded_projects = {}
+    # PR-7 (2026-06-23): 已加载项目存储迁到 tools.project.state;
+    # 此处不再写 plugin._loaded_projects(已无意义)。如需在测试中预置
+    # 状态,请使用本文件内 _set_loaded(umo, info) 包装函数。
     plugin._codegraph_dir_locks = {}
 
     # PR-5 (2026-06-23): agentsmd 子系统 — 真实实例,_patch_internal_methods
