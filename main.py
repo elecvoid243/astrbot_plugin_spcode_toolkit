@@ -42,6 +42,8 @@ from .tools.inta_shell.component import LocalInteractiveShellComponent
 from .tools._path_safety import is_path_safe as _is_path_safe
 # PR-3 (2026-06-23): L1 鉴权 + plan 模式控制器已提取到 tools/security/
 from .tools.security import PlanModeController, check_is_admin
+# PR-4 (2026-06-23): LLM system_prompt 注入样板集中到 tools/llm_inject.inject_guidance
+from .tools.llm_inject import inject_guidance
 from .tools._guidance_text import (
     PROJECT_GUIDANCE_MARKER,
     PROJECT_CODEGRAPH_GUIDANCE,
@@ -1424,24 +1426,18 @@ class SPCodeToolkit(star.Star):
         - codegraph_enabled = true
         - 当前 umo 已在 self._loaded_projects 中
 
-        实现要点:
-        - marker (`PROJECT_GUIDANCE_MARKER`) 检测防重复
-        - system_prompt = None 时用 lstrip("\n") 避免前置空行
-        - 已存在 system_prompt 时追加在末尾
+        PR-4 (2026-06-23): 注入样板(防重复 + lstrip + 拼接)委托给
+        tools.llm_inject.inject_guidance。
         """
         if not self._config.get("codegraph_enabled", True):
             return
         umo = event.unified_msg_origin
         if umo not in self._loaded_projects:
             return
-        # 防重复(同一请求多次走钩子)
-        if PROJECT_GUIDANCE_MARKER in (req.system_prompt or ""):
-            return
-        if req.system_prompt is None or req.system_prompt == "":
-            req.system_prompt = PROJECT_CODEGRAPH_GUIDANCE.lstrip("\n")
-        else:
-            req.system_prompt = req.system_prompt + PROJECT_CODEGRAPH_GUIDANCE
-        logger.debug(f"[project] 已向会话 {umo} 的 system_prompt 注入 codegraph 指引")
+        if inject_guidance(req, PROJECT_CODEGRAPH_GUIDANCE, PROJECT_GUIDANCE_MARKER):
+            logger.debug(
+                f"[project] 已向会话 {umo} 的 system_prompt 注入 codegraph 指引"
+            )
 
     @filter.on_llm_request()
     async def _file_remove_inject_guidance(
@@ -1457,6 +1453,8 @@ class SPCodeToolkit(star.Star):
         1. 无 session state / 无 feature flag——_tool_names 即 gate
         2. system_prompt = None 时用 lstrip("\\n") 避免前置空行
         3. 已存在 system_prompt 时追加在末尾
+
+        PR-4 (2026-06-23): 注入样板委托给 tools.llm_inject.inject_guidance。
         """
         # 同时接受新旧两个工具名,避免单点失败
         if not (
@@ -1464,13 +1462,8 @@ class SPCodeToolkit(star.Star):
             or "astrbot_file_remove_tool" in self._tool_names
         ):
             return
-        if FILE_REMOVE_GUIDANCE_MARKER in (req.system_prompt or ""):
-            return
-        if req.system_prompt is None or req.system_prompt == "":
-            req.system_prompt = FILE_REMOVE_GUIDANCE.lstrip("\n")
-        else:
-            req.system_prompt = req.system_prompt + FILE_REMOVE_GUIDANCE
-        logger.debug("[file_remove] 已向 system_prompt 注入优先使用指引")
+        if inject_guidance(req, FILE_REMOVE_GUIDANCE, FILE_REMOVE_GUIDANCE_MARKER):
+            logger.debug("[file_remove] 已向 system_prompt 注入优先使用指引")
 
     @filter.on_llm_request()
     async def _auth_guard(self, event, req: ProviderRequest):
