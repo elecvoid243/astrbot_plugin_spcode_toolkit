@@ -145,7 +145,9 @@
         "default": [
           "astrbot_file_remove",
           "todo_create",
-          "todo_modify",
+          "todo_add",
+          "todo_update",
+          "todo_delete",
           "todo_clear",
           "astrbot_inta_shell_start",
           "astrbot_inta_shell_send",

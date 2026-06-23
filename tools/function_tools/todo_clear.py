@@ -16,7 +16,7 @@ class TodoClearTool(_TodoToolBase):
     description: str = (
         "Delete the entire todo list for current umo (session channel) (removes the file). "
         "Use this to start fresh. "
-        "For removing individual items, use todo_modify(mode='delete', item_ids=...)."
+        "For removing individual items, use todo_delete(item_ids=...)."
     )
     parameters: dict = field(
         default_factory=lambda: {"type": "object", "properties": {}}

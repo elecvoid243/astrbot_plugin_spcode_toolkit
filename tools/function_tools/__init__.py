@@ -20,12 +20,18 @@ from .es_search import EsSearchTool
 from .file_diff import FileDiffTool
 from .file_remove import FileRemoveTool
 
-# 4 个 todo 工具(基类 _TodoToolBase 也导出,供 tests/test_*.py 验证继承)
+# 6 个 todo 工具(基类 _TodoToolBase 也导出,供 tests/test_*.py 验证继承)
+# v2.12 (PR-split-modify): 原 v2.6 的 todo_modify(mode='add'|'update'|'delete', ...)
+# 拆为 3 个独立工具 todo_add / todo_update / todo_delete。
+# 动机:三合一工具的 `mode` 字段是 LLM 误调用的高发点,拆开后每个工具
+# 的 schema 极简,LLM 不再需要选 mode。
+from .todo_add import TodoAddTool
 from .todo_base import _TodoToolBase  # noqa: F401
 from .todo_clear import TodoClearTool
 from .todo_create import TodoCreateTool
-from .todo_modify import TodoModifyTool
+from .todo_delete import TodoDeleteTool
 from .todo_query import TodoQueryTool
+from .todo_update import TodoUpdateTool
 
 # 5 个 inta_shell 工具
 from .inta_shell_list import IntaShellListTool
@@ -35,7 +41,7 @@ from .inta_shell_start import IntaShellStartTool
 from .inta_shell_stop import IntaShellStopTool
 
 # 集中注册表: main.py 直接迭代此列表传给 context.add_llm_tools(...)
-# 顺序与原 _PLUGINS_TOOLS 一致(独立工具 4 → todo 4 → inta_shell 5)
+# 顺序与原 _PLUGINS_TOOLS 一致(独立工具 4 → todo 6 → inta_shell 5)
 ALL_TOOL_CLASSES = [
     CodeCheckTool,
     EsSearchTool,
@@ -43,7 +49,9 @@ ALL_TOOL_CLASSES = [
     FileDiffTool,
     TodoCreateTool,
     TodoQueryTool,
-    TodoModifyTool,
+    TodoAddTool,
+    TodoUpdateTool,
+    TodoDeleteTool,
     TodoClearTool,
     IntaShellStartTool,
     IntaShellSendTool,
@@ -60,7 +68,9 @@ __all__ = [
     "FileDiffTool",
     "TodoCreateTool",
     "TodoQueryTool",
-    "TodoModifyTool",
+    "TodoAddTool",
+    "TodoUpdateTool",
+    "TodoDeleteTool",
     "TodoClearTool",
     "IntaShellStartTool",
     "IntaShellSendTool",

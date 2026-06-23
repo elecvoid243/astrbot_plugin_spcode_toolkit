@@ -46,6 +46,7 @@ from .tools._guidance_text import (
     FILE_REMOVE_GUIDANCE,
 )
 # re-export FunctionTool 类供 tests/test_*.py 旧用法 (main_mod.TodoCreateTool 等)
+# v2.12 (PR-split-modify): 用 todo_add / todo_update / todo_delete 取代 todo_modify
 from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
     ALL_TOOL_CLASSES,
     CodeCheckTool,
@@ -57,10 +58,12 @@ from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
     IntaShellSendTool,
     IntaShellStartTool,
     IntaShellStopTool,
+    TodoAddTool,
     TodoClearTool,
     TodoCreateTool,
-    TodoModifyTool,
+    TodoDeleteTool,
     TodoQueryTool,
+    TodoUpdateTool,
 )
 
 

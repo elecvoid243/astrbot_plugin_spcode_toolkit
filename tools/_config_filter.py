@@ -18,10 +18,12 @@ ALL_TOOL_NAMES: list[str] = [
     "es_search",
     "astrbot_file_remove",
     "astrbot_file_compare",
-    # todo_list 4 个子工具(v2.6 通过 `todo_list` 组别名一键启用)
+    # todo_list 6 个子工具(v2.12 拆出 add/update/delete;v2.6 通过 `todo_list` 组别名一键启用)
     "todo_create",
     "todo_query",
-    "todo_modify",
+    "todo_add",
+    "todo_update",
+    "todo_delete",
     "todo_clear",
     # inta_shell 5 个子工具(v2.5)
     "astrbot_inta_shell_start",
@@ -44,13 +46,15 @@ _TOOL_GROUPS: dict[str, list[str]] = {
         "astrbot_inta_shell_stop",
         "astrbot_inta_shell_list",
     ],
-    # Todo list 自我管理:create / query / modify / clear
-    # 4 个工具强相关,缺一会导致功能不完整(如 modify 不能 add),
+    # Todo list 自我管理:create / query / add / update / delete / clear
+    # v2.12 拆分: 6 个工具强相关,缺一会导致功能不完整(只能 add 不能 delete 等),
     # 因此必须以组形式整体启用。
     "todo_list": [
         "todo_create",
         "todo_query",
-        "todo_modify",
+        "todo_add",
+        "todo_update",
+        "todo_delete",
         "todo_clear",
     ],
     "file_compare": ["astrbot_file_compare"],
