@@ -31,6 +31,7 @@
 | **Create** | `tools/webapi/file_restore.py` | `handle()` for `POST /spcode/file-restore` + 4 辅助 |
 | **Create** | `tests/test_project_status.py` | 新 smoke test(`handle_get_project_status` 之前无直接测试) |
 | **Create** | `tests/test_webapi_helpers_smoke.py` | Chunk 1 smoke test:验证 `_run_git_async` + `_JSONResponseCompat` 可从 `tools.webapi._helpers` import |
+| **Create** | `tests/test_webapi_end_to_end.py` | Chunk 5 smoke test:验证 6 个 handler 均可被调用且返回 dict |
 | **Modify** | `main.py`(多处) | 删除 6 handler / 6 register 块 / 21 辅助 / 2 跨端点 / 3 常量 / `class _JSONResponseCompat`;`initialize()` 改为 `register_webapi_routes(self)` |
 | **Modify** | `tests/conftest.py` | 新增 `handlers` fixture,导出 `HANDLERS` 字典 |
 | **Modify** | `tests/test_plan_mode.py` | 5 处 `plugin.handle_get_plan_mode` → `handlers["handle_get_plan_mode"](plugin)` |
@@ -45,15 +46,15 @@
 
 ## Implementation Order
 
-| Chunk | 内容 | 可独立验证 | 预计 commit 数 |
+| Chunk | 内容 | 可独立验证 | 实际 commit 数 |
 |-------|------|------------|---------------|
-| **Chunk 1** | 共享层 `tools/webapi/_helpers.py` | ✅ `pytest tests/test_run_git_async.py` 通过 | 2 |
-| **Chunk 2** | 3 个小端点(project_status/plan_mode/git_worktrees)+ `__init__.py` 骨架 | ✅ 对应测试通过 | 4 |
-| **Chunk 3** | file_browser + file_restore | ✅ 对应测试通过 | 2 |
-| **Chunk 4** | git_diff(大端点) | ✅ `test_git_diff*.py` 通过 | 1 |
-| **Chunk 5** | `_wrap()` + `register_webapi_routes()` + main.py 瘦身 + 全量测试迁移 + 验收 | ✅ 全部 `pytest` 通过 + `wc -l main.py` ≤ 200 | 3 |
+| **Chunk 1** | 共享层 `tools/webapi/_helpers.py` | ✅ `pytest tests/test_run_git_async.py` 通过 | 5(1.1/1.2/1.3/1.4/1.5) |
+| **Chunk 2** | 3 个小端点(project_status/plan_mode/git_worktrees)+ `__init__.py` 骨架 | ✅ 对应测试通过 | 3(2.1/2.2/2.3) |
+| **Chunk 3** | file_browser + file_restore | ✅ 对应测试通过 | 2(3.1/3.2) |
+| **Chunk 4** | git_diff(大端点) | ✅ `test_git_diff*.py` 通过 | 1(4.1) |
+| **Chunk 5** | `_wrap()` + `register_webapi_routes()` + main.py 瘦身 + 全量测试迁移 + 验收 | ✅ 全部 `pytest` 通过 + `wc -l main.py` ≤ 200 | 3(5.1/5.2/5.3) |
 
-**总 commit 预算**:约 12 个,每个 chunk 内部细分(failing test → minimal impl → green → commit)。
+**总 commit 数**:5+3+2+1+3 = **14 个 commit**,每个 chunk 内部细分(failing test → minimal impl → green → commit)。
 
 ---
 
@@ -879,9 +880,9 @@ def _validate_restore_file(...):
 
 - [ ] **Step 4: 在 HANDLERS 注册**
 
-- [ ] **Step 5: 从 main.py 删除 handler + 4 辅助 + 3 处 `_run_git_async` 改 Pattern B**
+- [ ] **Step 5: 从 main.py 删除 handler + 4 辅助(本 Task 不改 main.py 中的 `_run_git_async` 调用)**
 
-**关键**:main.py 中也要把 3 处 `await _run_git_async(...)` 改为 `await _webapi_helpers_run_git._run_git_async(...)`(利用 Chunk 1 的 re-export 占位);或直接 `await _helpers._run_git_async(...)`(import 一下)。
+**关键**:本 Task Step 5 整段删除 `handle_post_file_restore` 方法体(含 3 处 `await _run_git_async(...)` 调用),不需要在 main.py 中改 Pattern B —— 调用点随 handler 整体移到 `tools/webapi/file_restore.py`,在 Chunk 3 同一 Task 的 Step 3 创建 file_restore.py 时已用 Pattern B 改写。main.py 在 Step 5 之后应无 `_run_git_async` 调用残留。
 
 - [ ] **Step 6: 跑 → green**
 
@@ -1030,19 +1031,26 @@ def _parse_diff_status_map(text: str) -> dict[str, str]:
 Run: `pytest tests/test_git_diff.py -v`
 Expected: 15+ passed。
 
-- [ ] **Step 7: 改造 test_git_diff.py 4 处 monkeypatch 路径**
+- [ ] **Step 7: 改造 test_git_diff.py **7 处** monkeypatch 路径(精确行号以 `grep` 为准)**
+
+先用 grep 定位全部 monkeypatch:
+```bash
+cd F:\github\astrbot_plugin_spcode_toolkit
+grep -nE 'monkeypatch.setattr\(.*"_run_git_async"' tests/test_git_diff.py
+```
+Expected: 7 行命中(`main_mod` alias 3 处 + `_m` alias 4 处)。
 
 ```python
-# Before
-from astrbot_plugin_spcode_toolkit import main as main_mod
-monkeypatch.setattr(main_mod, "_run_git_async", fake)
+# Before(无论是 main_mod 还是 _m,均统一替换)
+from astrbot_plugin_spcode_toolkit import main as main_mod  # 或:from ... import main as _m
+monkeypatch.setattr(main_mod, "_run_git_async", fake)  # 或:monkeypatch.setattr(_m, "_run_git_async", fake)
 
 # After
 from astrbot_plugin_spcode_toolkit.tools.webapi import _helpers as _webapi_helpers
 monkeypatch.setattr(_webapi_helpers, "_run_git_async", fake)
 ```
 
-涉及 5 处(行 254/370/412/...)的实际 `_run_git_async` monkeypatch。
+**注意**:此 Step 只改 `_run_git_async` 的 monkeypatch target,不动 `run_cmd` 的 monkeypatch(因为 `run_cmd` 在 tools/_helpers.py,不在 webapi 范围)。
 
 - [ ] **Step 8: 改造 test_git_diff.py 15+ 处调用**
 
@@ -1078,7 +1086,7 @@ grep -nE "^def (_parse_diff_status_map|_parse_numstat_counts|_build_stat_text|_c
 grep -nE "^(MAX_GIT_DIFF_BYTES|_GIT_DIFF_ENCODING|_DIFF_ETAG_CACHE_MAX)\s*=" main.py
 grep -nE "await _run_git_async" main.py
 ```
-Expected: 第 1-3 行 0 命中;第 4 行 3 命中(仅 file_restore 残留,file_restore handler 已搬到 webapi,此 3 处调用点应不在 main.py)。
+Expected: 第 1-3 行 0 命中;第 4 行 **0 命中**(Chunk 3 已将 file_restore 全部搬走,Chunk 4 已将 git_diff 全部搬走,main.py 中应无残留)。
 
 - [ ] **Step 2: 跑 git_diff 相关测试**
 
@@ -1130,62 +1138,46 @@ def test_wrap_function_returns_async_callable():
 
 - [ ] **Step 2: red → green: 实现 `_wrap` + `register_webapi_routes`**
 
-在 `tools/webapi/__init__.py` 添加(完整代码从 spec §3 复制):
+在 `tools/webapi/__init__.py` 添加以下代码(完整可粘贴,**不要省略**):
 
 ```python
+# tools/webapi/__init__.py(替换之前的 HANDLERS 骨架)
 import asyncio
 import inspect
+import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
 
-# ROUTES 列表
 from tools.webapi import (
-    file_browser, file_restore, git_diff, git_worktrees, plan_mode, project_status,
+    file_browser,
+    file_restore,
+    git_diff,
+    git_worktrees,
+    plan_mode,
+    project_status,
 )
 
+logger = logging.getLogger(__name__)
+
+# (route, methods, handler, desc) —— 注册顺序敏感
 ROUTES: list[tuple[str, list[str], Callable, str]] = [
-    ("/spcode/project-status", ["GET"], project_status.handle, "..."),
-    ("/spcode/plan-mode", ["GET"], plan_mode.handle, "..."),
-    ("/spcode/git-worktrees", ["GET"], git_worktrees.handle, "..."),
-    ("/spcode/git-diff", ["GET"], git_diff.handle, "..."),
-    ("/spcode/file-browser", ["GET"], file_browser.handle, "..."),
-    ("/spcode/file-restore", ["POST"], file_restore.handle, "..."),
+    ("/spcode/project-status", ["GET"], project_status.handle,
+     "获取 spcode 当前会话已加载的项目信息(供 dashboard 调用)"),
+    ("/spcode/plan-mode", ["GET"], plan_mode.handle,
+     "获取 spcode 当前 plan-mode 状态(只读)"),
+    ("/spcode/git-worktrees", ["GET"], git_worktrees.handle,
+     "列出已加载项目的 git worktree 列表"),
+    ("/spcode/git-diff", ["GET"], git_diff.handle,
+     "获取已加载项目的未暂存 git diff"),
+    ("/spcode/file-browser", ["GET"], file_browser.handle,
+     "读取文件内容或列出单层目录"),
+    ("/spcode/file-restore", ["POST"], file_restore.handle,
+     "恢复工作区中某一文件相对于 index 的改动"),
 ]
 
-
-def _wrap(handler: Callable, plugin: "SPCodeToolkit") -> Callable:
-    """(完整实现见 spec §3, 复制)"""
-    sig = inspect.signature(handler)
-    accepts = set(sig.parameters) - {"plugin"}
-
-    async def view(*args, **kwargs):
-        request = kwargs.get("request") or (args[0] if args else None)
-        call_kwargs: dict[str, Any] = {}
-        # ... spec §3 完整实现 ...
-        return await handler(plugin, **call_kwargs)
-
-    return view
-
-
-def register_webapi_routes(plugin: "SPCodeToolkit") -> None:
-    """(完整实现见 spec §2, 复制)"""
-    for route, methods, handler, desc in ROUTES:
-        try:
-            plugin.context.register_web_api(
-                route=route,
-                view_handler=_wrap(handler, plugin),
-                methods=methods,
-                desc=desc,
-            )
-        except Exception as exc:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"注册 spcode {route} web API 失败: {exc!s}")
-
-
-# HANDLERS 字典
+# 测试入口:旧方法名 -> 新模块级 handler
 HANDLERS: dict[str, Callable] = {
     "handle_get_project_status": project_status.handle,
     "handle_get_plan_mode": plan_mode.handle,
@@ -1194,6 +1186,77 @@ HANDLERS: dict[str, Callable] = {
     "handle_get_file_browser": file_browser.handle,
     "handle_post_file_restore": file_restore.handle,
 }
+
+
+def _wrap(handler: Callable, plugin: "SPCodeToolkit") -> Callable:
+    """适配 view_handler 接口,把 request.* 参数映射到 handler 关键字参数。
+
+    支持自动注入的字段(按 handler 签名声明):
+    - umo:        GET  query.umo; POST body.umo
+    - worktree:   GET  query.worktree; POST body.worktree
+    - scope:      GET  query.scope(默认 "unstaged";git_diff 专用)
+    - path:       GET  query.path(默认 "";file_browser 专用)
+    - if_none_match: GET header.If-None-Match
+    - body:       POST body 整体(作为 dict)
+    """
+    sig = inspect.signature(handler)
+    accepts = set(sig.parameters) - {"plugin"}
+
+    async def view(*args: Any, **kwargs: Any) -> Any:
+        request = kwargs.get("request") or (args[0] if args else None)
+        call_kwargs: dict[str, Any] = {}
+
+        if "umo" in accepts and request is not None:
+            if request.method == "POST":
+                try:
+                    _body = await request.json() or {}
+                except Exception:
+                    _body = {}
+                call_kwargs["umo"] = _body.get("umo")
+            else:
+                call_kwargs["umo"] = request.query.get("umo") or None
+        if "worktree" in accepts and request is not None:
+            if request.method == "POST":
+                if "body" not in call_kwargs:
+                    try:
+                        call_kwargs["body"] = await request.json() or {}
+                    except Exception:
+                        call_kwargs["body"] = {}
+                call_kwargs["worktree"] = call_kwargs["body"].get("worktree")
+            else:
+                call_kwargs["worktree"] = request.query.get("worktree")
+        if "scope" in accepts and request is not None:
+            call_kwargs["scope"] = request.query.get("scope") or "unstaged"
+        if "path" in accepts and request is not None:
+            call_kwargs["path"] = request.query.get("path", "").strip()
+        if "if_none_match" in accepts and request is not None:
+            call_kwargs["if_none_match"] = request.headers.get("if-none-match")
+        if "body" in accepts and request is not None and "body" not in call_kwargs:
+            if request.method == "POST":
+                try:
+                    call_kwargs["body"] = await request.json() or {}
+                except Exception:
+                    call_kwargs["body"] = {}
+            else:
+                call_kwargs["body"] = {}
+
+        return await handler(plugin, **call_kwargs)
+
+    return view
+
+
+def register_webapi_routes(plugin: "SPCodeToolkit") -> None:
+    """统一注册所有 webapi 路由。供 main.py.initialize() 调用一次。"""
+    for route, methods, handler, desc in ROUTES:
+        try:
+            plugin.context.register_web_api(
+                route=route,
+                view_handler=_wrap(handler, plugin),
+                methods=methods,
+                desc=desc,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"注册 spcode {route} web API 失败: {exc!s}")
 ```
 
 - [ ] **Step 3: 跑 → green**
@@ -1349,7 +1412,7 @@ git commit -m "docs: update AGENTS.md for tools/webapi/ + end-to-end smoke test"
 
 # Plan Complete
 
-**总 commit 数预算**:约 12 个 commit
+**总 commit 数**:14 个 commit(与 Implementation Order 表一致)
 - Chunk 1: 5 commit(1.1/1.2/1.3/1.4/1.5)
 - Chunk 2: 3 commit(2.1/2.2/2.3)
 - Chunk 3: 2 commit(3.1/3.2)
