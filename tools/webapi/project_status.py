@@ -53,7 +53,7 @@ async def handle(
         if umo_param:
             info = plugin.get_loaded_project(umo_param)
             # 列举总数 — 走 state.items()
-            from tools.project import state as _proj_state
+            from ..project import state as _proj_state
 
             all_count = len(_proj_state.items())
             if info is None:
