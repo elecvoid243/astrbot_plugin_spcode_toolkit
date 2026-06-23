@@ -40,7 +40,7 @@ class TodoUpdateTool(_TodoToolBase):
                     "description": (
                         "Target item id(s). "
                         "Single int → update one item. "
-                        "list[int] → batch update with the same status/notes."
+                        "list[int] → batch update with the same status/notes. Prefer batch update rather than multiple function calls."
                     ),
                 },
                 "status": {
