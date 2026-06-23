@@ -16,11 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-import functools
 from dataclasses import dataclass, field
-
-# TEMPORARY shim: re-export _run_git_async from webapi/_helpers
-# Removed in Chunk 5 when call sites are migrated to Pattern B.
 
 from pathlib import Path
 
@@ -54,15 +50,12 @@ from .tools._codegraph_mcp import (
     ensure_stdio_allowlist,
     resolve_project_path,
 )
-# webapi handlers (moved out of main.py in Chunk 4 refactor)
-from .tools.webapi import (
-    file_browser as _file_browser,
-    file_restore as _file_restore,
-    git_diff as _git_diff,
-    git_worktrees as _git_worktrees,
-    plan_mode as _plan_mode,
-    project_status as _project_status,
-)
+# spcode webapi handlers all live in tools/webapi/*; main.py no longer
+# re-exports them.  The 6 endpoints are registered in one shot via
+# ``register_webapi_routes`` below.  We still import the git-diff
+# encoding constant here for the startup-time ``git --version`` probe.
+from tools.webapi import register_webapi_routes
+from tools.webapi.git_diff import _GIT_DIFF_ENCODING
 from .tools import agentsmd as _agentsmd_mod
 from .tools.inta_shell import tools as _inta_shell_tools
 from .tools.inta_shell.component import LocalInteractiveShellComponent
@@ -1157,7 +1150,7 @@ class SPCodeToolkit(star.Star):
                 capture_output=True,
                 text=True,
                 timeout=5,
-                encoding=_git_diff._GIT_DIFF_ENCODING,
+                encoding=_GIT_DIFF_ENCODING,
                 errors="replace",
             )
             if _git_probe.returncode == 0:
@@ -1189,84 +1182,12 @@ class SPCodeToolkit(star.Star):
         构造 inta_shell 组件单例。codegraph MCP 由 __init__ 内异步任务管理，
         不在这里重复处理。
         """
-        # Register dashboard-facing web API so the UI can query the currently
-        # loaded project without polluting chat history with a /project status
-        # command. The endpoint accepts an optional ``umo`` query param; when
-        # the dashboard does not know the umo it can omit it and receive the
-        # most-recently-loaded project (single-user dashboards are fine with
-        # this fallback).
-        try:
-            self.context.register_web_api(
-                route="/spcode/project-status",
-                view_handler=functools.partial(_project_status.handle, self),
-                methods=["GET"],
-                desc="获取 spcode 当前会话已加载的项目信息（供 dashboard 调用）",
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning(f"注册 spcode project-status web API 失败: {exc!s}")
-
-        # 与 project-status 平行的端点：返回当前已载入项目的未暂存 git diff，
-        # 供本地 dashboard 显示编辑器中尚未提交的工作区改动。
-        try:
-            self.context.register_web_api(
-                route="/spcode/git-diff",
-                view_handler=functools.partial(_git_diff.handle, self),
-                methods=["GET"],
-                desc="获取 spcode 当前会话已载入项目的未暂存 git diff（供 dashboard 调用）",
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning(f"注册 spcode git-diff web API 失败: {exc!s}")
-
-        # 注册 /spcode/git-worktrees(v3.0 worktree 切换器):
-        # dashboard 读取此端点填充 GitDiffSidebar 的 worktree 下拉。
-        try:
-            self.context.register_web_api(
-                route="/spcode/git-worktrees",
-                view_handler=functools.partial(_git_worktrees.handle, self),
-                methods=["GET"],
-                desc="获取 spcode 当前会话已载入项目的 git worktree 列表（供 dashboard 调用）",
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning(f"注册 spcode git-worktrees web API 失败: {exc!s}")
-
-        # v3.2: 注册 /spcode/file-browser — 供 dashboard 文件浏览器调用。
-        # 详见 docs/superpowers/specs/2026-06-20-file-browser-endpoint-design.md
-        try:
-            self.context.register_web_api(
-                route="/spcode/file-browser",
-                view_handler=functools.partial(_file_browser.handle, self),
-                methods=["GET"],
-                desc="读取文件内容或列出单层目录（供 dashboard 文件浏览器调用）",
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning(f"注册 spcode file-browser web API 失败: {exc!s}")
-
-        # v3.5: 注册 /spcode/file-restore — 供 dashboard "↩ 恢复" 按钮调用。
-        # 本插件首个 POST 端点;与 GET /spcode/git-diff 形成闭环。
-        # 详见 docs/superpowers/specs/2026-06-22-file-restore-endpoint-design.md
-        try:
-            self.context.register_web_api(
-                route="/spcode/file-restore",
-                view_handler=functools.partial(_file_restore.handle, self),
-                methods=["POST"],
-                desc="恢复工作区中某一文件相对于 index 的改动（git checkout -- <file> 语义，供 dashboard 调用）",
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning(f"注册 spcode file-restore web API 失败: {exc!s}")
-
-        # v2.8.1: 注册 /spcode/plan-mode —
-        # dashboard 读取此端点驱动 SpcodePlanModeChip 的状态显示与切换。
-        # 与 /spcode/project-status 平行的查询端点,只读,POST 切换走聊天命令
-        # (发送 /plan 或 /build,与 /project load 走同一条路径)。
-        try:
-            self.context.register_web_api(
-                route="/spcode/plan-mode",
-                view_handler=functools.partial(_plan_mode.handle, self),
-                methods=["GET"],
-                desc="获取 spcode 当前会话的 plan/build 模式状态（供 dashboard 调用）",
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning(f"注册 spcode plan-mode web API 失败: {exc!s}")
+        # Register all 6 /spcode/* dashboard-facing web APIs in one shot.
+        # Each handler lives in its own tools/webapi/*.py module; the route
+        # table is owned by tools/webapi/__init__.ROUTES and adapter by
+        # tools/webapi/_wrap (auto-injects umo/worktree/scope/path/etc.
+        # from the request based on handler signature).
+        register_webapi_routes(self)
 
         cfg = self._inta_shell_cfg
         component = LocalInteractiveShellComponent(
