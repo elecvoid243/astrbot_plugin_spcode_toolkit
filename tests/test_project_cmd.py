@@ -35,9 +35,17 @@ def _make_plugin(
         "codegraph_project": codegraph_project,
         "file_remove_blacklist": blacklist or [],
     }
-    plugin._loaded_agents = {}
     plugin._loaded_projects = {}
     plugin._codegraph_dir_locks = {}
+
+    # PR-5 (2026-06-23): agentsmd 子系统 — 真实实例,_patch_internal_methods
+    # 会进一步把 .init/.load/.unload 替换为 MagicMock。
+    from tools.agentsmd import AgentsmdSubsystem
+
+    plugin.agentsmd = AgentsmdSubsystem(
+        plugin=plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
     return plugin
 
 
@@ -89,7 +97,7 @@ def _patch_internal_methods(plugin, *, agentsmd_md_exists=False, custom_async_ge
         agentsmd_md_exists: 保留参数(早期 API,目前未使用)。
         custom_async_gens: 可选 dict,key=async gen 方法名,value=自定义 side_effect
             (一个 async generator 函数)。未指定的 method 仍用默认的 _async_gen_ok。
-            例如: ``{"_agentsmd_init": _make_error_gen("❌ ...")}`` 可让 init
+            例如: ``{"init": _make_error_gen("❌ ...")}`` 可让 init
             调用返回错误消息,其它方法保持成功。
     """
     custom_async_gens = custom_async_gens or {}
@@ -98,27 +106,37 @@ def _patch_internal_methods(plugin, *, agentsmd_md_exists=False, custom_async_ge
         """通用 async generator,被所有未自定义的 async gen 方法复用。"""
         yield "mock-async-gen-ok"
 
-    # 异步生成器方法
-    async_gen_methods = [
-        "_agentsmd_init",
-        "_agentsmd_load",
-        "_codegraph_init_or_uninit",
-        "_codegraph_set_project",
-    ]
-    # 同步方法(返回字符串)
-    sync_methods = [
-        "_agentsmd_unload",
-    ]
+    # PR-5 (2026-06-23): agentsmd 方法已提取到 tools.agentsmd 子系统,
+    # 主流程现在调用 ``plugin.agentsmd.init / .load / .unload``。
+    # codegraph 方法暂留 main.py(PR-6 才会搬)。
+
+    # agentsmd: mock 替换 plugin.agentsmd.<method>
+    agentsmd_async = {
+        "init": lambda *a, **kw: None,
+        "load": lambda *a, **kw: None,
+    }
+    agentsmd_sync = {
+        "unload": "mock-sync-ok",
+    }
 
     mocks = {}
-    for name in async_gen_methods:
+    # agentsmd async generator 方法
+    for method_name, _ in agentsmd_async.items():
+        m = MagicMock()
+        m.side_effect = custom_async_gens.get(method_name, _async_gen_ok)
+        setattr(plugin.agentsmd, method_name, m)
+        # mock dict key 保留短名("init"),便于断言简洁
+        mocks[method_name] = m
+    # agentsmd 同步方法
+    for method_name, ret_val in agentsmd_sync.items():
+        m = MagicMock()
+        m.return_value = ret_val
+        setattr(plugin.agentsmd, method_name, m)
+        mocks[method_name] = m
+    # codegraph 方法(暂留 plugin.*,PR-6 才会搬)
+    for name in ("_codegraph_init_or_uninit", "_codegraph_set_project"):
         m = MagicMock()
         m.side_effect = custom_async_gens.get(name, _async_gen_ok)
-        setattr(plugin, name, m)
-        mocks[name] = m
-    for name in sync_methods:
-        m = MagicMock()
-        m.return_value = "mock-sync-ok"  # 调用时返回字符串
         setattr(plugin, name, m)
         mocks[name] = m
     return mocks
@@ -289,26 +307,26 @@ def test_project_load_happy_path_calls_all_steps(tmp_path):
     msgs = _collect_async_gen(plugin.project_load(event, str(p)))
 
     # 4 个核心方法都被调用(顺序: agentsmd_init, agentsmd_load, codegraph_init, codegraph_set)
-    mocks["_agentsmd_init"].assert_called_once()
-    mocks["_agentsmd_load"].assert_called_once()
+    mocks["init"].assert_called_once()
+    mocks["load"].assert_called_once()
     mocks["_codegraph_init_or_uninit"].assert_called_once()
     mocks["_codegraph_set_project"].assert_called_once()
     # _agentsmd_unload 不该被调
-    mocks["_agentsmd_unload"].assert_not_called()
+    mocks["unload"].assert_not_called()
     # 调用顺序: 严格按 spec 1→2→3
     # 通过 mock_calls 顺序验证(同一 plugin 上多次调用的时间戳会区分)
     all_calls = []
     for name in [
-        "_agentsmd_init",
-        "_agentsmd_load",
+        "init",
+        "load",
         "_codegraph_init_or_uninit",
         "_codegraph_set_project",
     ]:
         all_calls.extend((name, c) for c in mocks[name].mock_calls)
     actual_order = [n for n, _ in all_calls]
     assert actual_order == [
-        "_agentsmd_init",
-        "_agentsmd_load",
+        "init",
+        "load",
         "_codegraph_init_or_uninit",
         "_codegraph_set_project",
     ], f"调用顺序不符 spec,实际: {actual_order}"
@@ -346,7 +364,7 @@ def test_project_load_aborts_on_agentsmd_init_error(tmp_path):
     mocks = _patch_internal_methods(
         plugin,
         custom_async_gens={
-            "_agentsmd_init": _make_error_gen("❌ 模拟:目录无代码文件"),
+            "init": _make_error_gen("❌ 模拟:目录无代码文件"),
         },
     )
     event = _make_event(umo="test:umo")
@@ -358,9 +376,9 @@ def test_project_load_aborts_on_agentsmd_init_error(tmp_path):
         f"应转发 init 错误消息,实际: {msgs}"
     )
     # 2. init 确实被调了一次
-    mocks["_agentsmd_init"].assert_called_once()
+    mocks["init"].assert_called_once()
     # 3. 后续 3 个子方法**未被调**(stop at first error)
-    mocks["_agentsmd_load"].assert_not_called()
+    mocks["load"].assert_not_called()
     mocks["_codegraph_init_or_uninit"].assert_not_called()
     mocks["_codegraph_set_project"].assert_not_called()
     # 4. 中止总结消息出现
@@ -385,7 +403,7 @@ def test_project_load_aborts_on_agentsmd_load_error(tmp_path):
     mocks = _patch_internal_methods(
         plugin,
         custom_async_gens={
-            "_agentsmd_load": _make_error_gen("❌ 模拟:AGENTS.md 加载失败"),
+            "load": _make_error_gen("❌ 模拟:AGENTS.md 加载失败"),
         },
     )
     event = _make_event(umo="test:umo")
@@ -393,9 +411,9 @@ def test_project_load_aborts_on_agentsmd_load_error(tmp_path):
     msgs = _collect_async_gen(plugin.project_load(event, str(p)))
 
     # init 仍被调(load 之前 init 完成)
-    mocks["_agentsmd_init"].assert_called_once()
+    mocks["init"].assert_called_once()
     # load 被调了一次
-    mocks["_agentsmd_load"].assert_called_once()
+    mocks["load"].assert_called_once()
     # codegraph 步骤**未启动**
     mocks["_codegraph_init_or_uninit"].assert_not_called()
     mocks["_codegraph_set_project"].assert_not_called()
@@ -426,8 +444,8 @@ def test_project_load_aborts_on_codegraph_init_error(tmp_path):
     msgs = _collect_async_gen(plugin.project_load(event, str(p)))
 
     # 前 3 步都被调
-    mocks["_agentsmd_init"].assert_called_once()
-    mocks["_agentsmd_load"].assert_called_once()
+    mocks["init"].assert_called_once()
+    mocks["load"].assert_called_once()
     mocks["_codegraph_init_or_uninit"].assert_called_once()
     # 最后一步 set **未被调**
     mocks["_codegraph_set_project"].assert_not_called()
@@ -459,8 +477,8 @@ def test_project_load_aborts_on_codegraph_set_error(tmp_path):
     msgs = _collect_async_gen(plugin.project_load(event, str(p)))
 
     # 前 3 步都被调
-    mocks["_agentsmd_init"].assert_called_once()
-    mocks["_agentsmd_load"].assert_called_once()
+    mocks["init"].assert_called_once()
+    mocks["load"].assert_called_once()
     mocks["_codegraph_init_or_uninit"].assert_called_once()
     mocks["_codegraph_set_project"].assert_called_once()
     # 错误消息 + 中止总结
@@ -496,8 +514,8 @@ def test_project_load_does_not_abort_on_warning(tmp_path):
     msgs = _collect_async_gen(plugin.project_load(event, str(p)))
 
     # 后续方法**全部被调**(warning 不中止)
-    mocks["_agentsmd_init"].assert_called_once()
-    mocks["_agentsmd_load"].assert_called_once()
+    mocks["init"].assert_called_once()
+    mocks["load"].assert_called_once()
     mocks["_codegraph_init_or_uninit"].assert_called_once()
     mocks["_codegraph_set_project"].assert_called_once()
     # 状态已登记
@@ -524,9 +542,9 @@ def test_project_load_skips_agentsmd_init_if_md_exists(tmp_path):
     msgs = _collect_async_gen(plugin.project_load(event, str(p)))
 
     # init 不应被调(load 只读,不重生成)
-    mocks["_agentsmd_init"].assert_not_called()
+    mocks["init"].assert_not_called()
     # load 仍要调
-    mocks["_agentsmd_load"].assert_called_once()
+    mocks["load"].assert_called_once()
     # 状态记录
     assert event.unified_msg_origin in plugin._loaded_projects
     # 提示信息
@@ -562,7 +580,7 @@ def test_project_unload_with_default_project_set():
     msgs = _collect_async_gen(plugin.project_unload(event))
 
     # agentsmd unload + codegraph set 都应被调
-    mocks["_agentsmd_unload"].assert_called_once()
+    mocks["unload"].assert_called_once()
     mocks["_codegraph_set_project"].assert_called_once()
     # _codegraph_set_project 的参数应为默认项目
     call_args = mocks["_codegraph_set_project"].call_args
@@ -589,7 +607,7 @@ def test_project_unload_without_default_project():
     msgs = _collect_async_gen(plugin.project_unload(event))
 
     # agentsmd unload 应被调
-    mocks["_agentsmd_unload"].assert_called_once()
+    mocks["unload"].assert_called_once()
     # codegraph set 不应被调
     mocks["_codegraph_set_project"].assert_not_called()
     # 提示跳过

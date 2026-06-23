@@ -37,13 +37,17 @@ from .tools._codegraph_mcp import (
 # encoding constant here for the startup-time ``git --version`` probe.
 from tools.webapi import register_webapi_routes
 from tools.webapi.git_diff import _GIT_DIFF_ENCODING
-from .tools import agentsmd as _agentsmd_mod
 from .tools.inta_shell.component import LocalInteractiveShellComponent
 from .tools._path_safety import is_path_safe as _is_path_safe
 # PR-3 (2026-06-23): L1 鉴权 + plan 模式控制器已提取到 tools/security/
 from .tools.security import PlanModeController, check_is_admin
 # PR-4 (2026-06-23): LLM system_prompt 注入样板集中到 tools/llm_inject.inject_guidance
 from .tools.llm_inject import inject_guidance
+# PR-5 (2026-06-23): AGENTS.md 子系统(4 个 /agentsmd 命令 + on_llm_request 钩子 +
+# per-umo state manager)集中到 tools/agentsmd/ 子包。tools/agentsmd.py 已
+# git mv 为 tools/agentsmd/_core.py,所有老符号在 tools/agentsmd/__init__.py
+# re-export,老 import 路径继续可用。
+from .tools.agentsmd import AgentsmdSubsystem, strip_surrounding_quotes
 from .tools._guidance_text import (
     PROJECT_GUIDANCE_MARKER,
     PROJECT_CODEGRAPH_GUIDANCE,
@@ -129,7 +133,7 @@ class _ProjectLoadAbort(BaseException):
     """私有信号异常 — ``_project_load_step`` 用以中止 ``_project_load_impl``。
 
     为什么用 ``BaseException`` 而非 ``Exception``?
-        子方法(``_agentsmd_init`` 等)和 helpers 内部有大量
+        子方法(``self.agentsmd.init`` 等)和 helpers 内部有大量
         ``except Exception`` 兜底(见 ``_codegraph_set_project`` 等)。
         用 ``BaseException`` 可避免该异常被这些 ``except`` 误吞,
         确保中止信号一定能传到 :meth:`_project_load_impl` 顶层。
@@ -207,13 +211,16 @@ class SPCodeToolkit(star.Star):
         self._codegraph_task: asyncio.Task | None = None
         self._codegraph_dir_locks: dict[str, asyncio.Lock] = {}
 
-        # AGENTS.md 加载状态: {umo: {"path": str, "directory": str,
-        # "last_content": str, "mtime": float}}
-        # 每会话独立管理加载状态(v2.4 合并自 agentsmd 插件)
-        self._loaded_agents: dict[str, dict] = {}
+        # AGENTS.md 子系统(PR-5 2026-06-23):
+        # 持有 per-umo AgentsState(替代原 main.py 的 self._loaded_agents dict),
+        # 暴露 init/load/unload/update/on_llm_request 方法供 main.py 命令薄壳委托。
+        self.agentsmd = AgentsmdSubsystem(
+            plugin=self,
+            is_path_safe=_is_path_safe,
+        )
 
         # 已加载项目(per-umo)。/project load 时填充,/project unload 时清空。
-        # 与 _loaded_agents 平行——一个跟踪 AGENTS.md,一个跟踪整个项目组合状态。
+        # 与 self.agentsmd.state 平行——一个跟踪 AGENTS.md,一个跟踪整个项目组合状态。
         # 格式: {umo: {"directory": str, "loaded_at": float}}
         self._loaded_projects: dict[str, dict] = {}
 
@@ -460,7 +467,7 @@ class SPCodeToolkit(star.Star):
             接住后直接 ``return`` 即可。
 
         为什么"❌"而不是返回值?
-            子方法(``_agentsmd_init`` / ``_agentsmd_load`` /
+            子方法(``self.agentsmd.init`` / ``self.agentsmd.load`` /
             ``_codegraph_init_or_uninit`` / ``_codegraph_set_project``)都
             遵循 "yield 错误消息 + return" 模式,从不抛异常。``❌`` 前缀是
             它们的统一约定(见 :data:`tools.agentsmd`)。``⚠️`` 不算失败 —
@@ -543,7 +550,7 @@ class SPCodeToolkit(star.Star):
             return
 
         # 3. 路径解析与安全校验
-        directory = _agentsmd_mod.strip_surrounding_quotes(directory)
+        directory = strip_surrounding_quotes(directory)
         target = Path(directory).resolve()
         ok, reason = _is_path_safe(
             target, user_blacklist=self._config.get("file_remove_blacklist")
@@ -562,7 +569,7 @@ class SPCodeToolkit(star.Star):
                 )
                 async for msg in self._project_load_step(
                     event,
-                    self._agentsmd_init(event, str(target)),
+                    self.agentsmd.init(event, str(target)),
                     "[1/3] AGENTS.md 初始化",
                 ):
                     yield msg
@@ -573,7 +580,7 @@ class SPCodeToolkit(star.Star):
             yield event.plain_result(f"⏳ [1/3] 正在 load AGENTS.md: {target}")
             async for msg in self._project_load_step(
                 event,
-                self._agentsmd_load(event, str(target)),
+                self.agentsmd.load(event, str(target)),
                 "[1/3] AGENTS.md 加载",
             ):
                 yield msg
@@ -653,7 +660,7 @@ class SPCodeToolkit(star.Star):
             return
 
         # 2. agentsmd unload(同步返回单条消息)
-        yield self._agentsmd_unload(event)
+        yield self.agentsmd.unload(event)
 
         # 3. codegraph set 回默认项目
         default_project = (self._config.get("codegraph_project") or "").strip()
@@ -780,7 +787,7 @@ class SPCodeToolkit(star.Star):
                 "AGENTS.md 管理功能已被禁用(agentsmd_enabled=false)。"
             )
             return
-        async for msg in self._agentsmd_init(event, directory):
+        async for msg in self.agentsmd.init(event, directory):
             yield msg
 
     @agentsmd.command("load")
@@ -791,7 +798,7 @@ class SPCodeToolkit(star.Star):
                 "AGENTS.md 管理功能已被禁用(agentsmd_enabled=false)。"
             )
             return
-        async for msg in self._agentsmd_load(event, directory):
+        async for msg in self.agentsmd.load(event, directory):
             yield msg
 
     @agentsmd.command("unload")
@@ -802,7 +809,7 @@ class SPCodeToolkit(star.Star):
                 "AGENTS.md 管理功能已被禁用(agentsmd_enabled=false)。"
             )
             return
-        yield self._agentsmd_unload(event)
+        yield self.agentsmd.unload(event)
 
     @agentsmd.command("update")
     async def agentsmd_update(self, event):
@@ -812,7 +819,7 @@ class SPCodeToolkit(star.Star):
                 "AGENTS.md 管理功能已被禁用(agentsmd_enabled=false)。"
             )
             return
-        async for msg in self._agentsmd_update(event):
+        async for msg in self.agentsmd.update(event):
             yield msg
 
     def _build_mcp_cfg(self) -> dict | None:
@@ -882,6 +889,13 @@ class SPCodeToolkit(star.Star):
         # PR-2 (2026-06-23): 组件状态从 main.py 模块级变量改为
         # tools.inta_shell.runtime 单例。这里延迟 import 避免循环依赖。
         from .tools.inta_shell import runtime as _inta_runtime
+
+        # PR-5 (2026-06-23): 清空 agentsmd 子系统 per-umo state。
+        # 避免插件重载后持有已不存在会话的 state。
+        try:
+            self.agentsmd.clear()
+        except Exception as e:  # pragma: no cover — 防御性
+            logger.warning("[agentsmd] clear state on terminate failed: %s", e)
 
         # 0. 停 inta_shell 交互式 Shell 组件
         if _inta_runtime.component is not None:
@@ -1138,282 +1152,9 @@ class SPCodeToolkit(star.Star):
                         f"❌ codegraph {sub} 失败(退出码 {proc.returncode}):\n{err[:1500]}"
                     )
 
-    # ── /agentsmd 业务方法(v2.4)────────────────────
-
-    async def _agentsmd_init(self, event, directory: str):
-        """/agentsmd init <directory> 实现。"""
-        directory = _agentsmd_mod.strip_surrounding_quotes(directory)
-        target = Path(directory).resolve()
-
-        ok, reason = _is_path_safe(
-            target, user_blacklist=self._config.get("file_remove_blacklist")
-        )
-        if not ok:
-            yield event.plain_result(f"❌ 路径不允许: {reason}")
-            return
-
-        # v2.9: 显式拒绝不存在的目录(取消自动 mkdir,避免对路径拼错场景静默创建空目录)
-        if not target.exists():
-            yield event.plain_result(
-                f"❌ 目录 `{directory}` 不存在。\n请先创建该目录,或确认路径是否正确。"
-            )
-            return
-        if not target.is_dir():
-            yield event.plain_result(f"❌ `{directory}` 不是一个有效的目录。")
-            return
-
-        # v2.9: 要求目录下至少存在一个代码文件,避免对空目录或纯文档目录误用。
-        # AGENTS.md 是给"在此仓库工作的编程代理"用的规范,没有代码的项目无意义。
-        if not _agentsmd_mod.has_code_files(target):
-            supported = ", ".join(
-                f".{ext}" for ext in sorted(_agentsmd_mod.CODE_FILE_EXTENSIONS)
-            )
-            yield event.plain_result(
-                f"❌ 目录 `{directory}` 下未找到代码文件。\n"
-                f"AGENTS.md 仅用于代码项目,支持的后缀: {supported}\n"
-                "请确认目录是否正确,或选择包含源代码的目录。"
-            )
-            return
-
-        agents_md_path = target / "AGENTS.md"
-        if agents_md_path.exists():
-            yield event.plain_result(
-                f"⚠️ 目录 `{directory}` 下已存在 AGENTS.md。\n"
-                "如需重新生成,请先删除该文件后再执行 init。"
-            )
-            return
-
-        yield event.plain_result(f"🔄 正在为 `{directory}` 生成 AGENTS.md,请稍候…")
-
-        umo = event.unified_msg_origin
-        provider = self.context.get_using_provider(umo=umo)
-        init_template = _agentsmd_mod.resolve_init_template(self._config)
-
-        content = await _agentsmd_mod.generate_agents_md_via_llm(
-            provider, target, umo=umo, init_template=init_template
-        )
-
-        try:
-            await asyncio.to_thread(
-                agents_md_path.write_text, content, encoding="utf-8"
-            )
-            yield event.plain_result(
-                f"✅ 已在 `{directory}` 下创建 AGENTS.md({len(content)} 字符)。\n"
-                f"路径: {agents_md_path}\n"
-                f"您可以使用 `/agentsmd load {directory}` 将其加载到当前会话的系统提示词中。"
-            )
-        except Exception as e:
-            yield event.plain_result(f"❌ 写入 AGENTS.md 失败: {e}")
-
-    async def _agentsmd_load(self, event, directory: str):
-        """/agentsmd load <directory> 实现。"""
-        directory = _agentsmd_mod.strip_surrounding_quotes(directory)
-        target = Path(directory).resolve()
-
-        ok, reason = _is_path_safe(
-            target, user_blacklist=self._config.get("file_remove_blacklist")
-        )
-        if not ok:
-            yield event.plain_result(f"❌ 路径不允许: {reason}")
-            return
-
-        # v2.9: 显式校验目标目录存在且是目录,避免把"目录不存在"和
-        # "目录存在但缺 AGENTS.md"混为同一个错误消息。
-        if not target.exists():
-            yield event.plain_result(
-                f"❌ 目录 `{directory}` 不存在。\n请先创建该目录,或确认路径是否正确。"
-            )
-            return
-        if not target.is_dir():
-            yield event.plain_result(f"❌ `{directory}` 不是一个目录。")
-            return
-
-        # v2.9: 代码文件检测(与 init 对齐)
-        if not _agentsmd_mod.has_code_files(target):
-            supported = ", ".join(
-                f".{ext}" for ext in sorted(_agentsmd_mod.CODE_FILE_EXTENSIONS)
-            )
-            yield event.plain_result(
-                f"❌ 目录 `{directory}` 下未找到代码文件。\n"
-                f"AGENTS.md 仅用于代码项目,支持的后缀: {supported}\n"
-                "请确认目录是否正确,或选择包含源代码的目录。"
-            )
-            return
-
-        agents_md_path = target / "AGENTS.md"
-        if not agents_md_path.exists():
-            yield event.plain_result(
-                f"❌ 目录 `{directory}` 下未找到 AGENTS.md 文件。\n"
-                f"请先使用 `/agentsmd init {directory}` 创建。"
-            )
-            return
-
-        try:
-            content = await asyncio.to_thread(
-                agents_md_path.read_text, encoding="utf-8"
-            )
-            mtime = agents_md_path.stat().st_mtime
-        except Exception as e:
-            yield event.plain_result(f"❌ 读取 AGENTS.md 失败: {e}")
-            return
-
-        umo = event.unified_msg_origin
-        self._loaded_agents[umo] = {
-            "path": str(agents_md_path),
-            "directory": str(target),
-            "last_content": content,
-            "mtime": mtime,
-        }
-
-        yield event.plain_result(
-            f"✅ 已加载 `{directory}/AGENTS.md` 到当前会话的系统提示词。\n"
-            f"内容长度: {len(content)} 字符\n"
-            "后续每次 LLM 请求都会自动注入该内容。\n"
-            "使用 `/agentsmd unload` 可卸载,使用 `/agentsmd update` 可手动更新。"
-        )
-
-    def _agentsmd_unload(self, event):
-        """/agentsmd unload 实现。"""
-        umo = event.unified_msg_origin
-        if umo not in self._loaded_agents:
-            return event.plain_result("ℹ️ 当前会话未加载任何 AGENTS.md。")
-        info = self._loaded_agents.pop(umo)
-        return event.plain_result(
-            f"✅ 已卸载 AGENTS.md 注入。\n原文件: `{info['path']}`"
-        )
-
-    async def _agentsmd_update(self, event):
-        """/agentsmd update 实现。"""
-        umo = event.unified_msg_origin
-        if umo not in self._loaded_agents:
-            yield event.plain_result(
-                "当前会话未加载 AGENTS.md。请先使用 `/agentsmd load <路径>` "
-                "加载一个 AGENTS.md。"
-            )
-            return
-
-        info = self._loaded_agents[umo]
-        agents_md_path = Path(info["path"])
-        dir_path = Path(info["directory"])
-        existing_content = info["last_content"]
-
-        if not agents_md_path.exists():
-            yield event.plain_result(
-                f"AGENTS.md 文件不存在: {agents_md_path}\n"
-                "请检查文件是否被删除,或重新使用 `/agentsmd init` 初始化。"
-            )
-            return
-
-        yield event.plain_result(
-            "正在使用 LLM 重新生成 AGENTS.md (基于现有内容 + 最新目录结构) . .."
-        )
-
-        provider = self.context.get_using_provider(umo=umo)
-        if provider is None:
-            yield event.plain_result("当前会话未配置 LLM Provider,无法更新。")
-            return
-
-        init_template = _agentsmd_mod.resolve_init_template(self._config)
-        prompt = (
-            f"{init_template}\n\n"
-            "以下是该项目的文件结构和关键文件内容摘要:\n\n"
-            f"{_agentsmd_mod.scan_project_context(dir_path)}\n\n"
-            "## 现有 AGENTS.md 内容\n\n"
-            f"{existing_content}\n\n"
-            "请比较现有实现和目录结构与 AGENTS.md 是否有差异,并更新 AGENTS.md\n\n"
-            "请直接输出 AGENTS.md 的完整内容(Markdown 格式),不要添加任何额外说明,"
-            "也不要使用 ```markdown 等代码块包裹整个内容。"
-        )
-
-        try:
-            llm_resp = await provider.text_chat(
-                prompt=prompt,
-                session_id=umo,
-                contexts=[],
-                system_prompt="你是一名资深软件工程师,擅长为多种语言的项目编写规范文档。",
-            )
-        except Exception as e:
-            yield event.plain_result(f"LLM 调用失败: {e}")
-            return
-
-        new_content = (getattr(llm_resp, "completion_text", "") or "").strip()
-        new_content = _agentsmd_mod.strip_code_fence(new_content)
-        new_content = new_content if new_content else existing_content
-
-        try:
-            await asyncio.to_thread(
-                agents_md_path.write_text, new_content, encoding="utf-8"
-            )
-        except Exception as e:
-            yield event.plain_result(f"❌ 写入 AGENTS.md 失败: {e}")
-            return
-
-        info["last_content"] = new_content
-        info["mtime"] = agents_md_path.stat().st_mtime
-
-        yield event.plain_result(
-            f"AGENTS.md 已更新 ({len(new_content)} 字符)。\n"
-            "后续 LLM 请求将自动使用新版本。"
-        )
-
-    @filter.on_llm_request()
-    async def _agentsmd_inject_to_llm_request(
-        self, event: AstrMessageEvent, req: ProviderRequest
-    ):
-        """每次 LLM 请求前,若当前会话已加载 AGENTS.md,注入到 system_prompt 末尾。"""
-        if not self._config.get("agentsmd_enabled", True):
-            return
-        umo = event.unified_msg_origin
-        if umo not in self._loaded_agents:
-            return
-
-        info = self._loaded_agents[umo]
-        agents_md_path = Path(info["path"])
-        content = info.get("last_content", "")
-
-        # 通过 mtime 检测变更(自动刷新缓存,无需手动 update)
-        try:
-            if agents_md_path.exists():
-                current_mtime = agents_md_path.stat().st_mtime
-                if current_mtime != info.get("mtime"):
-                    content = await asyncio.to_thread(
-                        agents_md_path.read_text, encoding="utf-8"
-                    )
-                    self._loaded_agents[umo]["last_content"] = content
-                    self._loaded_agents[umo]["mtime"] = current_mtime
-                    logger.debug(
-                        f"[agentsmd] 检测到 AGENTS.md 已变更,已刷新缓存: {agents_md_path}"
-                    )
-            else:
-                logger.warning(
-                    f"[agentsmd] AGENTS.md 文件不存在,使用缓存内容: {agents_md_path}"
-                )
-        except Exception as e:
-            logger.error(f"[agentsmd] 读取 AGENTS.md 失败,使用缓存: {e}")
-
-        if not content:
-            return
-
-        # 防重复注入(同一请求)
-        if _agentsmd_mod.INJECTION_MARKER in (req.system_prompt or ""):
-            return
-
-        # v2.8: 把项目目录也注入到 system_prompt(放在 AGENTS.md 之前),
-        # 让 LLM 知道当前会话绑定到哪个项目。
-        directory = info.get("directory", "")
-        if req.system_prompt is None or req.system_prompt == "":
-            req.system_prompt = _agentsmd_mod.build_injection(
-                content, directory=directory
-            ).lstrip("\n")
-        else:
-            req.system_prompt = req.system_prompt + _agentsmd_mod.build_injection(
-                content, directory=directory
-            )
-
-        logger.debug(
-            f"[agentsmd] 已向会话 {umo} 的 system_prompt 注入 AGENTS.md "
-            f"({len(content)} 字符)"
-        )
+    # ── /agentsmd 业务方法已提取到 tools/agentsmd/ 子包(PR-5 2026-06-23) ───
+    # 4 个 /agentsmd 命令(init/load/unload/update)的实现 + on_llm_request 钩子
+    # 都委托给 self.agentsmd (AgentsmdSubsystem 实例),详见 tools/agentsmd/。
 
     @filter.on_llm_request()
     async def _project_inject_codegraph_guidance(
@@ -1421,7 +1162,7 @@ class SPCodeToolkit(star.Star):
     ):
         """/project load 后,把 codegraph 优先使用指引注入到 system_prompt 末尾。
 
-        与 _agentsmd_inject_to_llm_request 平行,但走独立 marker 防重复。
+        与 self.agentsmd.on_llm_request 平行,但走独立 marker 防重复。
         只在以下条件同时满足时注入:
         - codegraph_enabled = true
         - 当前 umo 已在 self._loaded_projects 中

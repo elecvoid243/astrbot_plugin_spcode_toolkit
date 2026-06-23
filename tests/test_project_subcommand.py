@@ -41,9 +41,10 @@ def _make_plugin():
     plugin = SPCodeToolkit.__new__(SPCodeToolkit)
     plugin.context = MagicMock()
     plugin._loaded_projects = {}
-    # _agentsmd_unload reads from these — populate empty defaults so the
-    # test fixture matches a fresh, never-used plugin instance.
-    plugin._loaded_agents = {}
+    # agentsmd_unload reads from per-umo state via plugin.agentsmd.state —
+    # 用空 AgentsStateManager 保证从未加载的 plugin 实例。
+    # PR-5 (2026-06-23): agentsmd 状态从 plugin._loaded_agents dict 迁到
+    # plugin.agentsmd.state (AgentsStateManager)。
     plugin._codegraph_projects = {}
     # Provide a permissive default config so feature-flag checks pass.
     plugin._config = {
@@ -52,6 +53,14 @@ def _make_plugin():
         "codegraph_project": "",
         "file_remove_blacklist": None,
     }
+    # PR-5 (2026-06-23): 实例化 agentsmd 子系统;_patch_substeps_success
+    # 会进一步把 .init / .load / .unload 替换为 MagicMock。
+    from tools.agentsmd import AgentsmdSubsystem
+
+    plugin.agentsmd = AgentsmdSubsystem(
+        plugin=plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
     return plugin
 
 
@@ -79,22 +88,27 @@ async def _drive(plugin, event, sub_command, *args):
 # 修法: 用 mock 模拟 4 个子步骤全部成功,让测试聚焦于 _project_router 的
 # 分发逻辑和 _loaded_projects 的状态机,而不是子步骤的副作用。
 def _patch_substeps_success(plugin):
-    """Mock 4 个子步骤为成功路径 — yield 单一 OK 消息后结束。"""
+    """Mock 4 个子步骤为成功路径 — yield 单一 OK 消息后结束。
+
+    PR-5 (2026-06-23): agentsmd 子方法已搬到 plugin.agentsmd.* 上,
+    codegraph 子方法暂留 plugin._codegraph_*。
+    """
 
     async def _ok(*args, **kwargs):
         yield "mock-substep-ok"
 
-    for name in (
-        "_agentsmd_init",
-        "_agentsmd_load",
-        "_codegraph_init_or_uninit",
-        "_codegraph_set_project",
-    ):
+    # agentsmd async gen 方法 — 挂到 plugin.agentsmd.<method>
+    for method_name in ("init", "load"):
+        m = MagicMock()
+        m.side_effect = _ok
+        setattr(plugin.agentsmd, method_name, m)
+    # agentsmd 同步方法 — plugin.agentsmd.unload
+    plugin.agentsmd.unload = MagicMock(return_value="mock-unload-ok")
+    # codegraph 子方法 — 暂留 plugin._codegraph_*(PR-6 才搬)
+    for name in ("_codegraph_init_or_uninit", "_codegraph_set_project"):
         m = MagicMock()
         m.side_effect = _ok
         setattr(plugin, name, m)
-    # _agentsmd_unload 是同步方法
-    plugin._agentsmd_unload = MagicMock(return_value="mock-unload-ok")
 
 
 @pytest.fixture
