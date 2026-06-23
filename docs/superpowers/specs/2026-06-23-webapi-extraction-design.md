@@ -2,20 +2,25 @@
 
 > **For agentic workers:** 这是 brainstorming 阶段的产出。设计经用户审核通过后,下一步调用 writing-plans 技能输出实现计划。
 
-**状态**: ✅ 设计已通过(用户确认日期 2026-06-23,Q1=A, Q2=A, Q3=A, Q4=A, Q5=A, Q6=A, Q7=A, Q8=A)
-**作者**: elecvoid243 @ 2026-06-23 08:46
+**状态**: 🔄 v2 — 修正 reviewer 4 个 blocking issue + 4 个 advisory
+**作者**: elecvoid243 @ 2026-06-23 08:46(spec v1)/ v2 修正 @ 2026-06-23 08:55
 **目标插件**: `astrbot_plugin_spcode_toolkit`(主干)
 **前置版本**: 当前 HEAD(6 个 `/spcode/*` 端点全部已交付,本 spec 是工程重构,不改变任何端点的对外契约)
 **配套 UI**: 无(纯服务端重构;dashboard 不感知)
 
+**修正历史**:
+- v2(2026-06-23 08:55):spec reviewer 找到 4 个 blocking 问题(适配器漏 `scope`/`path`、`_run_git_async` 跨端点归类矛盾、虚构 3 个不存在函数名、`_record` 误归 webapi) + 4 个 advisory(行数误导、常量未枚举、类名误写、file_restore body 迁移不清)。本版本全部修正。
+
 ## 背景与目标
 
-`main.py` 当前 **4378 行**,堆叠了 6 个 Web API 端点 + 6 段重复的路由注册块 + 20+ 个端点专用辅助函数 + 1 个大型 plugin 类。文件已经超过 AstrBot 插件健康阈值的 4-5 倍,导致:
+`main.py` 当前 **4378 行**,堆叠了 6 个 Web API 端点 handler + 6 段重复的路由注册块 + 20+ 个端点专用辅助函数 + 3 个端点专用模块级常量 + 1 个大型 plugin 类(`SPCodeToolkit`,继承自 `star.Star`)。文件已经超过 AstrBot 插件健康阈值的 4-5 倍,导致:
 
 - 单次阅读 / 改动要在 4000+ 行间反复跳转
 - 端点与端点之间没有清晰边界,git-diff 1170 行的 handler 把其它 5 个端点"挤"在文件尾
 - 路由注册样板代码 6 次重复(try/except + 同样的 register_web_api 调用模板)
 - 新增端点时,缺乏"在哪里写 handler"的明确位置,容易继续塞 main.py
+
+**关于"git-diff 1170 行"**:严格说,`handle_get_git_diff` 方法体本身约 **243 行**(main.py 2803-3045),不是 1170 行。1170 行是 git-diff + 后续 codegraph 命令 + plan/build 命令 + agentsmd unload 等的跨度总和。**实际搬迁到 `git_diff.py` 的内容约 400 行**(243 行 handler + 7 个 git-diff 专用辅助函数 + 3 个 git-diff 模块级常量 + 模块导入)。该 spec 中所有"git-diff 大文件"措辞均指 400 行,非 1170 行。
 
 **目标**:把 6 个 webapi 端点的代码全部从 `main.py` 抽到 `tools/webapi/` 子包;`main.py` 只保留插件类壳、命令路由(`/project`、`/codegraph` 等)、`register_webapi_routes()` 一次调用。最终 `main.py` 行数预计下降到 ~180 行(纯启动 + 命令分发)。
 
@@ -71,19 +76,44 @@ astrbot_plugin_spcode_toolkit/
 ```python
 # tools/webapi/git_diff.py
 async def handle(
-    plugin: "StarToolkitPlugin",  # TYPE_CHECKING 块声明 forward ref
+    plugin: "SPCodeToolkit",  # TYPE_CHECKING 块声明 forward ref
     *,
     umo: str | None = None,
     worktree: str | None = None,
+    scope: str = "unstaged",
+) -> dict[str, Any]:
+    ...
+```
+
+```python
+# tools/webapi/file_browser.py
+async def handle(
+    plugin: "SPCodeToolkit",
+    *,
+    path: str = "",
+    if_none_match: str | None = None,
+) -> dict[str, Any]:
+    ...
+```
+
+```python
+# tools/webapi/file_restore.py
+async def handle(
+    plugin: "SPCodeToolkit",
+    *,
+    umo: str | None = None,
+    worktree: str | None = None,
+    body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ...
 ```
 
 **设计要点**:
 1. **首参数 `plugin`** —— 取代 `self`,让 handler 不绑死在 plugin 类上
-2. **keyword-only 后续参数** —— `umo`、`worktree` 等 query/body 参数显式列出,API 契约一眼可见
-3. **不写 `from main import StarToolkitPlugin`** —— 用 `TYPE_CHECKING` 块声明 forward reference,运行期零循环依赖
+2. **keyword-only 后续参数** —— `umo`、`worktree`、`scope`、`path`、`body`、`if_none_match` 等 query/body 参数显式列出,API 契约一眼可见
+3. **不写 `from main import SPCodeToolkit`** —— 用 `TYPE_CHECKING` 块声明 forward reference,运行期零循环依赖
 4. **返回 dict** —— 与原 handler 行为完全一致
+5. **不显式声明的请求字段**(如有),handler 内部仍可走 `plugin.XXX` 访问状态(业务逻辑层)
 
 ### 2. 路由注册改造
 
@@ -145,8 +175,17 @@ register_webapi_routes(self)
 AstrBot 的 `view_handler` 签名是 `(*args, **kwargs)`,handler 内部所有 query/body 参数都通过 `request.*` 隐式访问。改为模块级函数后需要显式取值。`tools/webapi/__init__.py` 提供 `_wrap(handler, plugin)`:
 
 ```python
-def _wrap(handler: Callable, plugin: "StarToolkitPlugin") -> Callable:
-    """适配 view_handler 接口,把 request.* 参数映射到 handler 关键字参数。"""
+def _wrap(handler: Callable, plugin: "SPCodeToolkit") -> Callable:
+    """适配 view_handler 接口,把 request.* 参数映射到 handler 关键字参数。
+
+    支持的关键字参数(按 handler 需要自动注入):
+    - umo:        GET  query.umo; POST body.umo
+    - worktree:   GET  query.worktree; POST body.worktree
+    - scope:      GET  query.scope(默认 "unstaged";git_diff 专用)
+    - path:       GET  query.path(默认 "";file_browser 专用)
+    - if_none_match: GET header.If-None-Match(file_browser 缓存命中用)
+    - body:       POST body 整体(作为 dict)
+    """
     sig = inspect.signature(handler)
     accepts = set(sig.parameters) - {"plugin"}
 
@@ -155,19 +194,39 @@ def _wrap(handler: Callable, plugin: "StarToolkitPlugin") -> Callable:
         call_kwargs: dict[str, Any] = {}
 
         if "umo" in accepts and request is not None:
-            call_kwargs["umo"] = request.query.get("umo") or request.json.get("umo")
-        if "worktree" in accepts and request is not None:
-            call_kwargs["worktree"] = request.query.get("worktree")
-        if "body" in accepts and request is not None:
             if request.method == "POST":
                 try:
-                    call_kwargs["body"] = await request.json()
+                    _body = await request.json() or {}
+                except Exception:
+                    _body = {}
+                call_kwargs["umo"] = _body.get("umo")
+            else:
+                call_kwargs["umo"] = request.query.get("umo") or None
+        if "worktree" in accepts and request is not None:
+            if request.method == "POST":
+                if "body" not in call_kwargs:
+                    try:
+                        call_kwargs["body"] = await request.json() or {}
+                    except Exception:
+                        call_kwargs["body"] = {}
+                call_kwargs["worktree"] = call_kwargs["body"].get("worktree")
+            else:
+                call_kwargs["worktree"] = request.query.get("worktree")
+        if "scope" in accepts and request is not None:
+            call_kwargs["scope"] = request.query.get("scope") or "unstaged"
+        if "path" in accepts and request is not None:
+            call_kwargs["path"] = request.query.get("path", "").strip()
+        if "if_none_match" in accepts and request is not None:
+            call_kwargs["if_none_match"] = request.headers.get("if-none-match")
+        if "body" in accepts and request is not None and "body" not in call_kwargs:
+            # umo/worktree 没消费 body 时,才显式提供完整 body
+            if request.method == "POST":
+                try:
+                    call_kwargs["body"] = await request.json() or {}
                 except Exception:
                     call_kwargs["body"] = {}
             else:
                 call_kwargs["body"] = {}
-        if "if_none_match" in accepts and request is not None:
-            call_kwargs["if_none_match"] = request.headers.get("if-none-match")
 
         return await handler(plugin, **call_kwargs)
 
@@ -175,39 +234,70 @@ def _wrap(handler: Callable, plugin: "StarToolkitPlugin") -> Callable:
 ```
 
 > **关键不变量**:handler 内部仍然用 `plugin.XXX` 访问插件状态,**业务代码 100% 不动**;只动"取值入口"
+>
+> **特殊考虑**:POST 端点(`file-restore`)的 body 是 JSON,`_wrap` 解析后既可作整体 `body={...}` 传给 handler,也可挑出 `umo`/`worktree` 单独传;实现策略是"先 body 整体取一次,再分字段挑出",避免重复 IO
 
-### 4. 辅助函数归属
+### 4. 辅助函数与常量归属
 
-按"谁使用"原则就近搬移,**严格遵守"主用端点拥有"原则**:
+#### 4.1 单端点专用函数(随端点搬移)
 
-| 辅助函数 | 归属 |
-|----------|------|
-| `_parse_diff_status_map` | `git_diff.py` |
-| `_parse_numstat_counts` | `git_diff.py` |
-| `_build_stat_text` | `git_diff.py` |
-| `_make_git_diff_empty_envelope` | `git_diff.py` |
-| `_compute_file_etag` | `file_browser.py` |
-| `_common_cache_headers` | `file_browser.py` |
-| `_get_if_none_match` | `file_browser.py` |
-| `_make_304_response` | `file_browser.py` |
-| `_build_error_response` | `file_browser.py` |
-| `_classify_entry` | `file_browser.py` |
-| `_safe_lstat_mtime` | `file_browser.py` |
-| `_make_entry` | `file_browser.py` |
-| `_build_file_response` | `file_browser.py` |
-| `_classify_oserror` | `file_browser.py` |
-| `_build_directory_response` | `file_browser.py` |
-| `_build_symlink_response` | `file_browser.py` |
-| `_make_git_worktrees_empty_envelope` | `git_worktrees.py` |
-| `_make_file_restore_empty_envelope` | `file_restore.py` |
-| `_make_file_restore_success_envelope` | `file_restore.py` |
-| `_validate_restore_file` | `file_restore.py` |
-| `_record`(decorator) | `_envelopes.py`(共享) |
-| `class _JSONResponseCompat` | `_helpers.py`(共享) |
+按"主用端点拥有"原则:
 
-**关于 `tools/_helpers.py` 中已存在的跨端点共享函数**(`_validate_worktree_param`、`_git_worktrees_response_skeleton`、`_file_restore_failure_response`、`_file_restore_success_response`、`_resolve_git_common_dir`、`_parse_git_worktree_porcelain`、`run_cmd`):
-- **保留原位**!它们已经在 `tools/_helpers.py`,且有现成测试覆盖
-- handler 改用 `from tools._helpers import _validate_worktree_param`(已存在的 import 模式)
+| 辅助函数 | 归属 | 当前行号 |
+|----------|------|----------|
+| `_parse_diff_status_map` | `git_diff.py` | 172 |
+| `_parse_numstat_counts` | `git_diff.py` | 232 |
+| `_build_stat_text` | `git_diff.py` | 260 |
+| `_compute_diff_etag` | `git_diff.py` | 302 |
+| `_make_git_diff_empty_envelope` | `git_diff.py` | 724 |
+| `_compute_file_etag` | `file_browser.py` | 363 |
+| `_common_cache_headers` | `file_browser.py` | 382 |
+| `_get_if_none_match` | `file_browser.py` | 400 |
+| `_make_304_response` | `file_browser.py` | 410 |
+| `_build_error_response` | `file_browser.py` | 448 |
+| `_classify_entry` | `file_browser.py` | 456 |
+| `_safe_lstat_mtime` | `file_browser.py` | 486 |
+| `_make_entry` | `file_browser.py` | 509 |
+| `_build_file_response` | `file_browser.py` | 560 |
+| `_classify_oserror` | `file_browser.py` | 647 |
+| `_build_directory_response` | `file_browser.py` | 659 |
+| `_build_symlink_response` | `file_browser.py` | 703 |
+| `_make_git_worktrees_empty_envelope` | `git_worktrees.py` | 750 |
+| `_make_file_restore_empty_envelope` | `file_restore.py` | 776 |
+| `_make_file_restore_success_envelope` | `file_restore.py` | 807 |
+| `_validate_restore_file` | `file_restore.py` | 839 |
+
+#### 4.2 跨端点共享函数(进 `webapi/_helpers.py`)
+
+以下函数被多个 webapi 端点共用,不属于任何单一端点,放 `tools/webapi/_helpers.py`:
+
+| 函数 | 共享端点 | 当前行号 |
+|------|----------|----------|
+| `_run_git_async` | git_diff(2941, 2988, 3002)+ file_restore(4174, 4236, 4348) | 80 |
+
+`tools/webapi/_helpers.py` 文件结构:
+```
+# 共享给 webapi/* 端点的工具函数
+async def _run_git_async(*args, **kwargs) -> dict: ...
+```
+
+#### 4.3 端点专用模块级常量(随端点搬移)
+
+| 常量 | 归属 | 当前行号 | 用途 |
+|------|------|----------|------|
+| `MAX_GIT_DIFF_BYTES` | `git_diff.py` | 135 | git diff 1MB 硬上限 |
+| `_GIT_DIFF_ENCODING` | `git_diff.py` | 136 | git 命令输出编码 |
+| `_DIFF_ETAG_CACHE_MAX` | `git_diff.py` | 146 | ETag 缓存最大条目 |
+
+#### 4.4 不属于本次重构(明确范围外)
+
+| 项 | 当前行号 | 理由 |
+|----|----------|------|
+| `_record`(decorator) | 906 | **无 webapi 用途**:grep 全文 10 处使用,全在 LLM 工具 wrapper 方法(`CodeCheckTool`、`EsSearchTool`、`FileRemoveTool` 等),用于记录 tool 执行耗时;webapi 端点不需要。**保留在 main.py**。 |
+| `class _JSONResponseCompat` | 415 | 当前未被任何 webapi handler 使用(`grep -n "_JSONResponseCompat" main.py` 仅看到 1 行定义,0 处使用)。**保留在 main.py 备用,或随下个使用方迁移**。 |
+| `tools/_helpers.py` 中 9 个函数(`run_cmd` / `err_json` / `unwrap` / `detect_console_encoding` / `safe_decode_bytes` / `proposal_reply` / `_resolve_git_common_dir` / `_parse_git_worktree_porcelain` / `_validate_worktree_param`) | 18-251 | 这些是 LLM 工具层共享,**不是 webapi 专用**,**不在本次重构范围**;保持原位。`webapi/*` handler 仍按需 `from tools._helpers import _XXX` 直接使用(已存在的 import 模式)。 |
+
+> **范围澄清**:本次重构**只搬 webapi 端点代码**,不触碰 LLM 工具层(CodeCheckTool / EsSearchTool / FileRemoveTool 等);`_record`、`_JSONResponseCompat`、`tools/_helpers.py` 全部保持原状。
 
 ### 5. 测试迁移策略
 
@@ -239,6 +329,18 @@ def _wrap(handler: Callable, plugin: "StarToolkitPlugin") -> Callable:
 
 3. **post 端点 body 改造**:`test_file_restore.py` 中传 body 的测试改为走新签名(若原 handler 直接用 `request.json()`,改为 `handle(plugin, body=...)` 形式)
 
+   - **现有测试 helper**:`tests/test_file_restore.py:66-83` 的 `_patch_post_body(monkeypatch, body=...)` 当前 monkey-patches `astrbot.api.web.request.json`(因为原 handler 内部用 `web.request.json()` 取 body)
+   - **新写法**:`_patch_post_body` **直接删除**,测试改为 `result = await handlers["handle_post_file_restore"](plugin, body={...})` 显式传 body
+   - **影响**:`grep -n "_patch_post_body" tests/test_file_restore.py` 全部 `await plugin.handle_post_file_restore()` 调用行;预计 ~10 处需要把 `monkeypatch.setattr(...)` 一并去掉
+   - **收益**:测试不再依赖 monkey-patch `request.json`,更直白反映"handler 收到什么 body"
+
+4. **GET 端点 + if_none_match 改造**:`test_file_browser.py` 现有 v3.3 helper `call_file_browser(plugin, ...)` 模拟请求头;新写法为 `await handlers["handle_get_file_browser"](plugin, path=..., if_none_match=...)` 关键字传参;helper 删除或简化为一行
+
+**测试覆盖现状(基线)**:
+- `test_plan_mode.py`:有 5 个直接测试 `plugin.handle_get_plan_mode()`(`grep -c "plugin.handle_get_plan_mode" tests/test_plan_mode.py` ≈ 5)
+- `test_git_diff*.py` / `test_file_browser.py` / `test_file_restore.py` / `test_git_worktrees.py`:都有直接测试
+- `test_project_status`(如果存在):**`handle_get_project_status` 当前 0 直接测试**(被 dashboard 通过 HTTP 端到端测试);本次重构后,需在 `tests/test_project_status.py` 加 ≥1 个 smoke test,通过 `handlers["handle_get_project_status"](plugin, umo=...)` 调用验证不抛错
+
 **不在 main.py 保留兼容 shim**(`def handle_get_xxx(self): return handler(self, ...)`):
 - 表面友好,实际把 "handler 已迁移" 的信号藏起来
 - 未来加新端点还会有人继续挂到 plugin 类上
@@ -256,12 +358,15 @@ def _wrap(handler: Callable, plugin: "StarToolkitPlugin") -> Callable:
 |------|------|
 | `self.xxx` 引用被遗漏(原 handler 用 `self`) | 搬迁后 grep 全文 `self\.[a-z_]+`,逐个改 `plugin.<name>`;`pytest tests/` 兜底 |
 | `_wrap()` 适配层对 POST body 解析行为变化 | 对 `file-restore` 加专门 monkey-patch 测试,验证 `body` 参数正确传透 |
+| `_wrap()` 适配层对 query 字段(`scope`/`path`/`worktree`)漏注入 | 启动期 import 自检:`tools/webapi/__init__.py` 在 import 时对每个已注册 handler 做 `inspect.signature().parameters` 校验,确保声明的字段名在 `_wrap` 已实现 |
 | `view_handler` 签名不匹配导致 AstrBot 拒绝注册 | 启动期集成测试(6 个端点全部 `register_web_api` 不抛错);加一条 unit test 验证 `_wrap()` 返回的协程可被 `inspect.iscoroutinefunction` 识别 |
 | 跨循环依赖:`webapi/*` 引用 `plugin`,`main.py` 引用 `webapi` | webapi 用 `TYPE_CHECKING` forward ref;运行期零 import |
-| `_record` 装饰器被多处复用导致搬迁路径错 | `_record` 放 `_envelopes.py`,所有使用方 `from ._envelopes import _record`;grep 全文 `def _record` 确认仅 1 个定义 |
-| `main.py` 漏搬移导致重复定义 | ruff + 全局 grep 校验 6 个 handler 名 + 20+ 辅助函数名在 main.py 全文 0 命中 |
-| git-diff handler 1170 行搬迁后行数波动 | 不切分,只搬迁;`wc -l tools/webapi/git_diff.py` 单独监控 |
-| 大型 git diff 文件中嵌套了 `class StarToolkitPlugin` 之外的引用(如全局常量) | 搬迁前先 `grep -nE '^[A-Z_]+ =' main.py | head` 列举所有模块级常量,确认 webapi 需要的常量全部就近搬到 `webapi/_envelopes.py` 或 `webapi/__init__.py` |
+| `_run_git_async` 跨端点归类矛盾(本次 reviewer 重点) | 明确放 `tools/webapi/_helpers.py`,与单端点辅助严格区分;在 `tools/webapi/_helpers.py` 文件头注释"仅供 webapi/* 端点使用" |
+| `_record` 误归 webapi(本次 reviewer 重点) | **不搬**:`_record` 实为 LLM 工具层装饰器,与 webapi 无关;在本次重构范围外(`grep -c "_record" tools/webapi/` 期望 0) |
+| `tools/_helpers.py` 中虚构函数名误 import(本次 reviewer 重点) | `_git_worktrees_response_skeleton` / `_file_restore_failure_response` / `_file_restore_success_response` **根本不存在**于 `tools/_helpers.py`;webapi handler 实际只 import `_validate_worktree_param` / `_resolve_git_common_dir` / `_parse_git_worktree_porcelain` 三个 |
+| `main.py` 漏搬移导致重复定义 | ruff + 全局 grep 校验 6 个 handler 名 + 21 个 webapi 辅助函数名 + 3 个 webapi 常量名在 main.py 全文 0 命中 |
+| 模块级常量误搬(本应是 webapi 专用但被其他系统用) | 已在 §4.3 明确枚举 3 个 webapi 专用常量;其他 ~5 个常量(`_DEFAULT_CONFIG` / `_PROJECT_GUIDANCE_*` 等)**保持原位** |
+| git-diff 端点 ~400 行内容搬迁遗漏 | git_diff.py 搬迁 checklist(7 个辅助 + 3 个常量 + handler 体)单独写在 implementation plan |
 
 ## 执行顺序
 
@@ -300,7 +405,13 @@ def _wrap(handler: Callable, plugin: "StarToolkitPlugin") -> Callable:
 |------|------|----------|
 | `main.py` 行数 | ≤ 200 | `wc -l main.py` |
 | 端点 handler 全部外迁 | 6/6 | `grep -nE "def handle_get_\|def handle_post_" main.py` 0 命中 |
-| `tools/webapi/` 文件数 | 8(`__init__` + 2 共享 + 5 端点 + git_diff) | `ls tools/webapi/` |
+| `tools/webapi/` 文件数 | 9(`__init__` + `_envelopes` + `_helpers` + 6 端点) | `ls tools/webapi/` |
+| webapi 专用辅助全部外迁 | 21/21 | `grep -nE "^def (_parse_diff_status_map\|_parse_numstat_counts\|_build_stat_text\|_compute_diff_etag\|_make_git_diff_empty_envelope\|_compute_file_etag\|_common_cache_headers\|_get_if_none_match\|_make_304_response\|_build_error_response\|_classify_entry\|_safe_lstat_mtime\|_make_entry\|_build_file_response\|_classify_oserror\|_build_directory_response\|_build_symlink_response\|_make_git_worktrees_empty_envelope\|_make_file_restore_empty_envelope\|_make_file_restore_success_envelope\|_validate_restore_file)\(" main.py` 0 命中 |
+| 跨端点 `_run_git_async` 归 webapi/_helpers.py | 1/1 | `grep -nE "^async def _run_git_async" main.py` 0 命中;`grep -nE "^async def _run_git_async" tools/webapi/_helpers.py` 1 命中 |
+| webapi 专用常量全部外迁 | 3/3 | `grep -nE "^(MAX_GIT_DIFF_BYTES\|_GIT_DIFF_ENCODING\|_DIFF_ETAG_CACHE_MAX)\s*=" main.py` 0 命中 |
+| `_record` 保留在 main.py(范围外) | 1/1 | `grep -nE "^def _record" main.py` 1 命中 |
+| `tools/_helpers.py` 不被改动 | 9/9 函数 | `git diff tools/_helpers.py` 仅 imports 变更(实际应 0 变更) |
 | `ruff check .` | 0 error | ruff |
 | `pytest tests/` | 100% PASS(基线 = 当前 HEAD) | pytest |
 | dashboard 对外契约 | 完全不变 | 手动 curl 6 个端点,response shape 与 v1 一致 |
+| `test_project_status.py` smoke test | 新增 ≥1 | `tests/test_project_status.py` 存在且通过 |
