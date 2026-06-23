@@ -16,44 +16,28 @@ from __future__ import annotations
 
 import asyncio
 import os
-# PR-7 (2026-06-23): pathlib.Path 移到 tools/project/manager.py(load_impl 用)
 
 from astrbot.api import logger, star
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import StarTools, register  # noqa: F401  (re-export for test compat: tests/test_todo_list.py uses main_mod.StarTools)
 
+# 业务子系统 import — 详见 docs/superpowers/specs/2026-06-23-main-py-refactor-design.md
+# main.py 在 PR-0~PR-7 拆分后只保留插件入口职责; 业务逻辑全部下沉到 tools/* 子包。
 from .tools._config_filter import ALL_TOOL_NAMES, filter_enabled_tools
-# PR-6 (2026-06-23): 移除 _codegraph_mcp 5 个 import — 业务已迁到
-# tools/codegraph/{bootstrap,manager}.py;main.py 只保留插件入口职责。
 from .tools.codegraph import (
     CodegraphManager,
     bootstrap_mcp,
     shutdown_mcp,
 )
 from .tools.codegraph import state as _codegraph_state
-# PR-7 (2026-06-23): /project 命令组搬到 tools/project/ 子包。
-# main.py 只剩薄壳委托 + get_loaded_project 查询接口。
 from .tools.project import ProjectManager
-# PR-6 (2026-06-23): shutdown_mcp 在 terminate() 中使用,
-# 上面 import block 需保留(避免 ruff F401 误报)。
-# PR-7 (2026-06-23): 验证 — terminate() 仍调 shutdown_mcp,保留 import。
-# spcode webapi handlers all live in tools/webapi/*; main.py no longer
-# re-exports them.  The 6 endpoints are registered in one shot via
-# ``register_webapi_routes`` below.  We still import the git-diff
-# encoding constant here for the startup-time ``git --version`` probe.
 from tools.webapi import register_webapi_routes
 from tools.webapi.git_diff import _GIT_DIFF_ENCODING
 from .tools.inta_shell.component import LocalInteractiveShellComponent
 from .tools._path_safety import is_path_safe as _is_path_safe
-# PR-3 (2026-06-23): L1 鉴权 + plan 模式控制器已提取到 tools/security/
 from .tools.security import PlanModeController, check_is_admin
-# PR-4 (2026-06-23): LLM system_prompt 注入样板集中到 tools/llm_inject.inject_guidance
 from .tools.llm_inject import inject_guidance
-# PR-5 (2026-06-23): AGENTS.md 子系统(4 个 /agentsmd 命令 + on_llm_request 钩子 +
-# per-umo state manager)集中到 tools/agentsmd/ 子包。tools/agentsmd.py 已
-# git mv 为 tools/agentsmd/_core.py,所有老符号在 tools/agentsmd/__init__.py
-# re-export,老 import 路径继续可用。
 from .tools.agentsmd import AgentsmdSubsystem
 from .tools._guidance_text import (
     PROJECT_GUIDANCE_MARKER,
@@ -61,43 +45,23 @@ from .tools._guidance_text import (
     FILE_REMOVE_GUIDANCE_MARKER,
     FILE_REMOVE_GUIDANCE,
 )
-# PR-2 (2026-06-23): 13 个 FunctionTool 类 + ALL_TOOL_CLASSES 集中注册表。
-# 模块级导入以便 tests/test_*.py 中 `main_mod.TodoCreateTool` / `main_mod.StarTools`
-# 等旧用法继续可用(下划线开头的 _common / _TodoToolBase 不在 re-export 列表)。
-from .tools.function_tools import (
+# re-export FunctionTool 类供 tests/test_*.py 旧用法 (main_mod.TodoCreateTool 等)
+from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
     ALL_TOOL_CLASSES,
-    CodeCheckTool,  # noqa: F401  (re-export for test compat)
-    EsSearchTool,  # noqa: F401
-    FileDiffTool,  # noqa: F401
-    FileRemoveTool,  # noqa: F401
-    IntaShellListTool,  # noqa: F401
-    IntaShellReadTool,  # noqa: F401
-    IntaShellSendTool,  # noqa: F401
-    IntaShellStartTool,  # noqa: F401
-    IntaShellStopTool,  # noqa: F401
-    TodoClearTool,  # noqa: F401
-    TodoCreateTool,  # noqa: F401  (used in tests/test_todo_list.py)
-    TodoModifyTool,  # noqa: F401
-    TodoQueryTool,  # noqa: F401
+    CodeCheckTool,
+    EsSearchTool,
+    FileDiffTool,
+    FileRemoveTool,
+    IntaShellListTool,
+    IntaShellReadTool,
+    IntaShellSendTool,
+    IntaShellStartTool,
+    IntaShellStopTool,
+    TodoClearTool,
+    TodoCreateTool,
+    TodoModifyTool,
+    TodoQueryTool,
 )
-# PR-7 (2026-06-23): time / datetime 移到 tools/project/manager.py(状态格式化用)
-
-
-
-
-
-
-
-
-
-# inta_shell 组件单例 + 默认 cwd 已迁移到 tools/inta_shell/runtime.py(PR-2 2026-06-23)
-# 5 个 IntaShell*Tool 类从 tools.function_tools.* 引用
-
-# PR-6 (2026-06-23): MCP 异常类(MCPShutdownTimeoutError / MCPInitTimeoutError) +
-# _HAS_MCP_EXCEPTIONS 标志全部搬到 tools/codegraph/bootstrap.py。main.py
-# 不再直接处理 MCP shutdown 超时。
-
-# _stats + _record 已提取到 tools/_stats.py(PR-1 2026-06-23)
 
 
 _DEFAULT_CONFIG = {
@@ -109,41 +73,16 @@ _DEFAULT_CONFIG = {
     "codegraph_install_dir": "",  # codegraph 安装目录(含 node.exe); 留空则不启动 MCP
     "codegraph_project": "",  # codegraph daemon 默认操作的工程根目录
     "agentsmd_enabled": True,  # 是否启用 AGENTS.md 管理
-    # inta_shell 配置(v2.5)
-    "inta_shell_max_sessions": 10,  # 最大并发会话数
-    "inta_shell_session_timeout": 1800,  # 会话空闲超时(秒)
-    "inta_shell_block_unsafe": True,  # 是否阻止危险命令
-    "inta_shell_default_cwd": "",  # 默认工作目录
+    "inta_shell_max_sessions": 10,  # inta_shell(v2.5) 最大并发会话数
+    "inta_shell_session_timeout": 1800,  # inta_shell 会话空闲超时(秒)
+    "inta_shell_block_unsafe": True,  # inta_shell 是否阻止危险命令
+    "inta_shell_default_cwd": "",  # inta_shell 默认工作目录
     "allowed_ids": "",  # 逗号分隔额外允许的用户 ID
     "enabled_tools": [],  # 启用的工具名列表；空 = 全部禁用（安全默认）
     "file_remove_blacklist": [],  # file_remove 用户自定义黑名单：绝对路径前缀列表
 }
 
-# ALL_TOOL_NAMES 和 filter_enabled_tools 已提取到 tools/_config_filter.py
-# 方便单元测试直接 import（避免 main.py 顶层依赖 astrbot.api）
 
-
-# ── /project 命令组(v2.7) ─────────────────────
-# PR-7 (2026-06-23): _ProjectLoadAbort 异常类已搬到 tools/project/pipeline.py
-# (公开 API,跨函数传播),不再在 main.py 中定义。
-
-
-# 注入文本常量已提取到 tools/_guidance_text.py(PR-1 2026-06-23)
-# 原 _PROJECT_GUIDANCE_MARKER / _PROJECT_CODEGRAPH_GUIDANCE /
-#     _FILE_REMOVE_GUIDANCE_MARKER / _FILE_REMOVE_GUIDANCE 4 个常量。
-
-
-# 13 个 FunctionTool 类(CodeCheck / EsSearch / FileRemove / FileDiff /
-# TodoCreate / TodoQuery / TodoModify / TodoClear / IntaShellStart / IntaShellSend /
-# IntaShellRead / IntaShellStop / IntaShellList) + 1 个 _TodoToolBase 已提取到
-# tools/function_tools/(PR-2 2026-06-23)。原 main.py 第 153-980 行 ~830 行整体下沉。
-
-
-# ── 插件入口 ────────────────────────────────────────
-
-
-# PR-2 (2026-06-23): 工具实例化从硬编码列表改为 ALL_TOOL_CLASSES 迭代。
-# 每个类继续用默认参数实例化(无状态差异,保持 v2.5 行为)。
 _PLUGINS_TOOLS = [cls() for cls in ALL_TOOL_CLASSES]
 
 
@@ -158,17 +97,16 @@ class SPCodeToolkit(star.Star):
         super().__init__(context)
         self.context = context
 
-        # 合并配置
+        # 合并配置(拍平嵌套分组,详见 _flatten_config)
         _config = dict(_DEFAULT_CONFIG)
         if config:
-            # 拍平嵌套分组(如 {codegraph:{install_dir:"..."}} → {codegraph_install_dir:"..."})
             config = self._flatten_config(config)
             for k, v in config.items():
                 if v not in (None, "", []):
                     _config[k] = v
-        self._config = _config  # 持久化,供异步 bootstrap + terminate 访问
+        self._config = _config
 
-        # inta_shell 配置快照(initialize 前暂存,initialize 中消费)
+        # inta_shell 配置快照(initialize 前暂存)
         self._inta_shell_cfg = {
             "max_sessions": int(_config.get("inta_shell_max_sessions", 10) or 10),
             "session_timeout": int(
@@ -177,47 +115,20 @@ class SPCodeToolkit(star.Star):
             "block_unsafe": bool(_config.get("inta_shell_block_unsafe", True)),
             "default_cwd": str(_config.get("inta_shell_default_cwd", "") or "").strip(),
         }
-        # 注入 es_path 到环境变量供 es_search 读取
+        # 注入环境变量供子模块读取
         if _config.get("es_path"):
             os.environ["ES_PATH"] = _config["es_path"]
-        # 注入 cppcheck_path 到环境变量供 code_check._find_cppcheck 读取
         if _config.get("cppcheck_path"):
             os.environ["CPPCHECK_PATH"] = _config["cppcheck_path"]
-        # 注入 cppcheck_shortcircuit 模式供 code_check._run_cppcheck 读取
         os.environ["CPPCHECK_SHORTCIRCUIT"] = _config.get(
             "cppcheck_shortcircuit", "all"
         )
 
-        # AGENTS.md 子系统(PR-5 2026-06-23):
-        # 持有 per-umo AgentsState(替代原 main.py 的 self._loaded_agents dict),
-        # 暴露 init/load/unload/update/on_llm_request 方法供 main.py 命令薄壳委托。
-        self.agentsmd = AgentsmdSubsystem(
-            plugin=self,
-            is_path_safe=_is_path_safe,
-        )
-
-        # codegraph 子系统(PR-6 2026-06-23):
-        # 业务逻辑(/codegraph init/uninit/set + MCP bootstrap/shutdown)搬到
-        # tools/codegraph/ 子包;main.py 只持有 manager 实例做薄壳委托。
-        # task 引用 + per-dir lock 走 tools.codegraph.state 模块级单例。
+        # 子系统管理器句柄 — 详见 tools/*/ 子包
+        self.agentsmd = AgentsmdSubsystem(plugin=self, is_path_safe=_is_path_safe)
         self.codegraph = CodegraphManager(self)
-
-        # project 子系统(PR-7 2026-06-23):
-        # 业务逻辑(/project load/unload/status + 4 步流水线)搬到
-        # tools/project/ 子包;main.py 只持有 manager 实例做薄壳委托。
-        # loaded_projects 状态走 tools.project.state 模块级单例。
         self.project = ProjectManager(self)
-
-        # 已加载项目(per-umo)。/project load 时填充,/project unload 时清空。
-        # 与 self.agentsmd.state 平行——一个跟踪 AGENTS.md,一个跟踪整个项目组合状态。
-        # 格式: {umo: {"directory": str, "loaded_at": float}}
-        self._loaded_projects: dict[str, dict] = {}
-
-        # PR-3 (2026-06-23): plan 模式状态已提取到 tools.security.plan_mode.PlanModeController
-        # 内部维护 self._plan_mode / self._plan_reminded 两个 per-umo dict,
-        # 外部通过 self._plan.is_active() / activate() / deactivate() 访问。
         self._plan = PlanModeController(get_config=lambda: self._config)
-
 
         # 根据 enabled_tools 配置过滤实际注册的工具
         enabled_names, unknown = filter_enabled_tools(
@@ -230,8 +141,7 @@ class SPCodeToolkit(star.Star):
             )
         tools_to_register = [t for t in _PLUGINS_TOOLS if t.name in enabled_names]
 
-        # 把 file_remove_blacklist 配置注入到 FileRemoveTool 实例。
-        # 注意：必须在 enabled_tools 过滤之后做——未启用的工具不需要注入。
+        # file_remove_blacklist 注入(必须在 enabled_tools 过滤之后)
         for t in tools_to_register:
             if isinstance(t, FileRemoveTool):
                 t.custom_blacklist = list(_config.get("file_remove_blacklist") or [])
@@ -250,16 +160,11 @@ class SPCodeToolkit(star.Star):
                 "请在 WebUI 配置页勾选要启用的工具后重启 AstrBot。"
             )
 
-        # 异步启动 codegraph MCP(不阻塞插件加载,PR-6 2026-06-23)
-        # task 引用登记到 tools.codegraph.state 模块级单例,
-        # shutdown_mcp 在 terminate() 取消。
+        # 异步启动 codegraph MCP(task 登记到 tools.codegraph.state)
         if _config.get("codegraph_enabled", True):
             _codegraph_state.set_task(asyncio.create_task(bootstrap_mcp(self)))
 
-        # ── git 可用性探测 ──
-        # 启动期一次同步探测,缺失不阻塞插件加载(端点注册照常);
-        # 失败仅记 WARNING,用户首次调用 /spcode/git-diff 时会得到
-        # reason="git_unavailable" 的结构化响应。
+        # git 可用性探测(失败仅记 WARNING,不阻塞插件加载)
         try:
             import subprocess as _sp
 
@@ -295,27 +200,16 @@ class SPCodeToolkit(star.Star):
             logger.warning(f"[git-diff] 启动期探测异常: {exc!s}")
 
     async def initialize(self) -> None:
-        """插件激活（AstrBot 框架在 __init__ 后调用）。
-
-        构造 inta_shell 组件单例。codegraph MCP 由 __init__ 内异步任务管理，
-        不在这里重复处理。
-        """
-        # Register all 6 /spcode/* dashboard-facing web APIs in one shot.
-        # Each handler lives in its own tools/webapi/*.py module; the route
-        # table is owned by tools/webapi/__init__.ROUTES and adapter by
-        # tools/webapi/_wrap (auto-injects umo/worktree/scope/path/etc.
-        # from the request based on handler signature).
+        """插件激活(AstrBot 框架在 __init__ 后调用)。"""
         register_webapi_routes(self)
 
+        # 构造 inta_shell 组件并写入 tools.inta_shell.runtime 模块级单例
         cfg = self._inta_shell_cfg
         component = LocalInteractiveShellComponent(
             max_sessions=cfg["max_sessions"],
             session_timeout_seconds=cfg["session_timeout"],
             enable_block=cfg["block_unsafe"],
         )
-        # PR-2 (2026-06-23): 组件 + cwd 写入 tools.inta_shell.runtime 模块级单例
-        # (替代 main.py 原模块级 _inta_component / _inta_default_cwd,便于 5 个
-        # IntaShell*Tool 类从外部引用)
         from .tools.inta_shell import runtime as _inta_runtime
 
         _inta_runtime.component = component
@@ -331,15 +225,7 @@ class SPCodeToolkit(star.Star):
 
     @staticmethod
     def _flatten_config(config: dict) -> dict:
-        """拍平嵌套分组为扁平 dict。
-
-        AstrBot 的 "type":"object" 分组会把子字段存入嵌套 dict:
-          {"codegraph": {"install_dir": "...", "project": "..."}}
-        →
-          {"codegraph_install_dir": "...", "codegraph_project": "..."}
-
-        顶级非 dict 字段原样保留。
-        """
+        """拍平嵌套分组: {"codegraph": {"install_dir": "..."}} → {"codegraph_install_dir": "..."}。"""
         flat: dict = {}
         for key, value in config.items():
             if isinstance(value, dict):
@@ -349,111 +235,62 @@ class SPCodeToolkit(star.Star):
         return flat
 
     def _git_binary(self) -> str:
-        """解析 git 二进制路径。
-
-        优先级:配置 `git_path` > 默认 `"git"`(走系统 PATH)。
-        空字符串、纯空白都会被规整为 `"git"`。
-
-        Returns:
-            git 可执行文件名或绝对路径。
-        """
+        """解析 git 二进制路径(优先级: 配置 git_path > 默认 "git")。"""
         raw = self._config.get("git_path") or "git"
         return raw.strip() or "git"
 
-    # 注意:旧的 ``_parse_files_changed`` 方法(v3.3 之前)在 2026-06-21 的
-    # git-diff 4 合 1 重构中已被 ``_parse_diff_status_map`` + ``_parse_numstat_counts``
-    # 替代;status / numstat 现在分别从 ``git diff`` (raw) 和 ``git diff --numstat``
-    # 输出解析,join 在 handler 处内联。保留此注释作为变更记录。
+    # ── /codegraph /project /agentsmd 命令组(薄壳委托,详见 tools/*/) ──
 
-    # ── /codegraph 命令组(AstrBot 规范: 命令组和子命令必须是插件类方法)───
     @filter.command_group("codegraph", alias={"cg"})
     def codegraph(self):
         """codegraph 项目管理指令组。"""
         pass
 
-    # ── /project 命令组(v2.7 组合 agentsmd + codegraph) ───────────
-
     @filter.command_group("project")
     def project(self, event, sub_command: str = "", *args):
-        """``/project`` 指令组的统一入口。
-
-        装饰器模式下,本方法被 ``@filter.command_group`` 替换为
-        ``RegisteringCommandable``,实际不会执行;真正的分发由
-        :meth:`ProjectManager.handle_subcommand` 处理,以便单元测试
-        可以直接调用。
-
-        PR-7 (2026-06-23): 薄壳委托给 self.project (ProjectManager)。
-        """
+        """``/project`` 指令组的统一入口(实际分发由 ProjectManager.handle_subcommand 处理)。"""
         return None
 
     @project.command("load")
     async def project_load(self, event, directory: str):
-        """/project load <directory>
-
-        一键加载项目到当前会话(委托给 ``ProjectManager.load_impl``)。
-        PR-7 (2026-06-23): 薄壳委托给 self.project.load_impl(manager)。
-        """
+        """/project load <directory>(委托给 ``ProjectManager.load_impl``)。"""
         async for msg in self.project.load_impl(event, directory):
             yield msg
         return
 
     @project.command("unload")
     async def project_unload(self, event):
-        """/project unload(委托给 ``ProjectManager.unload_impl``)。
-        PR-7 (2026-06-23): 薄壳委托给 self.project.unload_impl(manager)。
-        """
+        """/project unload(委托给 ``ProjectManager.unload_impl``)。"""
         async for msg in self.project.unload_impl(event):
             yield msg
         return
 
     @project.command("status")
     async def project_status(self, event):
-        """/project status(委托给 ``ProjectManager.status_impl``)。
-        PR-7 (2026-06-23): 薄壳委托给 self.project.status_impl(manager)。
-        """
+        """/project status(委托给 ``ProjectManager.status_impl``)。"""
         async for msg in self.project.status_impl(event):
             yield msg
         return
 
     def get_loaded_project(self, umo: str) -> dict | None:
-        """返回指定 umo 的已加载项目信息(供 webapi / dashboard 同步访问)。
-
-        PR-7 (2026-06-23): 委托给 self.project.get_loaded_project(manager)。
-        """
+        """返回指定 umo 的已加载项目信息(供 webapi / dashboard 同步访问)。"""
         return self.project.get_loaded_project(umo)
-    # ── /project 业务方法已提取到 tools/project/ 子包(PR-7 2026-06-23) ───
-    # 4 个 _project_* 业务方法(load_step/load_impl/unload_impl/status_impl)
-    # + _project_router + 原 get_loaded_project body 都搬到 tools/project/manager.py。
-    # main.py 只剩 thin shell command + get_loaded_project 查询接口。
 
     @codegraph.command("init")
     async def codegraph_init(self, event, directory: str):
-        """/codegraph init <directory>
-
-        初始化指定目录为 codegraph 项目(创建 .codegraph/ 索引)。
-        PR-6 (2026-06-23): 薄壳委托给 self.codegraph.init(manager)。
-        """
+        """/codegraph init <directory>(委托给 ``CodegraphManager.init``)。"""
         async for msg in self.codegraph.init(event, directory):
             yield msg
 
     @codegraph.command("uninit")
     async def codegraph_uninit(self, event, directory: str):
-        """/codegraph uninit <directory>
-
-        反初始化指定目录(删除 .codegraph/ 索引)。
-        PR-6 (2026-06-23): 薄壳委托给 self.codegraph.uninit(manager)。
-        """
+        """/codegraph uninit <directory>(委托给 ``CodegraphManager.uninit``)。"""
         async for msg in self.codegraph.uninit(event, directory):
             yield msg
 
     @codegraph.command("set")
     async def codegraph_set(self, event, directory: str):
-        """/codegraph set <directory>
-
-        修改 codegraph 的默认执行目录。后续 LLM 调用的 codegraph_* 工具
-        会以新目录为根。
-        PR-6 (2026-06-23): 薄壳委托给 self.codegraph.set_project(manager)。
-        """
+        """/codegraph set <directory>(委托给 ``CodegraphManager.set_project``)。"""
         async for msg in self.codegraph.set_project(event, directory):
             yield msg
 
@@ -504,25 +341,18 @@ class SPCodeToolkit(star.Star):
             return
         async for msg in self.agentsmd.update(event):
             yield msg
-    async def terminate(self):
-        """Star 框架在插件卸载/重载时调用。
 
-        PR-6 (2026-06-23):
-        - 业务代理给 tools.codegraph.shutdown_mcp(取消 task + 停 MCP)
-        - 保留 inta_shell 关闭段(与 codegraph 无关,业务在 tools.inta_shell.runtime)
-        """
-        # PR-2 (2026-06-23): 组件状态从 main.py 模块级变量改为
-        # tools.inta_shell.runtime 单例。这里延迟 import 避免循环依赖。
+    async def terminate(self) -> None:
+        """Star 框架在插件卸载/重载时调用。"""
         from .tools.inta_shell import runtime as _inta_runtime
 
-        # PR-5 (2026-06-23): 清空 agentsmd 子系统 per-umo state。
-        # 避免插件重载后持有已不存在会话的 state。
+        # 清空 agentsmd 子系统 per-umo state
         try:
             self.agentsmd.clear()
         except Exception as e:  # pragma: no cover — 防御性
             logger.warning("[agentsmd] clear state on terminate failed: %s", e)
 
-        # 0. 停 inta_shell 交互式 Shell 组件
+        # 停 inta_shell 交互式 Shell 组件
         if _inta_runtime.component is not None:
             try:
                 logger.info("[inta_shell] terminating component...")
@@ -539,38 +369,14 @@ class SPCodeToolkit(star.Star):
                 _inta_runtime.component = None
                 _inta_runtime.default_cwd = ""
 
-        # PR-6 (2026-06-23): 取消 task + 停 MCP 都搬到 tools.codegraph.shutdown_mcp
+        # 取消 codegraph MCP task + 停 MCP(详见 tools/codegraph.shutdown_mcp)
         await shutdown_mcp(self)
-
-    # ── /codegraph 业务方法已提取到 tools/codegraph/ 子包(PR-6 2026-06-23) ───
-    # 4 个 /codegraph 命令(init/uninit/set)的实现 + MCP bootstrap/shutdown
-    # 都委托给 self.codegraph (CodegraphManager 实例),详见 tools/codegraph/。
-
-    # ── /agentsmd 业务方法已提取到 tools/agentsmd/ 子包(PR-5 2026-06-23) ───
-    # 4 个 /agentsmd 命令(init/load/unload/update)的实现 + on_llm_request 钩子
-
-    # ── /codegraph 业务方法已提取到 tools/codegraph/ 子包(PR-6 2026-06-23) ───
-    # 4 个 /codegraph 命令(init/uninit/set)的实现 + MCP bootstrap/shutdown
-    # 都委托给 self.codegraph (CodegraphManager 实例),详见 tools/codegraph/。
-
-    # ── /agentsmd 业务方法已提取到 tools/agentsmd/ 子包(PR-5 2026-06-23) ───
-    # 4 个 /agentsmd 命令(init/load/unload/update)的实现 + on_llm_request 钩子
-    # 都委托给 self.agentsmd (AgentsmdSubsystem 实例),详见 tools/agentsmd/。
 
     @filter.on_llm_request()
     async def _project_inject_codegraph_guidance(
         self, event: AstrMessageEvent, req: ProviderRequest
     ):
-        """/project load 后,把 codegraph 优先使用指引注入到 system_prompt 末尾。
-
-        与 self.agentsmd.on_llm_request 平行,但走独立 marker 防重复。
-        只在以下条件同时满足时注入:
-        - codegraph_enabled = true
-        - 当前 umo 已在 self._loaded_projects 中
-
-        PR-4 (2026-06-23): 注入样板(防重复 + lstrip + 拼接)委托给
-        tools.llm_inject.inject_guidance。
-        """
+        """/project load 后,把 codegraph 优先使用指引注入到 system_prompt 末尾。"""
         if not self._config.get("codegraph_enabled", True):
             return
         umo = event.unified_msg_origin
@@ -585,20 +391,7 @@ class SPCodeToolkit(star.Star):
     async def _file_remove_inject_guidance(
         self, event: AstrMessageEvent, req: ProviderRequest
     ):
-        """astrbot_file_remove 启用时,把"优先使用 file_remove"指引注入到 system_prompt 末尾。
-
-        触发条件(全部满足):
-        - `astrbot_file_remove` 在 self._tool_names 中(说明用户已启用)
-        - 同 req.system_prompt 中尚未包含 marker(防重复注入)
-
-        设计要点(对照 _project_inject_codegraph_guidance):
-        1. 无 session state / 无 feature flag——_tool_names 即 gate
-        2. system_prompt = None 时用 lstrip("\\n") 避免前置空行
-        3. 已存在 system_prompt 时追加在末尾
-
-        PR-4 (2026-06-23): 注入样板委托给 tools.llm_inject.inject_guidance。
-        """
-        # 同时接受新旧两个工具名,避免单点失败
+        """astrbot_file_remove 启用时,把"优先使用 file_remove"指引注入到 system_prompt 末尾。"""
         if not (
             "astrbot_file_remove" in self._tool_names
             or "astrbot_file_remove_tool" in self._tool_names
@@ -612,7 +405,6 @@ class SPCodeToolkit(star.Star):
         """L1 鉴权:非管理员从工具列表中移除本插件工具。"""
         if not req.func_tool:
             return
-        # PR-3 (2026-06-23): 委托给 tools.security.check_is_admin
         if check_is_admin(event):
             return
         # 管理员可见全部；非管理员 → 全部隐藏（spcode_toolkit 是管理员工具集）
@@ -634,27 +426,16 @@ class SPCodeToolkit(star.Star):
             except Exception as exc:
                 logger.warning(f"spcode_toolkit 鉴权失败: {exc}")
 
-    # ── v2.8: /plan 模式 ──────────────────────────────────────
-    #
-    # PR-3 (2026-06-23): 业务逻辑已全部委托到 tools.security.PlanModeController,
-    # 本类只剩装饰器占位 + UI 反馈。
-    # /plan /build 命令的设计要点参见 PlanModeController 的 docstring。
+    # ── /plan /build 模式(v2.8) — 业务委托 tools.security.PlanModeController ──
 
     @filter.on_llm_request()
     async def _plan_filter_tools(self, event, req: ProviderRequest):
-        """v2.8: /plan 模式钩子入口 — 全部委托给 PlanModeController。"""
+        """/plan 模式钩子入口 — 委托给 PlanModeController。"""
         self._plan.filter_request(event, req)
 
     @filter.command("plan")
     async def plan(self, event):
-        """/plan — 进入 plan 模式(过滤写工具,提示 LLM 调研而非动手)
-
-        与 opencode /plan 等价:激活后,_plan_filter_tools 钩子会从 LLM 工具列表
-        过滤掉 plan_mode.blocked_tools 列出的写工具;首次 LLM 调用时自动注入
-        plan 模式 reminder 到 user message。
-
-        退出请使用 /build。
-        """
+        """/plan — 进入 plan 模式(过滤写工具,提示 LLM 调研而非动手)。"""
         umo = event.unified_msg_origin
         was_active = self._plan.is_active(umo)
         self._plan.activate(umo)
@@ -667,7 +448,6 @@ class SPCodeToolkit(star.Star):
             )
             return
         if was_active:
-            # 已经在 plan 模式时再次输入,顺手重置 reminder 让 LLM 重新看到
             yield event.plain_result(
                 f"🔄 plan 模式仍激活 (会话 {umo})\n"
                 f"已过滤 {len(blocked)} 个写工具:{', '.join(blocked)}\n"
@@ -683,11 +463,7 @@ class SPCodeToolkit(star.Star):
 
     @filter.command("build")
     async def build(self, event):
-        """/build — 退出 plan 模式,回到默认 build 模式(全部工具可用)
-
-        与 opencode /build 等价:build 是默认状态,本命令等价于"关闭 plan 模式"。
-        执行后,LLM 工具列表不再被过滤,下次 LLM 调用按完整工具集处理。
-        """
+        """/build — 退出 plan 模式(回到默认 build 模式,全部工具可用)。"""
         umo = event.unified_msg_origin
         was_active = self._plan.deactivate(umo)
         if was_active:
@@ -699,8 +475,4 @@ class SPCodeToolkit(star.Star):
                 f"ℹ️ 已在 build 模式 (会话 {umo})。所有工具默认可用,无需切换。"
             )
 
-    # ── file-browser 端点(v3.2)─────────────────────────────────────
-    #
-    # 详见 docs/superpowers/specs/2026-06-20-file-browser-endpoint-design.md
-    # 入口路由在 initialize() 中注册(本方法只是 view_handler)。
-
+    # ── file-browser 端点(v3.2) — 入口路由在 initialize() 中注册 ──
