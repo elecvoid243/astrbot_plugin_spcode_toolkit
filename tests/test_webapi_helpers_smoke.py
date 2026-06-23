@@ -5,7 +5,6 @@ are importable from the new webapi subpackage.
 """
 import asyncio
 
-import pytest
 
 
 def test_run_git_async_importable_from_webapi_helpers():

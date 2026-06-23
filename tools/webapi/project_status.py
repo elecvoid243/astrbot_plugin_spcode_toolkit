@@ -1,7 +1,7 @@
 # tools/webapi/project_status.py
 """GET /spcode/project-status — 列出已加载项目状态。"""
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit

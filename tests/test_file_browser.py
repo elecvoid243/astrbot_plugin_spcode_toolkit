@@ -3,7 +3,6 @@
 Handler 从 main.py 搬出,行为不变。
 """
 from __future__ import annotations
-from unittest.mock import MagicMock
 
 import pytest
 

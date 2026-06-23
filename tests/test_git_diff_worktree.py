@@ -34,6 +34,7 @@ if str(_PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(_PROJECT_DIR))
 
 from astrbot_plugin_spcode_toolkit import main as _main_mod  # noqa: E402
+from tools.webapi import git_diff as _git_diff  # noqa: E402
 
 SPCodeToolkit = _main_mod.SPCodeToolkit
 
@@ -110,7 +111,7 @@ async def test_worktree_param_returns_diff_for_linked_worktree(
     _load_project(plugin, "test:umo", str(tmp_path))
 
     _mock_query(monkeypatch, worktree=str(wt2), umo="test:umo")
-    result = await plugin.handle_get_git_diff()
+    result = await _git_diff.handle(plugin)
     data = result["data"]
     assert data["loaded"] is True
     # Diff should reflect wt2's file, not main's
@@ -127,7 +128,7 @@ async def test_worktree_param_missing_falls_back_to_main(plugin, tmp_path, monke
     _load_project(plugin, "test:umo", str(tmp_path))
 
     _mock_query(monkeypatch, umo="test:umo")
-    result = await plugin.handle_get_git_diff()
+    result = await _git_diff.handle(plugin)
     assert result["data"]["loaded"] is True
     paths = [f["path"] for f in result["data"]["files_changed"]]
     assert "a.txt" in paths
@@ -141,7 +142,7 @@ async def test_worktree_param_empty_uses_primary(plugin, tmp_path, monkeypatch):
     _load_project(plugin, "test:umo", str(tmp_path))
 
     _mock_query(monkeypatch, worktree="", umo="test:umo")
-    result = await plugin.handle_get_git_diff()
+    result = await _git_diff.handle(plugin)
     data = result["data"]
     assert data["loaded"] is True
     assert data["directory"] == str(tmp_path)
@@ -157,7 +158,7 @@ async def test_worktree_whitespace_only_uses_primary(plugin, tmp_path, monkeypat
     _load_project(plugin, "test:umo", str(tmp_path))
 
     _mock_query(monkeypatch, worktree="   ", umo="test:umo")
-    result = await plugin.handle_get_git_diff()
+    result = await _git_diff.handle(plugin)
     data = result["data"]
     assert data["loaded"] is True
     assert data["directory"] == str(tmp_path)
@@ -170,7 +171,7 @@ async def test_worktree_path_traversal_rejected(plugin, tmp_path, monkeypatch):
     _load_project(plugin, "test:umo", str(tmp_path))
 
     _mock_query(monkeypatch, worktree="../../etc/passwd", umo="test:umo")
-    result = await plugin.handle_get_git_diff()
+    result = await _git_diff.handle(plugin)
     data = result["data"]
     assert data["loaded"] is False
     assert data["reason"] in {"worktree_invalid", "feature_disabled"}
@@ -183,7 +184,7 @@ async def test_worktree_relative_path_rejected(plugin, tmp_path, monkeypatch):
     _load_project(plugin, "test:umo", str(tmp_path))
 
     _mock_query(monkeypatch, worktree="subdir/wt", umo="test:umo")
-    result = await plugin.handle_get_git_diff()
+    result = await _git_diff.handle(plugin)
     data = result["data"]
     assert data["loaded"] is False
     assert data["reason"] in {"worktree_invalid", "feature_disabled"}
@@ -198,7 +199,7 @@ async def test_worktree_hidden_dir_rejected(plugin, tmp_path, monkeypatch):
     # Path to the main repo's .git dir (hidden)
     hidden = str(tmp_path / ".git")
     _mock_query(monkeypatch, worktree=hidden, umo="test:umo")
-    result = await plugin.handle_get_git_diff()
+    result = await _git_diff.handle(plugin)
     data = result["data"]
     assert data["loaded"] is False
     assert data["reason"] in {"worktree_invalid", "feature_disabled"}
@@ -225,7 +226,7 @@ async def test_worktree_symlink_to_outside_repo_rejected(
 
     _load_project(plugin, "test:umo", str(tmp_path))
     _mock_query(monkeypatch, worktree=str(symlink_path), umo="test:umo")
-    result = await plugin.handle_get_git_diff()
+    result = await _git_diff.handle(plugin)
     data = result["data"]
     assert data["loaded"] is False
     assert data["reason"] in {"worktree_invalid", "feature_disabled"}
@@ -248,7 +249,7 @@ async def test_worktree_different_repo_rejected(plugin, tmp_path, monkeypatch):
 
     # Try to point at decoy (a real absolute path, exists, is a dir, is a git repo)
     _mock_query(monkeypatch, worktree=str(decoy), umo="test:umo")
-    result = await plugin.handle_get_git_diff()
+    result = await _git_diff.handle(plugin)
     data = result["data"]
     assert data["loaded"] is False
     assert data["reason"] in {"worktree_invalid", "feature_disabled"}
@@ -265,7 +266,7 @@ async def test_worktree_nonexistent_path_rejected(plugin, tmp_path, monkeypatch)
         worktree=str(tmp_path / "does_not_exist"),
         umo="test:umo",
     )
-    result = await plugin.handle_get_git_diff()
+    result = await _git_diff.handle(plugin)
     data = result["data"]
     assert data["loaded"] is False
     assert data["reason"] in {"worktree_invalid", "feature_disabled"}
@@ -297,7 +298,7 @@ async def test_worktree_param_accepts_dotworktrees_subdir(
     _load_project(plugin, "test:umo", str(tmp_path))
 
     _mock_query(monkeypatch, worktree=str(wt_path), umo="test:umo")
-    result = await plugin.handle_get_git_diff()
+    result = await _git_diff.handle(plugin)
     data = result["data"]
     # Pre-fix bug: data.reason == "worktree_invalid", data.loaded == False.
     # Post-fix:    data.loaded is True and feat.txt is in files_changed.
@@ -321,7 +322,7 @@ async def test_worktree_param_still_rejects_dotgit(
     # Path with a `.git` component — should still be rejected by step 4.
     bad_path = str(tmp_path / ".git" / "config")
     _mock_query(monkeypatch, worktree=bad_path, umo="test:umo")
-    result = await plugin.handle_get_git_diff()
+    result = await _git_diff.handle(plugin)
     data = result["data"]
     assert data["loaded"] is False
     assert data["reason"] == "worktree_invalid"

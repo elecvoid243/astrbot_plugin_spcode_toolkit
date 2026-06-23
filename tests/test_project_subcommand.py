@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 # 固定 3 层到主项目根,在 worktree 里会多走一层找不到包。)
 
 from astrbot_plugin_spcode_toolkit import main as _main_mod  # noqa: E402
+from tools.webapi import project_status as _project_status
 
 SPCodeToolkit = _main_mod.SPCodeToolkit
 
@@ -195,7 +196,7 @@ def test_handle_get_project_status_returns_loaded(plugin):
             "directory": "/tmp/z",
             "loaded_at": 1700000000.0,
         }
-        return await plugin.handle_get_project_status()
+        return await _project_status.handle(plugin)
 
     payload = _run(runner())
     assert payload["status"] == "ok"
@@ -206,7 +207,7 @@ def test_handle_get_project_status_returns_loaded(plugin):
 
 def test_handle_get_project_status_returns_unloaded(plugin):
     async def runner():
-        return await plugin.handle_get_project_status()
+        return await _project_status.handle(plugin)
 
     payload = _run(runner())
     assert payload["status"] == "ok"
@@ -225,7 +226,7 @@ def test_handle_get_project_status_filters_by_umo(plugin):
     }
 
     async def runner():
-        return await plugin.handle_get_project_status()
+        return await _project_status.handle(plugin)
 
     payload = _run(runner())
 
@@ -244,7 +245,7 @@ def test_handle_get_project_status_returns_copy_not_reference(plugin):
     }
 
     async def runner():
-        return await plugin.handle_get_project_status()
+        return await _project_status.handle(plugin)
 
     payload = _run(runner())
     payload["data"]["directory"] = "mutated"
