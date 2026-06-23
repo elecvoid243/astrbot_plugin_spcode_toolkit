@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 # Removed in Chunk 5 when call sites are migrated to Pattern B.
 from tools.webapi import _helpers as _webapi_helpers_run_git  # noqa: F401
 _run_git_async = _webapi_helpers_run_git._run_git_async  # noqa: F401
+from tools.webapi._helpers import _JSONResponseCompat  # TEMPORARY shim, removed in Chunk 5
 
 from pathlib import Path
 from typing import Any
@@ -353,38 +354,6 @@ def _make_304_response(headers: dict[str, str]) -> _JSONResponseCompat:
     """构造 304 Not Modified 响应(空 body + 缓存头)。"""
     return _JSONResponseCompat({}, status_code=304, headers=headers)
 
-
-class _JSONResponseCompat(JSONResponse):
-    """JSONResponse 子类,补回 dict-like 访问能力。
-
-    Why: AstrBot 框架的 ``_response_from_result`` 看到 ``Response`` 实例会原样
-    透传(head/status_code 都被框架消化);但项目里的 web API 单元测试大量使用
-    ``result["data"]`` 这种 dict 取值写法。继承 ``JSONResponse`` 既能享受
-    framework 的 status_code/headers 注入,又保持现有测试无需重写。
-
-    v3.3 (2026-06-21): 引入以支持 HTTP 缓存 (ETag/304 + Cache-Control)。
-    """
-
-    def __init__(
-        self,
-        content: Any,
-        status_code: int = 200,
-        headers: Mapping[str, str] | None = None,
-    ) -> None:
-        super().__init__(content, status_code=status_code, headers=headers)
-        self._content = content
-
-    def __getitem__(self, key: str) -> Any:
-        return self._content[key]
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return self._content.get(key, default)
-
-    def __contains__(self, key: object) -> bool:
-        return key in self._content
-
-    def __iter__(self) -> Any:
-        return iter(self._content)
 
 
 def _build_error_response(path: str | Path, reason: str) -> dict:
