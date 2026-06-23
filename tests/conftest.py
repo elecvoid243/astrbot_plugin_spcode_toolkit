@@ -1,20 +1,23 @@
 """Pytest config — path setup + module skips.
 
 Path setup:
-    自动定位 ``astrbot_plugin_spcode_toolkit`` 包的父目录并加入 ``sys.path``,
+    自动定位插件包根目录(含 main.py 的目录)并加入 ``sys.path``,
     使得 ``from astrbot_plugin_spcode_toolkit import main`` 在以下两种环境
-    中都能解析:
+    中都能解析(且 import 的是当前 worktree 的 main.py,而非主项目):
       - 主项目根: F:\\github\\astrbot_plugin_spcode_toolkit\\
       - Worktree:   F:\\github\\astrbot_plugin_spcode_toolkit\\.worktrees\\<branch>\\
-    原实现固定 ``Path(__file__).parent.parent.parent``(假设 3 层到主项目),
-    在 worktree 中会多出 .worktrees/<branch> 一级,导致找不到包。
-    这里改用 "向上查找直到遇到含 main.py 的包目录" 的策略。
+    原实现查找 ``parent/astrbot_plugin_spcode_toolkit/main.py``(假设 monorepo
+    结构),但本项目是单包结构(package IS the directory),worktree 场景下
+    conftest 会一路走到 F:\\github\\,导入到主项目的 main.py 而非 worktree 的,
+    导致 worktree 重构验证失效。PR-1 (2026-06-23) 修复为"向上查找最近的 main.py",
+    确保 import 命中当前目录树的 main.py。
 
 Module skips:
-    - ``test_codegraph_*`` 全部跳过(依赖外部 codegraph MCP 服务,
-      当前开发环境未启动;按用户 2026-06-18 决定:codegraph 相关测试暂不跑)
-    - ``test_codegraph_cpp`` 还要在 tree-sitter-cpp 缺失时跳过
-      (由 ``pytest_collection_modifyitems`` 处理)
+    - ``test_codegraph_cmd`` / ``test_codegraph_mcp`` 跳过(依赖外部 codegraph
+      MCP 服务,当前开发环境未启动;按用户 2026-06-18 决定:codegraph 相关测试
+      暂不跑)。
+    - PR-0 (2026-06-23) 删除了 ``test_codegraph_cpp`` / ``test_codegraph_lifecycle``
+      (旧 codegraph 引擎测试)以及其对应的 tree-sitter-cpp skip hook。
 """
 
 from __future__ import annotations
@@ -24,25 +27,24 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
 # ── Path setup ─────────────────────────────────────────────
 #
 # WHY: 测试模块用 ``from astrbot_plugin_spcode_toolkit import main`` 直接
 # 导入插件包(因 main.py 顶层用了相对导入 ``from .tools import ...``,
 # 不能用裸路径 ``import main``)。我们必须在 pytest 收集阶段就把
-# 插件包父目录塞进 ``sys.path``,早于任何测试模块被 import。
+# 插件包目录塞进 ``sys.path``,早于任何测试模块被 import。
 #
-# 策略:从 conftest.py 自身出发向上走,寻找同时含
-#   ``astrbot_plugin_spcode_toolkit/main.py``
-# 的最近祖先目录。这能同时适配主项目与 worktree(在后者里会多走一层)。
+# 策略:从 conftest.py 自身出发向上走,寻找最近的"含 main.py 的祖先目录"。
+# 这能同时适配主项目与 worktree——前者找到 F:\\github\\astrbot_plugin_spcode_toolkit\\,
+# 后者找到 .worktrees/<branch>\\,确保 ``from astrbot_plugin_spcode_toolkit import main``
+# 命中当前 worktree 的 main.py(而非主项目的)。
 _PACKAGE_DIR_NAME = "astrbot_plugin_spcode_toolkit"
 
 
 def _find_package_root() -> Path | None:
     p = Path(__file__).resolve()
     for parent in (p, *p.parents):
-        if (parent / _PACKAGE_DIR_NAME / "main.py").exists():
+        if (parent / "main.py").exists():
             return parent
     return None
 
@@ -59,35 +61,43 @@ if str(_root) not in sys.path:
 
 # ── Module skips ───────────────────────────────────────────
 #
-# 1. codegraph 相关测试依赖外部 MCP 服务,本开发环境不跑。
-#    用 collect_ignore 让 pytest 在 collect 阶段就跳过这些文件,
-#    避免 import 错误(它们的 import 路径假设 codegraph_* 工具已注册)。
-# 2. tree-sitter-cpp 缺失时再单独跳过 test_codegraph_cpp(见下方 hook)。
+# codegraph 相关测试依赖外部 MCP 服务,本开发环境不跑。
+# 用 collect_ignore 让 pytest 在 collect 阶段就跳过这些文件,
+# 避免 import 错误(它们的 import 路径假设 codegraph_* 工具已注册)。
+# PR-0 (2026-06-23) 删除 test_codegraph_cpp / test_codegraph_lifecycle
+# (旧 codegraph 引擎测试);tree-sitter-cpp skip hook 也已删除。
 collect_ignore_glob = [
     "test_codegraph_cmd.py",
-    "test_codegraph_lifecycle.py",
     "test_codegraph_mcp.py",
-    "test_codegraph_cpp.py",
 ]
 
 
-# ── tree-sitter-cpp 依赖探测 ───────────────────────────────
-try:
-    import tree_sitter  # noqa: F401
-    import tree_sitter_cpp  # noqa: F401
-
-    _HAS_CPP = True
-except ImportError:
-    _HAS_CPP = False
+# ── 共享 autouse fixture ──────────────────────────────────
+# WHY: tools.project.state 是模块级单例,test 之间的状态会相互污染。
+# 每个 test 前 reset(),保证隔离。同理 tools.agentsmd.state。
+# PR-7 (2026-06-23): 新增 — 把 project/agentsmd state reset 收口到 conftest。
+import pytest  # noqa: E402
 
 
-def pytest_collection_modifyitems(config, items):
-    if _HAS_CPP:
-        return
-    skip = pytest.mark.skip(reason="tree-sitter-cpp not installed")
-    for item in items:
-        if "test_codegraph_cpp" in item.nodeid:
-            item.add_marker(skip)
+@pytest.fixture(autouse=True)
+def _reset_module_state():
+    """每个 test 前 reset 共享 module-level state(防相互污染)。"""
+    # 惰性导入 — conftest 在 import 时机要早于 tools.*,直接 import 会触发
+    # 包级 ``from .xxx import`` 链,worktree 下 sys.path 还未就绪会报
+    # ImportError。改在 fixture 体内 import。
+    try:
+        from tools.project import state as _proj_state
+
+        _proj_state.reset()
+    except ImportError:
+        pass
+    try:
+        from tools.agentsmd import state as _ag_state
+
+        _ag_state.reset()
+    except ImportError:
+        pass
+    yield
 
 
 # ── 共享 test helper ────────────────────────────────────────

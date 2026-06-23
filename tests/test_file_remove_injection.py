@@ -29,7 +29,8 @@ _main = importlib.util.module_from_spec(_spec)
 sys.modules[f"{_PKG_NAME}.main"] = _main
 _spec.loader.exec_module(_main)
 sys.modules["main"] = _main
-_FILE_REMOVE_GUIDANCE_MARKER = _main._FILE_REMOVE_GUIDANCE_MARKER  # noqa: E402
+# PR-1 (2026-06-23): 常量从 main.py 提取到 tools._guidance_text
+_FILE_REMOVE_GUIDANCE_MARKER = _main.FILE_REMOVE_GUIDANCE_MARKER  # noqa: E402
 SPCodeToolkit = _main.SPCodeToolkit
 
 

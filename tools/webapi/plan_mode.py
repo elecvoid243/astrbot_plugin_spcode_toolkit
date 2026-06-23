@@ -51,8 +51,10 @@ async def handle(
         return {
             "status": "ok",
             "data": {
-                "active": plugin._plan_mode_active(umo),
+                # PR-3 (2026-06-23): 委托给 PlanModeController(webapi 端不再
+                # 直接访问 main.py 的 self._plan_mode dict)
+                "active": plugin._plan.is_active(umo),
                 "umo": umo,
-                "all_active_count": plugin._plan_mode_active_count(),
+                "all_active_count": plugin._plan.count_active(),
             },
         }

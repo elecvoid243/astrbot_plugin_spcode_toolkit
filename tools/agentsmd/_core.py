@@ -21,7 +21,9 @@ from pathlib import Path
 
 # v2.9: 代码文件检测逻辑已抽到 tools/_code_detect(共享给 agentsmd 与 codegraph)
 # 本模块仅 re-export,保持向后兼容(老 import 路径仍可用)。
-from ._code_detect import (  # noqa: F401  (re-exports)
+# PR-5 (2026-06-23): _core.py 从 tools/agentsmd.py 移到 tools/agentsmd/_core.py
+# 后,相对路径多一层: 从 ._code_detect 变为 .._code_detect。
+from .._code_detect import (  # noqa: F401  (re-exports)
     CODE_FILE_EXTENSIONS,
     _SKIP_DIRS,
     has_code_files,
