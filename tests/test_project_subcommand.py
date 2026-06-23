@@ -36,6 +36,26 @@ def _make_event(umo: str = "webchat:webchat!u!c1"):
     event.unified_msg_origin = umo
     return event
 
+def _set_loaded(umo: str, info: dict) -> None:
+    """PR-7 (2026-06-23): wrapped setter for _loaded_projects 状态。"""
+    from tools.project import state as _proj_state
+
+    _proj_state.put(umo, info)
+
+
+def _get_loaded(umo: str) -> dict | None:
+    """PR-7 (2026-06-23): wrapped getter for loaded state。"""
+    from tools.project import state as _proj_state
+
+    return _proj_state.get(umo)
+
+
+def _loaded_items() -> dict:
+    """PR-7 (2026-06-23): 列举所有 loaded state。"""
+    from tools.project import state as _proj_state
+
+    return _proj_state.items()
+
 
 def _make_plugin():
     plugin = SPCodeToolkit.__new__(SPCodeToolkit)
@@ -61,6 +81,10 @@ def _make_plugin():
         plugin=plugin,
         is_path_safe=lambda *args, **kwargs: (True, ""),
     )
+    # PR-7 (2026-06-23): project 子系统 — 真实实例。
+    from tools.project import ProjectManager
+
+    plugin.project = ProjectManager(plugin)
     return plugin
 
 
@@ -74,9 +98,14 @@ def _run(coro):
 
 
 async def _drive(plugin, event, sub_command, *args):
-    """Drain the router into a list of message strings."""
+    """Drain the router into a list of message strings.
+
+    PR-7 (2026-06-23): 改走 plugin.project.handle_subcommand(manager),
+    原 plugin._project_router (main.py 内部方法) 已删除,业务搬到
+    tools.project.ProjectManager.handle_subcommand。
+    """
     msgs = []
-    async for msg in plugin._project_router(event, sub_command, *args):
+    async for msg in plugin.project.handle_subcommand(event, sub_command, *args):
         msgs.append(msg)
     return msgs
 
@@ -140,7 +169,7 @@ def test_project_load_registers_loaded_directory(plugin_with_mocks):
     msgs = _run(_drive(plugin, event, "load", path))
     text = "".join(msgs)
     assert "已加载" in text or path in text
-    info = plugin._loaded_projects.get(event.unified_msg_origin)
+    info = _get_loaded(event.unified_msg_origin)
     assert info is not None
     assert info["directory"] == str(Path(path).resolve())
 
@@ -152,7 +181,7 @@ def test_project_load_without_directory_arg_reports_error(plugin):
     text = "".join(msgs)
     assert text != ""
     assert "❌" in text or "load" in text.lower()
-    assert event.unified_msg_origin not in plugin._loaded_projects
+    assert _get_loaded(event.unified_msg_origin) is None
 
 
 def test_project_unload_clears_directory(plugin_with_mocks):
@@ -164,9 +193,9 @@ def test_project_unload_clears_directory(plugin_with_mocks):
     plugin = plugin_with_mocks
     event = _make_event()
     _run(_drive(plugin, event, "load", "/tmp/x"))
-    assert event.unified_msg_origin in plugin._loaded_projects
+    assert _get_loaded(event.unified_msg_origin) is not None
     _run(_drive(plugin, event, "unload"))
-    assert event.unified_msg_origin not in plugin._loaded_projects
+    assert _get_loaded(event.unified_msg_origin) is None
 
 
 def test_project_status_reports_loaded_project(plugin_with_mocks):
@@ -201,15 +230,18 @@ def test_project_unknown_subcommand_is_rejected(plugin):
     assert text != ""
     assert "❌" in text or "未知" in text or "explode" in text
     # No state change.
-    assert event.unified_msg_origin not in plugin._loaded_projects
+    assert _get_loaded(event.unified_msg_origin) is None
 
 
 def test_handle_get_project_status_returns_loaded(plugin):
     async def runner():
-        plugin._loaded_projects["webchat:webchat!u!c2"] = {
-            "directory": "/tmp/z",
-            "loaded_at": 1700000000.0,
-        }
+        _set_loaded(
+            "webchat:webchat!u!c2",
+            {
+                "directory": "/tmp/z",
+                "loaded_at": 1700000000.0,
+            },
+        )
         return await _project_status.handle(plugin)
 
     payload = _run(runner())
@@ -230,14 +262,14 @@ def test_handle_get_project_status_returns_unloaded(plugin):
 
 
 def test_handle_get_project_status_filters_by_umo(plugin):
-    plugin._loaded_projects["webchat:webchat!u!c3"] = {
+    _set_loaded("webchat:webchat!u!c3", {
         "directory": "/tmp/a",
         "loaded_at": 1.0,
-    }
-    plugin._loaded_projects["webchat:webchat!u!c4"] = {
+    })
+    _set_loaded("webchat:webchat!u!c4", {
         "directory": "/tmp/b",
         "loaded_at": 2.0,
-    }
+    })
 
     async def runner():
         return await _project_status.handle(plugin)
@@ -253,26 +285,34 @@ def test_handle_get_project_status_filters_by_umo(plugin):
 def test_handle_get_project_status_returns_copy_not_reference(plugin):
     """The handler must return a shallow copy so callers cannot mutate
     internal state."""
-    plugin._loaded_projects["webchat:webchat!u!c5"] = {
+    _set_loaded("webchat:webchat!u!c5", {
         "directory": "/tmp/c",
         "loaded_at": 1.0,
-    }
+    })
 
     async def runner():
         return await _project_status.handle(plugin)
 
     payload = _run(runner())
     payload["data"]["directory"] = "mutated"
-    assert plugin._loaded_projects["webchat:webchat!u!c5"]["directory"] == "/tmp/c"
+    assert _get_loaded("webchat:webchat!u!c5")["directory"] == "/tmp/c"
 
 
 def test_get_loaded_project_helper(plugin):
-    plugin._loaded_projects["webchat:webchat!u!c6"] = {
-        "directory": "/tmp/d",
-        "loaded_at": 3.0,
-    }
+    # PR-7 (2026-06-23): loaded state 搬到 tools.project.state 模块级单例,
+    # 不再是 plugin._loaded_projects 实例属性。
+    from tools.project import state as _proj_state
+
+    _proj_state.put(
+        "webchat:webchat!u!c6",
+        {
+            "directory": "/tmp/d",
+            "loaded_at": 3.0,
+        },
+    )
     info = plugin.get_loaded_project("webchat:webchat!u!c6")
     assert info is not None
     assert info["directory"] == "/tmp/d"
     # Missing umo returns None.
     assert plugin.get_loaded_project("nope") is None
+    _proj_state.reset()

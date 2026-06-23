@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from pathlib import Path
+# PR-7 (2026-06-23): pathlib.Path 移到 tools/project/manager.py(load_impl 用)
 
 from astrbot.api import logger, star
 from astrbot.api.event import AstrMessageEvent, filter
@@ -32,6 +32,12 @@ from .tools.codegraph import (
     shutdown_mcp,
 )
 from .tools.codegraph import state as _codegraph_state
+# PR-7 (2026-06-23): /project 命令组搬到 tools/project/ 子包。
+# main.py 只剩薄壳委托 + get_loaded_project 查询接口。
+from .tools.project import ProjectManager
+# PR-6 (2026-06-23): shutdown_mcp 在 terminate() 中使用,
+# 上面 import block 需保留(避免 ruff F401 误报)。
+# PR-7 (2026-06-23): 验证 — terminate() 仍调 shutdown_mcp,保留 import。
 # spcode webapi handlers all live in tools/webapi/*; main.py no longer
 # re-exports them.  The 6 endpoints are registered in one shot via
 # ``register_webapi_routes`` below.  We still import the git-diff
@@ -48,7 +54,7 @@ from .tools.llm_inject import inject_guidance
 # per-umo state manager)集中到 tools/agentsmd/ 子包。tools/agentsmd.py 已
 # git mv 为 tools/agentsmd/_core.py,所有老符号在 tools/agentsmd/__init__.py
 # re-export,老 import 路径继续可用。
-from .tools.agentsmd import AgentsmdSubsystem, strip_surrounding_quotes
+from .tools.agentsmd import AgentsmdSubsystem
 from .tools._guidance_text import (
     PROJECT_GUIDANCE_MARKER,
     PROJECT_CODEGRAPH_GUIDANCE,
@@ -74,8 +80,7 @@ from .tools.function_tools import (
     TodoModifyTool,  # noqa: F401
     TodoQueryTool,  # noqa: F401
 )
-import time as _time
-import datetime as _datetime
+# PR-7 (2026-06-23): time / datetime 移到 tools/project/manager.py(状态格式化用)
 
 
 
@@ -119,24 +124,8 @@ _DEFAULT_CONFIG = {
 
 
 # ── /project 命令组(v2.7) ─────────────────────
-
-
-class _ProjectLoadAbort(BaseException):
-    """私有信号异常 — ``_project_load_step`` 用以中止 ``_project_load_impl``。
-
-    为什么用 ``BaseException`` 而非 ``Exception``?
-        子方法(``self.agentsmd.init`` 等)和 helpers 内部有大量
-        ``except Exception`` 兜底(见 ``_codegraph_set_project`` 等)。
-        用 ``BaseException`` 可避免该异常被这些 ``except`` 误吞,
-        确保中止信号一定能传到 :meth:`_project_load_impl` 顶层。
-
-    捕获方: :meth:`_project_load_impl` 的 ``try/except _ProjectLoadAbort``
-    块,捕获后 ``return`` 即可。
-    """
-
-    def __init__(self, step_label: str) -> None:
-        self.step_label = step_label
-        super().__init__(step_label)
+# PR-7 (2026-06-23): _ProjectLoadAbort 异常类已搬到 tools/project/pipeline.py
+# (公开 API,跨函数传播),不再在 main.py 中定义。
 
 
 # 注入文本常量已提取到 tools/_guidance_text.py(PR-1 2026-06-23)
@@ -212,6 +201,12 @@ class SPCodeToolkit(star.Star):
         # tools/codegraph/ 子包;main.py 只持有 manager 实例做薄壳委托。
         # task 引用 + per-dir lock 走 tools.codegraph.state 模块级单例。
         self.codegraph = CodegraphManager(self)
+
+        # project 子系统(PR-7 2026-06-23):
+        # 业务逻辑(/project load/unload/status + 4 步流水线)搬到
+        # tools/project/ 子包;main.py 只持有 manager 实例做薄壳委托。
+        # loaded_projects 状态走 tools.project.state 模块级单例。
+        self.project = ProjectManager(self)
 
         # 已加载项目(per-umo)。/project load 时填充,/project unload 时清空。
         # 与 self.agentsmd.state 平行——一个跟踪 AGENTS.md,一个跟踪整个项目组合状态。
@@ -384,361 +379,52 @@ class SPCodeToolkit(star.Star):
 
         装饰器模式下,本方法被 ``@filter.command_group`` 替换为
         ``RegisteringCommandable``,实际不会执行;真正的分发由
-        :meth:`_project_router` 处理,以便单元测试可以直接调用。
+        :meth:`ProjectManager.handle_subcommand` 处理,以便单元测试
+        可以直接调用。
 
-        Args:
-            event: AstrBot 事件对象(由框架注入)。
-            sub_command: ``/project`` 后面的第一个子命令(load / unload / status / ...)。
-            *args: 子命令对应的额外参数。
+        PR-7 (2026-06-23): 薄壳委托给 self.project (ProjectManager)。
         """
         return None
-
-    async def _project_router(self, event, sub_command: str, *args):
-        """Implementation of the ``/project`` command group.
-
-        Dispatches ``sub_command`` to the matching ``_project_*_impl`` helper
-        and yields its messages. Unknown sub-commands yield a single error
-        message.
-
-        Args:
-            event: AstrBot 事件对象。
-            sub_command: 子命令字符串(load / unload / status / ...)。
-            *args: 子命令对应的额外参数。
-
-        Yields:
-            Plain text messages for the user.
-        """
-        sub = (sub_command or "").strip().lower()
-        if sub == "load":
-            if not args:
-                yield event.plain_result("❌ /project load 需要 <directory> 参数。")
-                return
-            async for msg in self._project_load_impl(event, args[0]):
-                yield msg
-            return
-        if sub == "unload":
-            async for msg in self._project_unload_impl(event):
-                yield msg
-            return
-        if sub == "status":
-            async for msg in self._project_status_impl(event):
-                yield msg
-            return
-        # Unknown subcommand.
-        yield event.plain_result(
-            f"❌ 未知子命令: {sub_command!r}。支持: load / unload / status"
-        )
-        return
 
     @project.command("load")
     async def project_load(self, event, directory: str):
         """/project load <directory>
 
-        一键加载项目到当前会话(委托给 ``_project_load_impl``)。
-
-        Args:
-            event: AstrBot 事件对象。
-            directory: 用户提供的项目目录路径。
+        一键加载项目到当前会话(委托给 ``ProjectManager.load_impl``)。
+        PR-7 (2026-06-23): 薄壳委托给 self.project.load_impl(manager)。
         """
-        # Delegate to the testable helper so unit tests can exercise the
-        # state-mutation path without depending on the @register decorator.
-        async for msg in self._project_load_impl(event, directory):
+        async for msg in self.project.load_impl(event, directory):
             yield msg
         return
-
-    async def _project_load_step(self, event, sub_gen, step_label: str):
-        """Forward messages from a sub-step; abort on first "❌" message.
-
-        用作 :meth:`_project_load_impl` 中所有 4 个子步骤的统一包装层:
-
-        - **透传**: ``sub_gen`` 产出的每条消息都原样 ``yield`` 出去
-        - **检测**: 任何以 ``"❌"`` 开头的消息视为失败
-        - **中止**: 失败时 yield 一条总结消息,然后抛 :class:`_ProjectLoadAbort`
-          终止整个 ``_project_load_impl`` 流程(stop at first error)
-
-        为什么用异常而不是 flag?
-            ``_project_load_impl`` 自己也是 async generator, ``return`` 只能
-            终止自身;无法从 ``async for`` 循环内部跳出整个流。抛出一个私有
-            异常是最干净的方式 — 父函数用 ``try/except _ProjectLoadAbort``
-            接住后直接 ``return`` 即可。
-
-        为什么"❌"而不是返回值?
-            子方法(``self.agentsmd.init`` / ``self.agentsmd.load`` /
-            ``_codegraph_init_or_uninit`` / ``_codegraph_set_project``)都
-            遵循 "yield 错误消息 + return" 模式,从不抛异常。``❌`` 前缀是
-            它们的统一约定(见 :data:`tools.agentsmd`)。``⚠️`` 不算失败 —
-            ``_codegraph_init_or_uninit`` 在 "已初始化 → 自动 --force 重试"
-            路径上以 ``⚠️`` 起头但最终可能成功。
-
-        Args:
-            event: AstrBot 事件对象(用于 yield abort 总结消息)。
-            sub_gen: 子方法返回的 async generator,**不消耗**,只在这里转发。
-            step_label: 本步的人类可读标签,如 ``"[1/3] AGENTS.md 加载"``。
-
-        Yields:
-            ``sub_gen`` 的全部消息 + (若失败) 一条 abort 总结消息。
-
-        Raises:
-            _ProjectLoadAbort: ``sub_gen`` 至少 yield 过一次以 ``"❌"``
-                开头的消息。调用方应捕获并 ``return``。
-        """
-        failed = False
-        async for msg in sub_gen:
-            yield msg
-            # msg 在生产里是 ``MessageEventResult``(由 ``event.plain_result()``
-            # 返回),在单元测试里 mock 可能直接 yield 字符串。这里做"防御式"
-            # 抽取,主路径(MER)走 ``.chain[0].text``;测试/mock 路径走 str。
-            text: str | None = None
-            if isinstance(msg, str):
-                text = msg
-            else:
-                chain = getattr(msg, "chain", None)
-                if chain:
-                    first = chain[0]
-                    text = getattr(first, "text", None)
-            if isinstance(text, str) and text.startswith("❌"):
-                failed = True
-        if failed:
-            yield event.plain_result(
-                f"❌ {step_label} 失败,/project load 中止。"
-                "请根据上方错误信息修复后,重试 /project load <directory>。"
-            )
-            raise _ProjectLoadAbort(step_label)
-
-    async def _project_load_impl(self, event, directory: str):
-        """Implementation of :meth:`project_load`.
-
-        Performs the multi-step project load: feature-flag check, duplicate
-        load guard, path safety, agentsmd init+load, codegraph init+set,
-        records the load into ``self._loaded_projects[umo]``, and finally
-        yields a summary message.
-
-        任一子步骤失败(yield 任何以 ``❌`` 开头的消息)→ 立即中止整个 load:
-        后续子方法不会被调用, ``_loaded_projects[umo]`` 不会被填充,
-        也不会 yield "✅ 项目已加载"。``⚠️`` 不算失败
-        (见 :meth:`_project_load_step`)。
-
-        Args:
-            event: AstrBot 事件对象。
-            directory: 用户提供的项目目录路径。
-
-        Yields:
-            Plain text messages for the user。
-        """
-        umo = event.unified_msg_origin
-        # 1. Feature flag 校验
-        agentsmd_on = self._config.get("agentsmd_enabled", True)
-        codegraph_on = self._config.get("codegraph_enabled", True)
-        if not (agentsmd_on and codegraph_on):
-            yield event.plain_result(
-                "❌ /project 命令需要先启用 codegraph 和 AGENTS.md 功能。\n"
-                "请在插件配置中打开这两项后再试一次。"
-            )
-            return
-
-        # 2. 重复 load 拦截(Q2=B 决策)
-        if umo in self._loaded_projects:
-            loaded = self._loaded_projects[umo]
-            yield event.plain_result(
-                f"❌ 当前会话已加载项目: {loaded['directory']}\n"
-                f"请先执行 /project unload,再 load 新项目。"
-            )
-            return
-
-        # 3. 路径解析与安全校验
-        directory = strip_surrounding_quotes(directory)
-        target = Path(directory).resolve()
-        ok, reason = _is_path_safe(
-            target, user_blacklist=self._config.get("file_remove_blacklist")
-        )
-        if not ok:
-            yield event.plain_result(f"❌ 路径不允许: {reason}")
-            return
-
-        # 4. 多步加载(任一子步骤失败 → 立即中止,不再登记 _loaded_projects)
-        try:
-            # 步骤 1/3: agentsmd(init 条件性 + load)
-            agents_md_path = target / "AGENTS.md"
-            if not agents_md_path.exists():
-                yield event.plain_result(
-                    f"⏳ [1/3] AGENTS.md 不存在,正在 init: {target}"
-                )
-                async for msg in self._project_load_step(
-                    event,
-                    self.agentsmd.init(event, str(target)),
-                    "[1/3] AGENTS.md 初始化",
-                ):
-                    yield msg
-            else:
-                yield event.plain_result(
-                    f"ℹ️ [1/3] AGENTS.md 已存在,跳过 init: {agents_md_path}"
-                )
-            yield event.plain_result(f"⏳ [1/3] 正在 load AGENTS.md: {target}")
-            async for msg in self._project_load_step(
-                event,
-                self.agentsmd.load(event, str(target)),
-                "[1/3] AGENTS.md 加载",
-            ):
-                yield msg
-
-            # 步骤 2/3: codegraph init + set(PR-6 2026-06-23 委托给 manager)
-            yield event.plain_result(f"⏳ [2/3] codegraph init: {target}")
-            async for msg in self._project_load_step(
-                event,
-                self.codegraph.init(event, str(target)),
-                "[2/3] codegraph init",
-            ):
-                yield msg
-
-            yield event.plain_result(f"⏳ [2/3] codegraph set: {target}")
-            async for msg in self._project_load_step(
-                event,
-                self.codegraph.set_project(event, str(target)),
-                "[2/3] codegraph set",
-            ):
-                yield msg
-        except _ProjectLoadAbort:
-            return
-
-        # 5. 记录状态(仅在所有子步骤都成功后才登记)
-        loaded_at_ts = _time.time()
-        self._loaded_projects[umo] = {
-            "directory": str(target),
-            "loaded_at": loaded_at_ts,
-        }
-
-        yield event.plain_result(
-            f"✅ 项目已加载: {target}\n"
-            f"已自动进行如下步骤:\n"
-            f"  - 设定工作目录\n"
-            f"  - AGENTS.md 注入到 system_prompt\n"
-            f"  - 载入 codegraph 索引\n"
-            f"\n若要卸载，请执行`/project unload`\n"
-        )
 
     @project.command("unload")
     async def project_unload(self, event):
-        """/project unload(委托给 ``_project_unload_impl``)。
-
-        Args:
-            event: AstrBot 事件对象。
+        """/project unload(委托给 ``ProjectManager.unload_impl``)。
+        PR-7 (2026-06-23): 薄壳委托给 self.project.unload_impl(manager)。
         """
-        async for msg in self._project_unload_impl(event):
+        async for msg in self.project.unload_impl(event):
             yield msg
         return
-
-    async def _project_unload_impl(self, event):
-        """Implementation of :meth:`project_unload`.
-
-        Unloads the current session's project: feature-flag check, no-op guard,
-        agentsmd unload, codegraph set to default, and finally clears
-        ``self._loaded_projects[umo]``.
-
-        Args:
-            event: AstrBot 事件对象。
-
-        Yields:
-            Plain text messages for the user.
-        """
-        # 1. Feature flag 校验
-        agentsmd_on = self._config.get("agentsmd_enabled", True)
-        codegraph_on = self._config.get("codegraph_enabled", True)
-        if not (agentsmd_on and codegraph_on):
-            yield event.plain_result(
-                "❌ /project 命令需要先启用 codegraph 和 AGENTS.md 功能。\n"
-                "请在插件配置中打开这两项后再试一次。"
-            )
-            return
-
-        umo = event.unified_msg_origin
-        if umo not in self._loaded_projects:
-            yield event.plain_result("ℹ️ 当前会话未加载项目,无需 unload。")
-            return
-
-        # 2. agentsmd unload(同步返回单条消息)
-        yield self.agentsmd.unload(event)
-
-        # 3. codegraph set 回默认项目
-        default_project = (self._config.get("codegraph_project") or "").strip()
-        if default_project:
-            yield event.plain_result(f"⏳ codegraph set 回默认项目: {default_project}")
-            async for msg in self.codegraph.set_project(event, default_project):
-                yield msg
-        else:
-            yield event.plain_result(
-                "ℹ️ codegraph_project 未配置,跳过 codegraph set。"
-                "MCP 当前默认项目维持原状。"
-            )
-
-        # 4. 清理状态(必须在最末,即便 set 失败也清,避免用户无法重试)
-        info = self._loaded_projects.pop(umo)
-        yield event.plain_result(
-            f"✅ 项目已卸载: {info['directory']}\n"
-            f"  - AGENTS.md 注入已移除\n"
-            f"  - codegraph 默认项目已重置\n"
-        )
 
     @project.command("status")
     async def project_status(self, event):
-        """/project status(委托给 ``_project_status_impl``)。
-
-        Args:
-            event: AstrBot 事件对象。
+        """/project status(委托给 ``ProjectManager.status_impl``)。
+        PR-7 (2026-06-23): 薄壳委托给 self.project.status_impl(manager)。
         """
-        async for msg in self._project_status_impl(event):
+        async for msg in self.project.status_impl(event):
             yield msg
         return
 
-    async def _project_status_impl(self, event):
-        """Implementation of :meth:`project_status`.
-
-        Reads ``self._loaded_projects[umo]`` and yields a human-readable
-        status for the chat response. The authoritative state used by the
-        dashboard's spcode chip is exposed separately via
-        :meth:`handle_get_project_status` (mounted at
-        ``GET /spcode/project-status``) — that endpoint is the single
-        source of truth for the dashboard; the chat response is plain
-        text and intentionally does NOT carry any hidden marker.
-
-        Args:
-            event: AstrBot 事件对象。
-
-        Yields:
-            Plain text messages for the user.
-        """
-        umo = event.unified_msg_origin
-        info = self._loaded_projects.get(umo)
-        if info is None:
-            yield event.plain_result("📂 当前会话未加载项目")
-            return
-        directory = info.get("directory", "")
-        loaded_at_ts = info.get("loaded_at", 0)
-        loaded_at_str = (
-            _datetime.datetime.fromtimestamp(loaded_at_ts).strftime("%Y-%m-%d %H:%M:%S")
-            if loaded_at_ts
-            else "未知"
-        )
-        yield event.plain_result(
-            f"📂 当前已加载项目\n路径: {directory}\n加载于: {loaded_at_str}\n"
-        )
-
     def get_loaded_project(self, umo: str) -> dict | None:
-        """Get the loaded project info for a given unified message origin.
+        """返回指定 umo 的已加载项目信息(供 webapi / dashboard 同步访问)。
 
-        Args:
-            umo: The unified message origin (session key).
-
-        Returns:
-            A dict with `directory` and `loaded_at` keys, or ``None`` if no
-            project is currently loaded for the given ``umo``.
+        PR-7 (2026-06-23): 委托给 self.project.get_loaded_project(manager)。
         """
-        info = self._loaded_projects.get(umo)
-        if info is None:
-            return None
-        # Return a shallow copy so callers cannot mutate internal state.
-        return dict(info)
-
-
+        return self.project.get_loaded_project(umo)
+    # ── /project 业务方法已提取到 tools/project/ 子包(PR-7 2026-06-23) ───
+    # 4 个 _project_* 业务方法(load_step/load_impl/unload_impl/status_impl)
+    # + _project_router + 原 get_loaded_project body 都搬到 tools/project/manager.py。
+    # main.py 只剩 thin shell command + get_loaded_project 查询接口。
 
     @codegraph.command("init")
     async def codegraph_init(self, event, directory: str):
@@ -770,8 +456,6 @@ class SPCodeToolkit(star.Star):
         """
         async for msg in self.codegraph.set_project(event, directory):
             yield msg
-
-    # ── /agentsmd 命令组(v2.4 合并自独立 agentsmd 插件)──
 
     @filter.command_group("agentsmd")
     def agentsmd(self):
@@ -820,7 +504,6 @@ class SPCodeToolkit(star.Star):
             return
         async for msg in self.agentsmd.update(event):
             yield msg
-
     async def terminate(self):
         """Star 框架在插件卸载/重载时调用。
 
@@ -858,6 +541,13 @@ class SPCodeToolkit(star.Star):
 
         # PR-6 (2026-06-23): 取消 task + 停 MCP 都搬到 tools.codegraph.shutdown_mcp
         await shutdown_mcp(self)
+
+    # ── /codegraph 业务方法已提取到 tools/codegraph/ 子包(PR-6 2026-06-23) ───
+    # 4 个 /codegraph 命令(init/uninit/set)的实现 + MCP bootstrap/shutdown
+    # 都委托给 self.codegraph (CodegraphManager 实例),详见 tools/codegraph/。
+
+    # ── /agentsmd 业务方法已提取到 tools/agentsmd/ 子包(PR-5 2026-06-23) ───
+    # 4 个 /agentsmd 命令(init/load/unload/update)的实现 + on_llm_request 钩子
 
     # ── /codegraph 业务方法已提取到 tools/codegraph/ 子包(PR-6 2026-06-23) ───
     # 4 个 /codegraph 命令(init/uninit/set)的实现 + MCP bootstrap/shutdown

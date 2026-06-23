@@ -46,6 +46,12 @@ def _make_plugin(
         plugin=plugin,
         is_path_safe=lambda *args, **kwargs: (True, ""),
     )
+    # PR-7 (2026-06-23): project 子系统 — 真实实例。
+    # __init__ 被绕过(__new__),需要手动装配。setattr 替换类级
+    # RegisteringCommandable 占用 self.project 名字空间。
+    from tools.project import ProjectManager
+
+    plugin.project = ProjectManager(plugin)
     return plugin
 
 
@@ -54,6 +60,32 @@ def _make_event(umo: str = "test:umo:001"):
     event.unified_msg_origin = umo
     event.plain_result = lambda x: f"RESULT: {x}"
     return event
+
+
+def _set_loaded(umo: str, info: dict) -> None:
+    """PR-7 (2026-06-23): wrapped setter for _loaded_projects 状态。
+    tests 不再写 _get_loaded("X") = {...} 而是调 _set_loaded("X", {...}),
+    把数据写到 tools.project.state 模块级单例(manager 唯一真实数据源)。
+    """
+    from tools.project import state as _proj_state
+
+    _proj_state.put(umo, info)
+
+
+def _get_loaded(umo: str) -> dict | None:
+    """PR-7 (2026-06-23): wrapped getter for loaded state.
+    mirrors ``_get_loaded(umo)`` 旧 API 但读 tools.project.state 单例。
+    """
+    from tools.project import state as _proj_state
+
+    return _proj_state.get(umo)
+
+
+def _loaded_items() -> dict:
+    """PR-7 (2026-06-23): 列举所有 loaded state。"""
+    from tools.project import state as _proj_state
+
+    return _proj_state.items()
 
 
 def _collect_async_gen(agen):
@@ -195,7 +227,7 @@ def test_project_load_refuses_when_agentsmd_disabled(tmp_path):
     for name, mock in mocks.items():
         mock.assert_not_called(), f"{name} 不应被调用"
     # 状态不应被记录
-    assert event.unified_msg_origin not in plugin._loaded_projects
+    assert _get_loaded(event.unified_msg_origin) is None
 
 
 def test_project_load_refuses_when_codegraph_disabled(tmp_path):
@@ -216,14 +248,14 @@ def test_project_load_refuses_when_codegraph_disabled(tmp_path):
 def test_project_unload_refuses_when_agentsmd_disabled():
     """agentsmd 关闭时 unload 也应拒绝(避免误清理)。"""
     plugin = _make_plugin(agentsmd_enabled=False, codegraph_enabled=True)
-    plugin._loaded_projects["test:umo"] = {"directory": "/some/proj"}
+    _set_loaded("test:umo", {"directory": "/some/proj"})
     event = _make_event(umo="test:umo")
 
     msgs = _collect_async_gen(plugin.project_unload(event))
 
     assert any("codegraph" in m and "AGENTS.md" in m for m in msgs)
     # 状态不应被清空
-    assert "test:umo" in plugin._loaded_projects
+    assert _get_loaded("test:umo") is not None
 
 
 # ── 3. 重复 load 拦截(Q2=B) ──────────────────────
@@ -234,7 +266,7 @@ def test_project_load_refuses_when_already_loaded(tmp_path):
     p = tmp_path / "proj"
     p.mkdir()
     plugin = _make_plugin()
-    plugin._loaded_projects["test:umo"] = {"directory": "/old/proj"}
+    _set_loaded("test:umo", {"directory": "/old/proj"})
     mocks = _patch_internal_methods(plugin)
     event = _make_event(umo="test:umo")
 
@@ -261,8 +293,8 @@ def test_project_load_allows_different_umo_simultaneously(tmp_path):
     msgs_b = _collect_async_gen(plugin.project_load(event_b, str(p)))
 
     # 两个 umo 都成功加载
-    assert "umo:a" in plugin._loaded_projects
-    assert "umo:b" in plugin._loaded_projects
+    assert _get_loaded("umo:a") is not None
+    assert _get_loaded("umo:b") is not None
     assert any("项目已加载" in m for m in msgs_a)
     assert any("项目已加载" in m for m in msgs_b)
 
@@ -283,7 +315,7 @@ def test_project_load_rejects_unsafe_path(tmp_path):
     )
     for name, mock in mocks.items():
         mock.assert_not_called()
-    assert event.unified_msg_origin not in plugin._loaded_projects
+    assert _get_loaded(event.unified_msg_origin) is None
 
 
 def test_project_load_rejects_user_blacklisted_path(tmp_path):
@@ -340,8 +372,8 @@ def test_project_load_happy_path_calls_all_steps(tmp_path):
     ], f"调用顺序不符 spec,实际: {actual_order}"
 
     # 状态已记录
-    assert "test:umo" in plugin._loaded_projects
-    assert plugin._loaded_projects["test:umo"]["directory"] == str(p)
+    assert _get_loaded("test:umo") is not None
+    assert _get_loaded("test:umo")["directory"] == str(p)
 
     # 汇总消息
     assert any("项目已加载" in m for m in msgs)
@@ -398,7 +430,7 @@ def test_project_load_aborts_on_agentsmd_init_error(tmp_path):
         f"不应出现成功消息,实际: {msgs}"
     )
     # 6. 状态未登记
-    assert "test:umo" not in plugin._loaded_projects, (
+    assert "test:umo" not in _loaded_items(), (
         '失败时 _loaded_projects 不应被填充,避免幽灵 load 阻塞后续 /project load'
     )
 
@@ -431,7 +463,7 @@ def test_project_load_aborts_on_agentsmd_load_error(tmp_path):
     # 无成功消息
     assert not any("项目已加载" in m for m in msgs)
     # 状态未登记
-    assert "test:umo" not in plugin._loaded_projects
+    assert _get_loaded("test:umo") is None
 
 
 def test_project_load_aborts_on_codegraph_init_error(tmp_path):
@@ -463,7 +495,7 @@ def test_project_load_aborts_on_codegraph_init_error(tmp_path):
     # 无成功消息
     assert not any("项目已加载" in m for m in msgs)
     # 状态未登记
-    assert "test:umo" not in plugin._loaded_projects
+    assert _get_loaded("test:umo") is None
 
 
 def test_project_load_aborts_on_codegraph_set_error(tmp_path):
@@ -495,7 +527,7 @@ def test_project_load_aborts_on_codegraph_set_error(tmp_path):
     # 无成功消息
     assert not any("项目已加载" in m for m in msgs)
     # 状态未登记(关键 — 假成功绝不能登记)
-    assert "test:umo" not in plugin._loaded_projects
+    assert _get_loaded("test:umo") is None
 
 
 def test_project_load_does_not_abort_on_warning(tmp_path):
@@ -527,7 +559,7 @@ def test_project_load_does_not_abort_on_warning(tmp_path):
     mocks["codegraph_init"].assert_called_once()
     mocks["codegraph_set_project"].assert_called_once()
     # 状态已登记
-    assert "test:umo" in plugin._loaded_projects
+    assert _get_loaded("test:umo") is not None
     # 成功消息
     assert any("项目已加载" in m for m in msgs)
     # warning 消息被透传
@@ -554,7 +586,7 @@ def test_project_load_skips_agentsmd_init_if_md_exists(tmp_path):
     # load 仍要调
     mocks["load"].assert_called_once()
     # 状态记录
-    assert event.unified_msg_origin in plugin._loaded_projects
+    assert _get_loaded(event.unified_msg_origin) is not None
     # 提示信息
     assert any("AGENTS.md 已存在" in m and "跳过 init" in m for m in msgs)
 
@@ -578,10 +610,10 @@ def test_project_unload_no_project_loaded():
 def test_project_unload_with_default_project_set():
     """codegraph_project 已配置 → 调 agentsmd_unload + codegraph_set 回默认。"""
     plugin = _make_plugin(codegraph_project="/default/proj")
-    plugin._loaded_projects["test:umo"] = {
+    _set_loaded("test:umo", {
         "directory": "/loaded/proj",
         "loaded_at": 12345.0,
-    }
+    })
     mocks = _patch_internal_methods(plugin)
     event = _make_event(umo="test:umo")
 
@@ -597,7 +629,7 @@ def test_project_unload_with_default_project_set():
     )
 
     # 状态被清空
-    assert "test:umo" not in plugin._loaded_projects
+    assert _get_loaded("test:umo") is None
     # 提示信息
     assert any("项目已卸载" in m for m in msgs)
 
@@ -605,10 +637,10 @@ def test_project_unload_with_default_project_set():
 def test_project_unload_without_default_project():
     """codegraph_project 未配置 → 跳过 codegraph set,只卸 agentsmd。"""
     plugin = _make_plugin(codegraph_project="")
-    plugin._loaded_projects["test:umo"] = {
+    _set_loaded("test:umo", {
         "directory": "/loaded/proj",
         "loaded_at": 12345.0,
-    }
+    })
     mocks = _patch_internal_methods(plugin)
     event = _make_event(umo="test:umo")
 
@@ -621,20 +653,20 @@ def test_project_unload_without_default_project():
     # 提示跳过
     assert any("codegraph_project 未配置" in m for m in msgs)
     # 状态被清空(即便 set 跳过)
-    assert "test:umo" not in plugin._loaded_projects
+    assert _get_loaded("test:umo") is None
 
 
 def test_project_unload_clears_state():
     """卸载后 _loaded_projects[umo] 必须被删除(防"幽灵 load")。"""
     plugin = _make_plugin(codegraph_project="/default")
-    plugin._loaded_projects["test:umo"] = {
+    _set_loaded("test:umo", {
         "directory": "/x",
         "loaded_at": 0.0,
-    }
+    })
     _patch_internal_methods(plugin)
     event = _make_event(umo="test:umo")
     _collect_async_gen(plugin.project_unload(event))
-    assert "test:umo" not in plugin._loaded_projects
+    assert _get_loaded("test:umo") is None
 
 
 # ── 7. 系统提示词注入钩子 ──────────────────────
@@ -650,7 +682,7 @@ def test_project_unload_clears_state():
 def test_inject_guidance_idempotent():
     """同一 req 被多次走钩子(罕见,但要安全): marker 检测防重复。"""
     plugin = _make_plugin()
-    plugin._loaded_projects["test:umo"] = {"directory": "/p"}
+    _set_loaded("test:umo", {"directory": "/p"})
     req = MagicMock()
     req.system_prompt = "base"
     event = _make_event("test:umo")
@@ -668,7 +700,7 @@ def test_inject_guidance_idempotent():
 def test_inject_guidance_disabled_when_codegraph_disabled():
     """codegraph_enabled=False → 钩子 no-op,即便项目已加载。"""
     plugin = _make_plugin(codegraph_enabled=False)
-    plugin._loaded_projects["test:umo"] = {"directory": "/p"}
+    _set_loaded("test:umo", {"directory": "/p"})
     req = MagicMock()
     req.system_prompt = "base"
 

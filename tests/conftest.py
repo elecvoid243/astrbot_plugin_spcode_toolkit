@@ -72,6 +72,34 @@ collect_ignore_glob = [
 ]
 
 
+# ── 共享 autouse fixture ──────────────────────────────────
+# WHY: tools.project.state 是模块级单例,test 之间的状态会相互污染。
+# 每个 test 前 reset(),保证隔离。同理 tools.agentsmd.state。
+# PR-7 (2026-06-23): 新增 — 把 project/agentsmd state reset 收口到 conftest。
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _reset_module_state():
+    """每个 test 前 reset 共享 module-level state(防相互污染)。"""
+    # 惰性导入 — conftest 在 import 时机要早于 tools.*,直接 import 会触发
+    # 包级 ``from .xxx import`` 链,worktree 下 sys.path 还未就绪会报
+    # ImportError。改在 fixture 体内 import。
+    try:
+        from tools.project import state as _proj_state
+
+        _proj_state.reset()
+    except ImportError:
+        pass
+    try:
+        from tools.agentsmd import state as _ag_state
+
+        _ag_state.reset()
+    except ImportError:
+        pass
+    yield
+
+
 # ── 共享 test helper ────────────────────────────────────────
 # WHY: 多个 test_*.py 需要构造 mock 替换 ``astrbot.api.web.request``,
 # 原 _make_web_request_mock 在 test_git_diff.py 私有;v3.2 抽出到 conftest
