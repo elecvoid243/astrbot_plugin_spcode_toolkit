@@ -1,0 +1,192 @@
+"""POST /spcode/git-unstage — git reset HEAD(指定文件 or all)。
+
+Spec: docs/superpowers/specs/2026-06-23-git-stage-untage-commit-log-design.md §C
+PR-4 of git workflow endpoints design.
+"""
+from __future__ import annotations
+import logging
+import time as _time
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from ._helpers import (
+    _JSONResponseCompat,
+    _git_endpoint_preflight,
+    _make_envelope,
+    _run_git_async,
+    _validate_repo_relative_file,
+    ReasonCode,
+)
+
+if TYPE_CHECKING:
+    from main import SPCodeToolkit
+
+logger = logging.getLogger(__name__)
+
+
+# ── 端点常量 ──
+MAX_FILES_PER_REQUEST = 100
+UNSTAGE_TRUNCATE_BYTES = 1024
+
+
+def _parse_staged_files(stdout: str) -> list[str]:
+    """解析 ``git diff --cached --name-only --diff-filter=AMRD`` 输出。"""
+    return [line.strip() for line in stdout.splitlines() if line.strip()]
+
+
+async def _get_staged_files(git_bin: str, directory: str) -> list[str]:
+    """读取当前 staged 文件列表(用于响应 payload)。"""
+    result = await _run_git_async(
+        [git_bin, "-C", directory, "-c", "color.ui=never",
+         "diff", "--cached", "--name-only", "--diff-filter=AMRD"],
+        encoding="utf-8",
+    )
+    if not result["ok"]:
+        return []
+    return _parse_staged_files(result.get("stdout", ""))
+
+
+async def handle(
+    plugin: "SPCodeToolkit",
+    *,
+    umo: str | None = None,
+    worktree: str | None = None,
+    body: dict | None = None,
+) -> dict:
+    """POST /spcode/git-unstage handler。
+
+    Body (JSON, 必传): ``{"files": ["a.py","b.py"]}`` 或 ``{"all": true}``。
+    两者互斥。
+
+    Spec: docs/superpowers/specs/2026-06-23-git-stage-untage-commit-log-design.md §C
+    """
+    t0 = _time.time()
+
+    def _elapsed() -> int:
+        return int((_time.time() - t0) * 1000)
+
+    # ── 1. body 校验 ──
+    if not isinstance(body, dict):
+        return _make_envelope(
+            success=False, reason=ReasonCode.INVALID_BODY,
+            elapsed_ms=_elapsed(),
+            unstaged=False, files=[], staged_count=0,
+            umo=umo, worktree=worktree,
+        )
+
+    files = body.get("files")
+    all_flag = body.get("all")
+
+    # ── 2. files / all 互斥校验 ──
+    has_files = files is not None
+    has_all = all_flag is not None
+    if has_files and has_all:
+        return _make_envelope(
+            success=False, reason=ReasonCode.INVALID_FILES,
+            elapsed_ms=_elapsed(),
+            unstaged=False, files=[], staged_count=0,
+            umo=umo, worktree=worktree,
+        )
+    if not has_files and not has_all:
+        return _make_envelope(
+            success=False, reason=ReasonCode.INVALID_FILES,
+            elapsed_ms=_elapsed(),
+            unstaged=False, files=[], staged_count=0,
+            umo=umo, worktree=worktree,
+        )
+
+    if has_files:
+        if not isinstance(files, list) or len(files) == 0:
+            return _make_envelope(
+                success=False, reason=ReasonCode.INVALID_FILES,
+                elapsed_ms=_elapsed(),
+                unstaged=False, files=[], staged_count=0,
+                umo=umo, worktree=worktree,
+            )
+        if len(files) > MAX_FILES_PER_REQUEST:
+            return _make_envelope(
+                success=False, reason=ReasonCode.INVALID_FILES,
+                elapsed_ms=_elapsed(),
+                unstaged=False, files=[], staged_count=0,
+                umo=umo, worktree=worktree,
+            )
+        if not all(isinstance(f, str) for f in files):
+            return _make_envelope(
+                success=False, reason=ReasonCode.INVALID_FILES,
+                elapsed_ms=_elapsed(),
+                unstaged=False, files=[], staged_count=0,
+                umo=umo, worktree=worktree,
+            )
+    else:
+        if not isinstance(all_flag, bool):
+            return _make_envelope(
+                success=False, reason=ReasonCode.INVALID_FILES,
+                elapsed_ms=_elapsed(),
+                unstaged=False, files=[], staged_count=0,
+                umo=umo, worktree=worktree,
+            )
+
+    # ── 3. preflight ──
+    err, ctx = await _git_endpoint_preflight(
+        plugin, umo=umo, worktree_param=worktree,
+    )
+    if err is not None:
+        err["data"]["elapsed_ms"] = _elapsed()
+        err["data"].setdefault("unstaged", False)
+        err["data"].setdefault("files", [])
+        err["data"].setdefault("staged_count", 0)
+        return err
+    directory = ctx["directory"]
+    effective_umo = ctx["umo"]
+
+    # ── 4. file 4 步防御(仅在 has_files 路径) ──
+    if has_files:
+        for f in files:
+            _, path_err = _validate_repo_relative_file(f, Path(directory))
+            if path_err is not None:
+                return _make_envelope(
+                    success=False, reason=ReasonCode.PATH_UNSAFE,
+                    elapsed_ms=_elapsed(),
+                    unstaged=False, files=[], staged_count=0,
+                    directory=directory, umo=effective_umo,
+                    worktree=directory,
+                )
+
+    # ── 5. git reset HEAD ──
+    git_bin = plugin._git_binary()
+    if has_files:
+        args: list[str] = [
+            git_bin, "-C", directory, "-c", "color.ui=never",
+            "reset", "HEAD", "--quiet", "--",
+        ] + list(files)
+    else:
+        # all=true → reset 整个 index(从 staged 回到 unstaged)
+        args = [
+            git_bin, "-C", directory, "-c", "color.ui=never",
+            "reset", "HEAD", "--quiet",
+        ]
+
+    result = await _run_git_async(args, encoding="utf-8")
+    if not result["ok"]:
+        stderr = result.get("stderr", "") or result.get("error", "")
+        return _make_envelope(
+            success=False, reason=ReasonCode.GIT_ERROR,
+            elapsed_ms=_elapsed(),
+            unstaged=False, files=[], staged_count=0,
+            directory=directory, umo=effective_umo,
+            worktree=directory,
+            stderr=stderr[:UNSTAGE_TRUNCATE_BYTES],
+        )
+
+    # ── 6. 列出当前 staged 文件 ──
+    staged_files = await _get_staged_files(git_bin, directory)
+    return _JSONResponseCompat(
+        _make_envelope(
+            success=True, elapsed_ms=_elapsed(),
+            unstaged=True, files=staged_files,
+            staged_count=len(staged_files),
+            directory=directory, umo=effective_umo,
+            worktree=directory,
+        ),
+        status_code=200,
+    )

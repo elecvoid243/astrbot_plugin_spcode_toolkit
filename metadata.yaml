@@ -1,9 +1,9 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: 2.12.0
+version: v2.14.0
 description: |
-  spcode 开发工具箱 — 15 个工具，5 个命令组。
+  spcode 开发工具箱 — 16 个工具，5 个命令组。
   code_check / es_search / file_remove / file_compare / inta_shell_*(5个)
   todo_create / todo_query / todo_add / todo_update / todo_delete / todo_clear
     (6 个,通过 `todo_list` 组别名一键启用)。
@@ -42,4 +42,12 @@ description: |
     迁移:todo_modify 已删除;老 config 中显式列出的 todo_modify 会被 filter_enabled_tools()
     报告为 unknown 提示升级。TodoStore.modify() 后端保留(供 tests 验证),3 个新工具直接调
     s.add() / s.update() / s.delete()。
+  v2.13 新增 GET /spcode/git-status 端点 — 供 Dashboard "工作区" 标签页使用。
+    仿照 /spcode/git-log 与 /spcode/git-diff 的实现模式:5 步 preflight
+    (feature flag / umo / worktree / 目录存在 / git repo 探测) + 1.5s TTL
+    in-memory ETag 缓存。返回当前 branch、upstream (ahead/behind)、所有改动
+    文件 (X/Y 列 + scope 分类:staged / unstaged / intent_to_add / untracked /
+    conflict) 与 summary 计数;空仓库、detached HEAD、无 upstream 等边界均
+    安全降级为 null / 0。前端契约见 docs/webapi-git-workflow-api.md §5.1
+    (含 scope 分类规则表 + 边界场景表 + 与 git-diff 的关系)。
 repo: https://github.com/elecvoid243/astrbot_plugin_spcode_toolkit

@@ -5,13 +5,14 @@
     "default": [],
     "options": [
       "code_check",
+      "code_format",
       "es_search",
       "file_remove",
       "file_compare",
       "todo_list",
       "inta_shell"
     ],
-    "hint": "默认全部禁用。todo_list 勾选后自动启用四个相关工具。inta_shell 勾选后自动启用全部 5 个 shell 工具。codegraph 和 agentsmd 由下方独立开关控制。"
+    "hint": "默认全部禁用。todo_list 勾选后自动启用四个相关工具。inta_shell 勾选后自动启用全部 5 个 shell 工具。codegraph 和 agentsmd 由下方独立开关控制。code_format 是写入工具(会修改文件),plan 模式下默认被过滤。"
   },
   "allowed_ids": {
     "description": "额外允许使用本插件的用户 ID",
@@ -49,6 +50,29 @@
         "type": "string",
         "options": ["error", "warning", "never"],
         "default": "error"
+      }
+    }
+  },
+  "code_format": {
+    "description": "code_format — 源代码自动格式化(写入工具)",
+    "hint": "Python 用 ruff format, C/C++/Java/JS/TS/C# 用 AStyle via stdin/stdout。默认不勾选,需在 enabled_tools 显式启用。",
+    "type": "object",
+    "items": {
+      "default_style": {
+        "description": "astyle 默认风格 (仅 C/C++/Java/JS/TS/C# 生效)",
+        "hint": "allman=Linux kernel / google=Google C++ / kr=K&R / stroustrup=Stroustrup / linux=Linux kernel close-brace",
+        "type": "string",
+        "options": ["allman", "google", "kr", "linux", "stroustrup",
+                    "whitesmith", "horstmann", "ratliff", "vtk", "java", "none"],
+        "default": "allman"
+      },
+      "default_indent": {
+        "description": "astyle 默认缩进空格数 (1-16)",
+        "hint": "仅 astyle 生效;ruff 用自身默认配置。",
+        "type": "int",
+        "default": 4,
+        "min": 1,
+        "max": 16
       }
     }
   },
@@ -144,6 +168,7 @@
         },
         "default": [
           "astrbot_file_remove",
+          "code_format",
           "todo_create",
           "todo_add",
           "todo_update",

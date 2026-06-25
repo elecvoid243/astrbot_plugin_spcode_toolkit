@@ -1,15 +1,21 @@
 # tools/webapi/__init__.py
 """Web API endpoint handlers, extracted from main.py.
 
-This package owns the 6 ``/spcode/*`` HTTP endpoints consumed by the
+This package owns the 11 ``/spcode/*`` HTTP endpoints consumed by the
 Dashboard / WebUI:
 
   * ``/spcode/project-status``  (GET)
   * ``/spcode/plan-mode``       (GET)
   * ``/spcode/git-worktrees``   (GET)
   * ``/spcode/git-diff``        (GET)
+  * ``/spcode/git-status``      (GET)   # v2.13+
+  * ``/spcode/git-log``         (GET)   # v3.7
   * ``/spcode/file-browser``    (GET)
   * ``/spcode/file-restore``    (POST)
+  * ``/spcode/git-stage``       (POST)  # v3.7
+  * ``/spcode/git-unstage``     (POST)  # v3.7
+  * ``/spcode/git-commit``      (POST)  # v3.7
+  * ``/spcode/git-show``        (GET)   # v3.8 (2026-06-25)
 
 Each endpoint lives in its own module (e.g. ``project_status.handle``).
 ``register_webapi_routes`` is the single entry-point main.py calls
@@ -19,11 +25,13 @@ handler to the ``view_handler`` interface via :func:`_wrap`.
 See docs/superpowers/specs/2026-06-23-webapi-extraction-design.md
 for the full architecture.
 """
+
 from __future__ import annotations
 
 import inspect
 import logging
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
@@ -31,7 +39,13 @@ if TYPE_CHECKING:
 from . import (
     file_browser,
     file_restore,
+    git_commit,
     git_diff,
+    git_log,
+    git_show,
+    git_stage,
+    git_status,
+    git_unstage,
     git_worktrees,
     plan_mode,
     project_status,
@@ -66,6 +80,42 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "获取已加载项目的未暂存 git diff",
     ),
     (
+        "/spcode/git-status",  # v2.13 (2026-06-24)
+        ["GET"],
+        git_status.handle,
+        "获取已加载项目的 git 工作区状态(branch/upstream/staged/unstaged/untracked)",
+    ),
+    (
+        "/spcode/git-log",
+        ["GET"],
+        git_log.handle,
+        "获取已加载项目的 git 历史(8 字段标准粒度)",
+    ),
+    (
+        "/spcode/git-show",  # v3.8 (2026-06-25)
+        ["GET"],
+        git_show.handle,
+        "查看给定 ref 修改的文件列表 (name-status + numstat)",
+    ),
+    (
+        "/spcode/git-stage",
+        ["POST"],
+        git_stage.handle,
+        "git add(指定文件 or all,互斥)",
+    ),
+    (
+        "/spcode/git-unstage",
+        ["POST"],
+        git_unstage.handle,
+        "git reset HEAD(指定文件 or all,互斥)",
+    ),
+    (
+        "/spcode/git-commit",
+        ["POST"],
+        git_commit.handle,
+        "git commit(严格最小,仅 message)",
+    ),
+    (
         "/spcode/file-browser",
         ["GET"],
         file_browser.handle,
@@ -85,20 +135,25 @@ HANDLERS: dict[str, Callable] = {
     "handle_get_plan_mode": plan_mode.handle,
     "handle_get_git_worktrees": git_worktrees.handle,
     "handle_get_git_diff": git_diff.handle,
+    "handle_get_git_status": git_status.handle,  # v2.13 (2026-06-24)
+    "handle_get_git_log": git_log.handle,
+    "handle_get_git_show": git_show.handle,  # v3.8 (2026-06-25)
     "handle_get_file_browser": file_browser.handle,
     "handle_post_file_restore": file_restore.handle,
+    "handle_post_git_stage": git_stage.handle,
+    "handle_post_git_unstage": git_unstage.handle,
+    "handle_post_git_commit": git_commit.handle,
 }
 
 
-def _wrap(handler: Callable, plugin: "SPCodeToolkit") -> Callable:
+def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
     """Adapt a handler to the ``view_handler`` interface.
 
-    Inspects ``handler``'s signature and pulls matching request fields
-    out of the Starlette/Quart ``request`` object so individual
-    endpoint modules can stay self-contained and avoid the
-    `web.request.query.get(...)` boilerplate.
-
-    Supported injected kwargs (handler must declare the same name):
+    Reads request fields from ``astrbot.api.web.request`` — the
+    Quart-style proxy bound by AstrBot's ``bind_request_context`` for
+    the lifetime of the request.  Individual endpoint modules can
+    declare keyword-only parameters and the adapter forwards matching
+    values from the request:
 
     * ``umo``             — GET  ``query.umo``  /  POST ``body.umo``
     * ``worktree``        — GET  ``query.worktree``  /  POST ``body.worktree``
@@ -107,67 +162,69 @@ def _wrap(handler: Callable, plugin: "SPCodeToolkit") -> Callable:
     * ``if_none_match``   — GET  ``headers.If-None-Match``
     * ``body``            — POST parsed JSON body (as dict)
 
-    The returned callable accepts whatever positional/keyword args
-    ``register_web_api`` passes (typically a single ``request``
-    positional).  The original ``plugin`` is closed over so the
-    adapter can stay a regular ``async def``.
+    The wrapped callable accepts arbitrary positional/keyword args but
+    ignores them — the framework invokes it as
+    ``view_func(**path_values)`` (no positional request).  The
+    plugin is closed over so the adapter stays a regular ``async def``.
+
+    Note:
+        v3.7.1 — Previously the adapter tried to pull a FastAPI
+        ``Request`` from ``args[0]`` / ``kwargs["request"]``.  The
+        framework never passes one (it binds the request via
+        ``bind_request_context``), so ``request`` was always ``None``
+        and every POST handler received ``body=None`` → ``invalid_body``.
+        Switched to ``web.request`` so the adapter works regardless of
+        how the caller invokes the wrapper.
     """
     sig = inspect.signature(handler)
     accepts = set(sig.parameters) - {"plugin"}
 
-    async def view(*args: Any, **kwargs: Any) -> Any:
-        request = kwargs.get("request")
-        if request is None and args:
-            request = args[0]
+    async def view(*_args: Any, **_kwargs: Any) -> Any:
+        # Late import: ``astrbot.api.web`` requires the plugin runtime
+        # to be initialised.  Importing at module scope would break
+        # unit tests that mock ``web.request`` before ``register_webapi_routes``
+        # is called.
+        from astrbot.api import web
+
+        is_post = web.request.method == "POST"
         call_kwargs: dict[str, Any] = {}
 
-        if "umo" in accepts and request is not None:
-            if getattr(request, "method", "GET") == "POST":
-                try:
-                    _body = await request.json() or {}
-                except Exception:
-                    _body = {}
-                call_kwargs["umo"] = _body.get("umo")
+        # Parse the JSON body once for POST requests — used by umo,
+        # worktree and body injection below.
+        body: dict = {}
+        if is_post and (accepts & {"umo", "worktree", "body"}):
+            body = (await web.request.json(default={})) or {}
+
+        if "umo" in accepts:
+            if is_post:
+                call_kwargs["umo"] = body.get("umo")
             else:
-                call_kwargs["umo"] = request.query.get("umo") or None
+                call_kwargs["umo"] = web.request.query.get("umo") or None
 
-        if "worktree" in accepts and request is not None:
-            if getattr(request, "method", "GET") == "POST":
-                _body = call_kwargs.get("body")
-                if _body is None:
-                    try:
-                        _body = await request.json() or {}
-                    except Exception:
-                        _body = {}
-                    call_kwargs["body"] = _body
-                call_kwargs["worktree"] = _body.get("worktree")
+        if "worktree" in accepts:
+            if is_post:
+                call_kwargs["worktree"] = body.get("worktree")
             else:
-                call_kwargs["worktree"] = request.query.get("worktree")
+                call_kwargs["worktree"] = web.request.query.get("worktree")
 
-        if "scope" in accepts and request is not None:
-            call_kwargs["scope"] = request.query.get("scope") or "unstaged"
+        if "scope" in accepts:
+            call_kwargs["scope"] = web.request.query.get("scope") or "unstaged"
 
-        if "path" in accepts and request is not None:
-            call_kwargs["path"] = request.query.get("path", "").strip()
+        if "path" in accepts:
+            call_kwargs["path"] = web.request.query.get("path", "").strip()
 
-        if "if_none_match" in accepts and request is not None:
-            call_kwargs["if_none_match"] = request.headers.get("if-none-match")
+        if "if_none_match" in accepts:
+            call_kwargs["if_none_match"] = web.request.headers.get("if-none-match")
 
-        if "body" in accepts and request is not None and "body" not in call_kwargs:
-            if getattr(request, "method", "GET") == "POST":
-                try:
-                    call_kwargs["body"] = await request.json() or {}
-                except Exception:
-                    call_kwargs["body"] = {}
-            else:
-                call_kwargs["body"] = {}
+        if "body" in accepts:
+            call_kwargs["body"] = body
 
         return await handler(plugin, **call_kwargs)
 
     return view
 
 
-def register_webapi_routes(plugin: "SPCodeToolkit") -> None:
+def register_webapi_routes(plugin: SPCodeToolkit) -> None:
     """Register all 6 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
@@ -194,6 +251,12 @@ __all__ = [
     "file_browser",
     "file_restore",
     "git_diff",
+    "git_log",
+    "git_show",
+    "git_stage",
+    "git_status",
+    "git_unstage",
+    "git_commit",
     "git_worktrees",
     "plan_mode",
     "project_status",

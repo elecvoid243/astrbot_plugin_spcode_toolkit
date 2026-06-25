@@ -136,11 +136,17 @@ astrbot_plugin_spcode_toolkit/
     │   └── tools.py              # 5 个工具入口(start/send/read/stop/list)
     └── webapi/                   # v3.6+ Dashboard HTTP 端点(自 main.py 拆出)
         ├── __init__.py           #   ROUTES 路由表 + _wrap() 适配层 + register_webapi_routes()
-        ├── _helpers.py           #   [内部] _run_git_async / _JSONResponseCompat 跨端点共享
+        ├── _helpers.py           #   [内部] _run_git_async / _JSONResponseCompat /
+        │                         #            ReasonCode / _git_endpoint_preflight /
+        │                         #            _validate_repo_relative_file / _make_envelope
         ├── project_status.py     #   GET  /spcode/project-status
         ├── plan_mode.py          #   GET  /spcode/plan-mode
         ├── git_worktrees.py      #   GET  /spcode/git-worktrees
         ├── git_diff.py           #   GET  /spcode/git-diff
+        ├── git_log.py            #   GET  /spcode/git-log              (v3.7+)
+        ├── git_stage.py          #   POST /spcode/git-stage            (v3.7+)
+        ├── git_unstage.py        #   POST /spcode/git-unstage          (v3.7+)
+        ├── git_commit.py         #   POST /spcode/git-commit           (v3.7+)
         ├── file_browser.py       #   GET  /spcode/file-browser
         └── file_restore.py       #   POST /spcode/file-restore
 ```
@@ -160,22 +166,31 @@ astrbot_plugin_spcode_toolkit/
    - **无下划线前缀** 模块(`xxx.py`):直接注册为 AstrBot 工具
    - **复合工具子目录**(如 `inta_shell/`):内部按职责再拆分为多个文件
 
-3. **Web API 层** `tools/webapi/`(v3.6+ 自 main.py 拆出)
+3. **Web API 层** `tools/webapi/`(v3.6+ 自 main.py 拆出,v3.7+ 增至 10 端点)
    - 每个端点一个文件,handler 命名固定为 `async def handle(plugin, ...) -> dict`
    - `__init__.py` 拥有 `ROUTES` 路由表 + `_wrap()` 适配器 + `register_webapi_routes()`
-   - `main.py.initialize()` 调用一次 `register_webapi_routes(self)` 注册全部 6 个端点
+   - `main.py.initialize()` 调用一次 `register_webapi_routes(self)` 注册全部 10 个端点
    - `_wrap()` 通过 `inspect.signature(handler)` 自动注入 `umo` / `worktree` /
      `scope` / `path` / `if_none_match` / `body` 形参(handler 必须显式声明才注入)
+   - **共享基础设施**(`tools/webapi/_helpers.py`):
+     - `ReasonCode` — 集中所有 reason 码字面量(读/写端点统一引用)
+     - `_make_envelope(**fields)` — 统一 envelope 工厂(success/reason/data/elapsed_ms)
+     - `_git_endpoint_preflight(plugin, *, umo, worktree_param)` — 5 步前置校验
+       (feature flag / project loaded / worktree 安全 / directory 存在 / git repo)
+     - `_validate_repo_relative_file(path, repo_root)` — 4 步路径防御
+     - `_run_git_async(..., input_text=None, env=None)` — 异步子进程(支持 stdin / env 覆盖)
+     - `_JSONResponseCompat` — 同时是 Response + dict-like,兼容 framework + 测试
    - **新增 webapi 端点**流程:`tools/webapi/<name>.py` 写 `handle()` →
-     在 `ROUTES` 添加 `(route, methods, handler, desc)` → `tests/test_webapi_end_to_end.py`
-     添加 smoke → `tests/test_<name>.py` 单元测试
+     在 `ROUTES` 添加 `(route, methods, handler, desc)` → 在 `HANDLERS` 添加别名 →
+     `tests/test_webapi_end_to_end.py` 更新 routes/handlers 计数断言 →
+     `tests/test_<name>.py` 单元测试
 
 4. **测试层** `tests/`
    - 与 `tools/` 模块一一对应,命名 `test_<模块名>.py`
    - `conftest.py` 提供共享 fixtures(workspace、临时目录等)
    - `tests/fixtures/` 存放静态样本
-   - `tests/test_webapi_end_to_end.py` 跨端点烟囱测试(6 路由表 + `_wrap` 注入 +
-     `register_webapi_routes` 注册流程)
+   - `tests/test_webapi_end_to_end.py` 跨端点烟囱测试(10 路由表 + `_wrap` 注入 +
+     `register_webapi_routes` 注册流程 + handler smoke)
 
 5. **数据层** `data/`
    - `t2i_templates/`:HTML 模板资源
@@ -277,8 +292,32 @@ astrbot_plugin_spcode_toolkit/
 | 端点 | 方法 | 用途 | 关键参数 |
 |------|------|------|---------|
 | `/spcode/project-status` | GET | 当前加载项目状态 | `umo?` |
+| `/spcode/plan-mode` | GET | 当前 plan-mode 状态 | `umo?` |
 | `/spcode/git-diff` | GET | 工作区 diff | `umo`, `worktree?` |
 | `/spcode/git-worktrees` | GET | 列出 worktree | `umo` |
+| `/spcode/git-log` | GET | git 历史(8 字段标准粒度) | `umo`, `n?`, `ref?`, `path?`, `author?`, `since?`, `until?` |
+| `/spcode/git-stage` | POST | git add(指定文件 or all,互斥) | body: `{files:[…]}` \| `{all:true}` |
+| `/spcode/git-unstage` | POST | git reset HEAD(指定文件 or all,互斥) | body: `{files:[…]}` \| `{all:true}` |
+| `/spcode/git-commit` | POST | git commit(严格最小,仅 message) | body: `{message:"…"}` |
+| `/spcode/file-browser` | GET | 读取文件内容 / 列出单层目录 | `umo`, `path`, `worktree?`, `if_none_match?` |
+| `/spcode/file-restore` | POST | 从快照恢复文件 | body: `{path:"…"}` |
+
+**v3.7 (2026-06-24) 新增 4 个端点**:`git-log`(读)、`git-stage`/`git-unstage`/
+`git-commit`(写,合称 git workflow)。所有写端点共享 5 步前置校验 +
+`_validate_repo_relative_file` 4 步路径防御 + `ReasonCode` 错误分类。
+
+**ReasonCode 集中表**(`tools/webapi/_helpers.py`):
+
+| 类别 | 码 | 含义 |
+|------|------|------|
+| 通用前置 | `feature_disabled` / `no_project_loaded` / `worktree_invalid` | 5 步 preflight 中止 |
+| 通用前置 | `directory_missing` / `not_a_git_repo` / `git_unavailable` / `git_error` | 仓库上下文无效 |
+| body 校验 | `invalid_body` / `invalid_files` / `invalid_all` | POST 输入结构错 |
+| body 校验 | `invalid_message` / `empty_message` / `message_too_long` | message 校验失败 |
+| 路径安全 | `path_unsafe` | 路径含 `..` / `.git/` / 绝对路径 / symlink |
+| 业务结果 | `nothing_to_commit` / `nothing_staged` | 无 staged 改动 |
+| 业务结果 | `hook_rejected` / `pre_commit_hook_failed` | pre-commit / commit-msg 失败 |
+| 业务结果 | `identity_not_set` | user.email/name 未设 |
 
 **`?worktree=` 参数(2026-06-18 引入)**:
 - 完全可选,缺省 = primary worktree,行为与 v1 完全一致
@@ -295,8 +334,25 @@ astrbot_plugin_spcode_toolkit/
 - `tests/test_git_diff_worktree.py` — 10 个 `?worktree=` 攻击向量
 - `tests/test_git_worktrees.py` — `git-worktrees` endpoint
 - `tests/test_helpers_git.py` — `_resolve_git_common_dir` / `_parse_git_worktree_porcelain`
+- `tests/test_git_log.py` — `git-log` endpoint 单元测试(23 cases)
+- `tests/test_git_stage.py` — `git-stage` endpoint 单元测试(15 cases)
+- `tests/test_git_unstage.py` — `git-unstage` endpoint 单元测试(15 cases)
+- `tests/test_git_commit.py` — `git-commit` endpoint 单元测试(15 cases)
+- `tests/test_webapi_end_to_end.py` — 10 路由表 + `_wrap` + `register_webapi_routes` smoke
 
-设计依据见 `docs/superpowers/specs/2026-06-18-git-worktree-switcher-design.md`。
+**v3.7+ 写端点 (git-stage / git-unstage / git-commit) 共享约束**:
+- 单次请求文件数 ≤ 100
+- 文件路径必须经过 4 步防御(`_validate_repo_relative_file`):含 `..` / 绝对路径 /
+  `.git/` 段 / symlink 越界 → `path_unsafe` 直接拒绝
+- `worktree` 参数沿用 6 步防御链,git-common-dir 不匹配 → `worktree_invalid`
+- commit message 上限 8192 字符;空 / 超长 / 非 str → `invalid_message`
+- commit 失败按 stderr 关键字符串映射为 4 类:`hook_rejected` / `identity_not_set` /
+  `nothing_to_commit` / `git_error`
+
+设计依据见:
+- `docs/superpowers/specs/2026-06-18-git-worktree-switcher-design.md` — worktree 防御链
+- `docs/superpowers/specs/2026-06-23-git-stage-untage-commit-log-design.md` — git workflow 4 端点
+- `docs/superpowers/plans/2026-06-23-git-stage-untage-commit-log-impl.md` — 6 PR 实施记录
 
 ## pytest 速查
 

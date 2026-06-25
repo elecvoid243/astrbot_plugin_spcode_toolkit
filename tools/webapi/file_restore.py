@@ -7,14 +7,13 @@ v3.6: scope 自动检测(基于 git status X/Y 列)。
 from __future__ import annotations
 
 import logging
-import os
 import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .._helpers import _validate_worktree_param
 from ..project import state as _proj_state
-from ._helpers import _run_git_async
+from ._helpers import _run_git_async, _validate_repo_relative_file
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
@@ -89,47 +88,12 @@ def _validate_restore_file(
     file_path: str,
     worktree: Path,
 ) -> tuple[Path | None, str | None]:
-    """4-step defense for the ``file`` field of ``/spcode/file-restore``.
+    """Deprecated 薄壳委托 — PR-1 起统一走 _validate_repo_relative_file。
 
-    Returns ``(resolved_path, None)`` on success; ``(None, "path_unsafe")`` on
-    rejection. Spec §5.
-
-    The 4 steps:
-      1. Reject absolute paths (POSIX leading "/" or Windows drive letter)
-         and ".." segments; force POSIX-style forward slashes only.
-      2. Resolve relative to ``worktree`` and ensure target stays inside.
-      3. Reject paths containing a ``.git`` component.
-      4. Reject symlinks whose realpath escapes ``worktree`` (realpath defense).
+    保留以保持与既有 from file_restore import _validate_restore_file 的
+    测试代码 / 外部 import 兼容性。新代码应直接 import 共享函数。
     """
-    if not file_path:
-        return None, "path_unsafe"
-
-    # Step 1: format
-    if file_path.startswith("/") or file_path.startswith("\\"):
-        return None, "path_unsafe"
-    if "\\" in file_path:  # 强制 POSIX 风格
-        return None, "path_unsafe"
-    if ".." in file_path.replace("\\", "/").split("/"):
-        return None, "path_unsafe"
-
-    # Step 2: resolve into worktree
-    worktree_resolved = worktree.resolve()
-    target = (worktree_resolved / file_path).resolve()
-    try:
-        target.relative_to(worktree_resolved)
-    except ValueError:
-        return None, "path_unsafe"
-
-    # Step 3: reject .git internals
-    if any(part == ".git" for part in target.parts):
-        return None, "path_unsafe"
-
-    # Step 4: symlink defense (realpath must equal target)
-    real = os.path.realpath(target)
-    if os.path.normcase(real) != os.path.normcase(str(target)):
-        return None, "path_unsafe"
-
-    return target, None
+    return _validate_repo_relative_file(file_path, worktree)
 
 
 async def handle(

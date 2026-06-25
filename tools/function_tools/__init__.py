@@ -14,8 +14,9 @@ from __future__ import annotations
 # 共享 helper(内部,导出供 tests 调试用)
 from ._common import record_and_run  # noqa: F401
 
-# 4 个独立工具
+# 5 个独立工具(v2.14 加 code_format)
 from .code_check import CodeCheckTool
+from .code_format import CodeFormatTool
 from .es_search import EsSearchTool
 from .file_diff import FileDiffTool
 from .file_remove import FileRemoveTool
@@ -41,9 +42,11 @@ from .inta_shell_start import IntaShellStartTool
 from .inta_shell_stop import IntaShellStopTool
 
 # 集中注册表: main.py 直接迭代此列表传给 context.add_llm_tools(...)
-# 顺序与原 _PLUGINS_TOOLS 一致(独立工具 4 → todo 6 → inta_shell 5)
+# 顺序与原 _PLUGINS_TOOLS 一致(独立工具 5 → todo 6 → inta_shell 5)
+# v2.14 (2026-06-25): 加 CodeFormatTool 到独立工具首位(与 code_check 配对)。
 ALL_TOOL_CLASSES = [
     CodeCheckTool,
+    CodeFormatTool,
     EsSearchTool,
     FileRemoveTool,
     FileDiffTool,
@@ -63,6 +66,7 @@ ALL_TOOL_CLASSES = [
 __all__ = [
     "ALL_TOOL_CLASSES",
     "CodeCheckTool",
+    "CodeFormatTool",
     "EsSearchTool",
     "FileRemoveTool",
     "FileDiffTool",

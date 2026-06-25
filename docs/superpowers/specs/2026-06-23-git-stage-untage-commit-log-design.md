@@ -14,7 +14,7 @@
 
 | 端点 | 方法 | 对应 git 命令 | 性质 |
 |------|------|--------------|------|
-| `/spcode/git-stage` | POST | `git add [--] <files>` / `git add -A` | 写 |
+| `/spcode/git-stage` | POST | `git add -f [--] <files>` / `git add -A` | 写 |
 | `/spcode/git-unstage` | POST | `git reset HEAD [--] <files>` / `git reset HEAD` | 写 |
 | `/spcode/git-commit` | POST | `git commit -m <message>` | 写(严格最小) |
 | `/spcode/git-log` | GET | `git log --pretty=... --shortstat` | 读(标准粒度) |
@@ -50,6 +50,7 @@
 | **Q5: 范围扩展** | 新增 `git-unstage` 端点 | 与 stage 对称;`git reset HEAD` 实现 |
 | **Q6: 端点架构** | **A** — 4 个独立端点 | URL 清晰,handler 复杂度低,与既有模式一致 |
 | **Q7: 严格最小 commit 的具体范围** | 不接受 `amend` / `allow_empty` / `no_verify` / `signoff` / `gpgsign` / `author` / `date` 字段;出现即 `invalid_body` | 防止 API 表面增长失控;未来加版本再加 |
+| **Q8: gitignore 文件的处理(2026-06-24 增补)** | `files` 模式 → `git add -f -- <files>`;`all` 模式 → `git add -A`(不加 `-f`) | 用户在 Dashboard 逐行点击 = 显式意图,`all=true` 批量操作必须保守,避免把未被注意的 ignored 文件(如 `.env`)一并暂存。典型场景:`dashboard/src/assets/mdi-subset/*` 既被 `dashboard/.gitignore` 忽略又已 commit,工作区改版后 `git add` 默认拒绝更新 index,导致前端 red error snackbar;`-f` 让 userspace 工作流与 git semantics 对齐 |
 
 ---
 

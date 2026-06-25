@@ -57,10 +57,11 @@ def check_no_tool_class_in_main() -> bool:
 
 
 def check_all_tool_classes_count() -> bool:
-    """INV-3: ALL_TOOL_CLASSES == 15
+    """INV-3: ALL_TOOL_CLASSES == 16
 
     v2.12 (PR-split-modify): 原 13 个工具 = 独立 4 + todo 4 + inta_shell 5。
     拆分后 = 独立 4 + todo 6 + inta_shell 5 = 15。
+    v2.14 (PR-code-format): 加 code_format 写入工具 → 独立 5 + todo 6 + inta_shell 5 = 16。
     """
     try:
         from tools.function_tools import ALL_TOOL_CLASSES
@@ -69,9 +70,9 @@ def check_all_tool_classes_count() -> bool:
     except Exception as e:
         print(f"✗ INV-3: failed to import ALL_TOOL_CLASSES: {e}")
         return False
-    ok = n == 15
+    ok = n == 16
     status = "✓" if ok else "✗"
-    print(f"{status} INV-3: ALL_TOOL_CLASSES has {n} entries (target 15)")
+    print(f"{status} INV-3: ALL_TOOL_CLASSES has {n} entries (target 16)")
     return ok
 
 

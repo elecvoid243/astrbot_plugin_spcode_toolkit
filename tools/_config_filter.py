@@ -13,6 +13,7 @@ from __future__ import annotations
 # 勾选后系统一次性注入该组全部子工具,避免漏勾导致功能残缺。
 ALL_TOOL_NAMES: list[str] = [
     "code_check",
+    "code_format",  # v2.14 (2026-06-25): 新增;与 code_check 配对
     # "code_index",
     # "code_explore",
     "es_search",

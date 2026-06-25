@@ -378,6 +378,58 @@ AGENTS.md 是 OpenCode 提出的项目级 LLM 指令文件，功能类似 Cursor
 
 在配置中填写 `init_template` 可自定义生成 AGENTS.md 时使用的 prompt 模板。留空则使用内置默认模板。
 
+## Web API (Dashboard 端点)
+
+`v3.6+` 起插件向 AstrBot 注册 Dashboard 消费的 HTTP 端点(挂载前缀 `/spcode`),
+供前端 Dashboard 实时拉取项目状态、文件树、git 信息。
+
+`v3.7+ (2026-06-24)` 新增 4 个 git workflow 端点:
+- `git-log` (GET) — git 历史查询
+- `git-stage` (POST) — git add
+- `git-unstage` (POST) — git reset HEAD
+- `git-commit` (POST) — git commit(严格最小)
+
+合计 **10 端点**(6 GET + 4 POST),完整列表:
+
+| 端点 | 方法 | 用途 | 关键参数 |
+|------|------|------|---------|
+| `/spcode/project-status` | GET | 当前加载项目状态 | `umo?` |
+| `/spcode/plan-mode` | GET | 当前 plan-mode 状态 | `umo?` |
+| `/spcode/git-diff` | GET | 工作区 diff | `umo`, `worktree?` |
+| `/spcode/git-worktrees` | GET | 列出 worktree | `umo` |
+| `/spcode/git-log` | GET | git 历史(8 字段) | `umo`, `n?`, `ref?`, `path?`, `author?`, `since?`, `until?` |
+| `/spcode/git-stage` | POST | git add(files 或 all,互斥) | body: `{files:[…]}` \| `{all:true}` |
+| `/spcode/git-unstage` | POST | git reset HEAD(files 或 all,互斥) | body: `{files:[…]}` \| `{all:true}` |
+| `/spcode/git-commit` | POST | git commit(仅 message) | body: `{message:"…"}` |
+| `/spcode/file-browser` | GET | 读文件内容 / 列单层目录 | `umo`, `path`, `worktree?`, `if_none_match?` |
+| `/spcode/file-restore` | POST | 从快照恢复文件 | body: `{path:"…"}` |
+
+**所有写端点 (git-stage / git-unstage / git-commit / file-restore) 共享约束**:
+- 单次请求文件数 ≤ 100
+- 文件路径必须经过 4 步防御:含 `..` / 绝对路径 / `.git/` 段 / symlink 越界 → `path_unsafe`
+- `worktree` 参数沿用 6 步防御链,git-common-dir 不匹配 → `worktree_invalid`
+- commit message 上限 8192 字符;空 / 超长 / 非 str → `invalid_message`
+- commit 失败按 stderr 关键字符串映射为 4 类:`hook_rejected` / `identity_not_set` /
+  `nothing_to_commit` / `git_error`
+
+**统一响应 envelope**:
+
+```json
+{
+  "success": true,
+  "reason": null,
+  "elapsed_ms": 42,
+  "data": { /* 端点专有字段 */ }
+}
+```
+
+失败时 `success=false` + `reason=<ReasonCode 字符串>`,见 `AGENTS.md` 的 ReasonCode 集中表。
+
+**实现位置**: `tools/webapi/`(每个端点一个文件)
+- `__init__.py` — `ROUTES` 表 + `_wrap()` 适配器 + `register_webapi_routes()`
+- `_helpers.py` — `ReasonCode` / `_make_envelope` / `_git_endpoint_preflight` /
+  `_validate_repo_relative_file` / `_run_git_async` / `_JSONResponseCompat`
+
 ## 架构
 
 ```

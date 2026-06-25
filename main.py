@@ -3,6 +3,7 @@ astrbot_plugin_spcode_toolkit — spcode 精简开发工具箱
 
 为 LLM Agent 提供 7 个核心开发工具：
   - code_check（Python / C·C++ 语法+风格合并检查）
+  - code_format（源代码自动格式化，写工具）
   - codegraph（语义索引 + 调用链追踪）
   - es_search（文件名极速搜索）
   - file_remove（沙箱化删除）
@@ -50,6 +51,7 @@ from .tools._guidance_text import (
 from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
     ALL_TOOL_CLASSES,
     CodeCheckTool,
+    CodeFormatTool,  # v2.14
     EsSearchTool,
     FileDiffTool,
     FileRemoveTool,
@@ -83,6 +85,10 @@ _DEFAULT_CONFIG = {
     "allowed_ids": "",  # 逗号分隔额外允许的用户 ID
     "enabled_tools": [],  # 启用的工具名列表；空 = 全部禁用（安全默认）
     "file_remove_blacklist": [],  # file_remove 用户自定义黑名单：绝对路径前缀列表
+    # v2.14.1: code_format 配置(从 code_format 分组拍平;LLM 不可见,
+    # 注入到 CodeFormatTool 实例属性 default_style / default_indent)
+    "default_style": "allman",  # astyle 默认风格
+    "default_indent": 4,  # astyle 默认缩进空格数
 }
 
 
@@ -148,6 +154,21 @@ class SPCodeToolkit(star.Star):
         for t in tools_to_register:
             if isinstance(t, FileRemoveTool):
                 t.custom_blacklist = list(_config.get("file_remove_blacklist") or [])
+            # v2.14.1: code_format 的 default_style/default_indent 注入(LLM 不可见,
+            # 走实例属性。_conf_schema.json 的 code_format 分组已定义默认值;
+            # _flatten_config 会把 code_format.{default_style, default_indent}
+            # 拍平为顶层的 default_style / default_indent,与其他 flat key 风格一致。
+            # 缺失时用 dataclass 默认("allman" / 4)。)
+            elif isinstance(t, CodeFormatTool):
+                t.default_style = str(
+                    _config.get("default_style") or "allman"
+                )
+                try:
+                    t.default_indent = int(
+                        _config.get("default_indent") or 4
+                    )
+                except (TypeError, ValueError):
+                    t.default_indent = 4
 
         # 注册过滤后的工具
         self._tool_names = {t.name for t in tools_to_register}
