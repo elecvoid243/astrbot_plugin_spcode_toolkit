@@ -12,6 +12,7 @@ PR-B (v2.14.0, 2026-06-26).
   6. path-exists-nonempty preventive check
   7. _run_git_async(git worktree add ...) + post-create git-common-dir verify
 """
+
 from __future__ import annotations
 
 import logging
@@ -98,7 +99,9 @@ def _map_add_stderr_to_reason(stderr: str) -> str:
     m = re.search(r"fatal:\s*'([^']*)'\s+already exists", stderr, re.IGNORECASE)
     if not m:
         # Verbose form: fatal: a branch named 'X' already exists
-        m = re.search(r"branch named\s+'([^']*)'\s+already exists", stderr, re.IGNORECASE)
+        m = re.search(
+            r"branch named\s+'([^']*)'\s+already exists", stderr, re.IGNORECASE
+        )
     if m:
         token = m.group(1)
         # Path-shaped tokens: contain / or \ or : or start with ~
@@ -205,7 +208,9 @@ async def handle(
     from ._helpers import _git_endpoint_preflight, _make_envelope, _run_git_async
 
     err, ctx = await _git_endpoint_preflight(
-        plugin, umo=umo, worktree_param=worktree,
+        plugin,
+        umo=umo,
+        worktree_param=worktree,
     )
     if err is not None:
         err["data"]["elapsed_ms"] = _elapsed()
@@ -297,7 +302,13 @@ async def handle(
     # contract for the builder function. The handler must prepend
     # "worktree" when constructing the full CLI.
     add_args = [git_bin, "-C", directory, "worktree"] + _build_git_worktree_add_args(
-        directory, new_path, branch, create, force, detach, base,
+        directory,
+        new_path,
+        branch,
+        create,
+        force,
+        detach,
+        base,
     )
     add_result = await _run_git_async(add_args, encoding="utf-8", timeout=30.0)
     if not add_result["ok"]:

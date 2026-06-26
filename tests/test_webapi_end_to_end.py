@@ -345,15 +345,18 @@ async def test_add_full_e2e_cycle(tmp_path):
     primary.mkdir()
     subprocess.run(
         ["git", "init", "-b", "main", str(primary)],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
         ["git", "-C", str(primary), "config", "user.email", "t@t.com"],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
         ["git", "-C", str(primary), "config", "user.name", "T"],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     (primary / "README.md").write_text("# Test repo\n")
     subprocess.run(
@@ -361,7 +364,8 @@ async def test_add_full_e2e_cycle(tmp_path):
     )
     subprocess.run(
         ["git", "-C", str(primary), "commit", "-m", "init"],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
 
     # 模拟 plugin state
@@ -373,7 +377,8 @@ async def test_add_full_e2e_cycle(tmp_path):
     }
     plugin._git_binary.return_value = "git"
     plugin.get_loaded_project.return_value = {
-        "directory": str(primary), "loaded_at": 0.0,
+        "directory": str(primary),
+        "loaded_at": 0.0,
     }
 
     target = str(tmp_path / "wt-feat")
@@ -381,7 +386,10 @@ async def test_add_full_e2e_cycle(tmp_path):
 
     # 1. ADD
     result = await add_handle(
-        plugin, umo="e2e:umo", worktree=None, body=body,
+        plugin,
+        umo="e2e:umo",
+        worktree=None,
+        body=body,
     )
     assert result["data"]["reason"] is None, result["data"]["stderr"]
     assert result["data"]["loaded"] is True
@@ -393,12 +401,14 @@ async def test_add_full_e2e_cycle(tmp_path):
     # 3. 验证 git 层
     branch_list = subprocess.run(
         ["git", "-C", str(primary), "branch", "--list", "feat"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     ).stdout
     assert "feat" in branch_list, f"branch not created: {branch_list!r}"
 
     # 4. GET worktrees 端到端(需要 populate tools.project.state)
     from tools.project import state as _proj_state
+
     _proj_state.reset()
     _proj_state.put("e2e:umo", {"directory": str(primary), "loaded_at": 100.0})
 
@@ -413,7 +423,8 @@ async def test_add_full_e2e_cycle(tmp_path):
 
 @pytest.mark.asyncio
 async def test_wrap_post_to_git_worktree_add_passes_body(
-    monkeypatch, tmp_path,
+    monkeypatch,
+    tmp_path,
 ) -> None:
     """E2E:POST /spcode/git-worktree-add → _wrap 把 body 透传给 handler。
 
@@ -437,7 +448,8 @@ async def test_wrap_post_to_git_worktree_add_passes_body(
 
     # Patch the handler
     monkeypatch.setattr(
-        "tools.webapi.git_worktree_add.handle", stub_handle,
+        "tools.webapi.git_worktree_add.handle",
+        stub_handle,
     )
 
     payload = {
@@ -462,6 +474,7 @@ async def test_wrap_post_to_git_worktree_add_passes_body(
     assert captured["umo"] == "abc:1"
     # Sanity: real handler should be async-callable with a real plugin mock
     import inspect
+
     sig = inspect.signature(real_handle)
     assert "plugin" in sig.parameters
     assert "body" in sig.parameters

@@ -3,18 +3,16 @@
 PR-B (v2.14.0, 2026-06-26): ADD endpoint with 7-layer defense chain.
 Spec: docs/superpowers/specs/2026-06-26-git-worktree-management-design.md §3.1
 """
+
 from __future__ import annotations
 
-import os
-import re
 import subprocess
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 
 # ── Task 2.1: _validate_add_cross_fields ─────────────────────────────
-
 
 
 def test_cross_validate_default_ok():
@@ -642,6 +640,7 @@ async def test_add_basic_create_new_branch(primary_repo, tmp_path):
     created = result["data"]["created"]
     # git returns paths with forward slashes on Windows; compare normalized
     import os as _os
+
     assert _os.path.normpath(created["path"]) == _os.path.normpath(target)
     assert created["branch"] == "feat"
     assert created["is_main"] is False
@@ -655,16 +654,12 @@ async def test_add_two_linked_worktrees(primary_repo, tmp_path):
     # 第一次 ADD
     target1 = str(tmp_path / "feat1")
     body1 = {"path": target1, "branch": "feat1", "create": True}
-    result1 = await plugin_module_handle(
-        plugin, umo=umo, worktree=None, body=body1
-    )
+    result1 = await plugin_module_handle(plugin, umo=umo, worktree=None, body=body1)
     assert result1["data"]["reason"] is None
     # 第二次 ADD
     target2 = str(tmp_path / "feat2")
     body2 = {"path": target2, "branch": "feat2", "create": True}
-    result2 = await plugin_module_handle(
-        plugin, umo=umo, worktree=None, body=body2
-    )
+    result2 = await plugin_module_handle(plugin, umo=umo, worktree=None, body=body2)
     assert result2["data"]["reason"] is None
     assert len(result2["data"]["worktrees"]) == 3
 
@@ -758,7 +753,9 @@ async def test_add_no_project_loaded():
     plugin._git_binary.return_value = "git"
     plugin.get_loaded_project.return_value = None
     result = await plugin_module_handle(
-        plugin, umo="nonexistent", worktree=None,
+        plugin,
+        umo="nonexistent",
+        worktree=None,
         body={"path": "/x", "branch": "y"},
     )
     assert result["data"]["reason"] == "no_project_loaded"
@@ -770,11 +767,11 @@ async def test_add_feature_disabled():
     plugin = MagicMock()
     plugin._config = {"agentsmd_enabled": False, "codegraph_enabled": True}
     plugin._git_binary.return_value = "git"
-    plugin.get_loaded_project.return_value = {
-        "directory": "/tmp", "loaded_at": 0.0
-    }
+    plugin.get_loaded_project.return_value = {"directory": "/tmp", "loaded_at": 0.0}
     result = await plugin_module_handle(
-        plugin, umo="test", worktree=None,
+        plugin,
+        umo="test",
+        worktree=None,
         body={"path": "/x", "branch": "y"},
     )
     assert result["data"]["reason"] == "feature_disabled"
