@@ -91,12 +91,14 @@ def test_git_show_handler_excluded_from_smoke() -> None:
     assert "handle_get_git_show" not in (set(HANDLERS.keys()) - _SKIP_FILE_BROWSER)
 
 
-def test_routes_table_has_fourteen_endpoints() -> None:
-    """The route table lists the 14 documented endpoints.
+def test_routes_table_has_sixteen_endpoints() -> None:
+    """The route table lists the 16 documented endpoints.
 
-    8 GET + 6 POST = 14。
+    8 GET + 8 POST = 16。
     v2.14.0 (2026-06-26) 新增 /spcode/git-worktree-add (PR-B)
-                + /spcode/git-worktree-remove (PR-C)。
+                + /spcode/git-worktree-remove (PR-C)
+                + /spcode/git-worktree-lock (PR-D)
+                + /spcode/git-worktree-unlock (PR-D)。
     """
     routes = {entry[0] for entry in ROUTES}
     assert routes == {
@@ -112,13 +114,15 @@ def test_routes_table_has_fourteen_endpoints() -> None:
         "/spcode/git-commit",  # PR-5 (2026-06-24)
         "/spcode/file-browser",
         "/spcode/file-restore",
-        "/spcode/git-worktree-add",  # v2.14.0 (2026-06-26)
-        "/spcode/git-worktree-remove",  # v2.14.0 (2026-06-26)
+        "/spcode/git-worktree-add",  # v2.14.0 (2026-06-26) PR-B
+        "/spcode/git-worktree-remove",  # v2.14.0 (2026-06-26) PR-C
+        "/spcode/git-worktree-lock",  # v2.14.0 (2026-06-26) PR-D
+        "/spcode/git-worktree-unlock",  # v2.14.0 (2026-06-26) PR-D
     }
-    # Methods sanity: 8 GET + 6 POST
+    # Methods sanity: 8 GET + 8 POST
     methods = [m for entry in ROUTES for m in entry[1]]
     assert methods.count("GET") == 8
-    assert methods.count("POST") == 6
+    assert methods.count("POST") == 8
 
 
 # === _wrap adapter ====================================================
@@ -280,12 +284,12 @@ async def test_wrap_get_query_via_web_request(monkeypatch) -> None:
 # === register_webapi_routes ===========================================
 
 
-def test_register_webapi_routes_calls_context_fourteen_times() -> None:
+def test_register_webapi_routes_calls_context_sixteen_times() -> None:
     """``register_webapi_routes`` must call ``register_web_api`` once per route."""
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    # 14 endpoints (v2.14.0: + /spcode/git-worktree-add + /spcode/git-worktree-remove)
-    assert plugin.context.register_web_api.call_count == 14
+    # 16 endpoints (v2.14.0: + ADD + REMOVE + LOCK + UNLOCK)
+    assert plugin.context.register_web_api.call_count == 16
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -302,9 +306,9 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 14 routes.
+    # Should not raise; should attempt all 16 routes.
     register_webapi_routes(plugin)
-    assert call_count == 14
+    assert call_count == 16
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────
@@ -333,6 +337,31 @@ def test_git_worktree_remove_route_registered() -> None:
 def test_handlers_dict_has_remove_entry() -> None:
     """HANDLERS 表应包含 handle_post_git_worktree_remove。"""
     assert "handle_post_git_worktree_remove" in HANDLERS
+
+
+# ─── PR-D (v2.14.0, 2026-06-26) ────────────────────────────────────
+
+
+def test_git_worktree_lock_route_registered() -> None:
+    """git_worktree_lock 应在 ROUTES 表中注册 (PR-D LOCK endpoint)。"""
+    routes = [r[0] for r in ROUTES]
+    assert "/spcode/git-worktree-lock" in routes
+
+
+def test_git_worktree_unlock_route_registered() -> None:
+    """git_worktree_unlock 应在 ROUTES 表中注册 (PR-D UNLOCK endpoint)。"""
+    routes = [r[0] for r in ROUTES]
+    assert "/spcode/git-worktree-unlock" in routes
+
+
+def test_handlers_dict_has_lock_entry() -> None:
+    """HANDLERS 表应包含 handle_post_git_worktree_lock。"""
+    assert "handle_post_git_worktree_lock" in HANDLERS
+
+
+def test_handlers_dict_has_unlock_entry() -> None:
+    """HANDLERS 表应包含 handle_post_git_worktree_unlock。"""
+    assert "handle_post_git_worktree_unlock" in HANDLERS
 
 
 # ── PR-B ADD endpoint _wrap integration (Task 2.3 — E2E 收尾) ──────

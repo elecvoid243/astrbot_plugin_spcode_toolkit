@@ -18,6 +18,8 @@ Dashboard / WebUI:
   * ``/spcode/git-show``        (GET)   # v3.8 (2026-06-25)
   * ``/spcode/git-worktree-add``   (POST)  # v2.14.0 (2026-06-26) — PR-B ADD endpoint
   * ``/spcode/git-worktree-remove`` (POST) # v2.14.0 (2026-06-26) — PR-C REMOVE endpoint
+  * ``/spcode/git-worktree-lock``   (POST) # v2.14.0 (2026-06-26) — PR-D LOCK endpoint
+  * ``/spcode/git-worktree-unlock`` (POST) # v2.14.0 (2026-06-26) — PR-D UNLOCK endpoint
 
 Each endpoint lives in its own module (e.g. ``project_status.handle``).
 ``register_webapi_routes`` is the single entry-point main.py calls
@@ -49,7 +51,9 @@ from . import (
     git_status,
     git_unstage,
     git_worktree_add,  # v2.14.0 (2026-06-26)
+    git_worktree_lock,  # v2.14.0 (2026-06-26)
     git_worktree_remove,  # v2.14.0 (2026-06-26)
+    git_worktree_unlock,  # v2.14.0 (2026-06-26)
     git_worktrees,
     plan_mode,
     project_status,
@@ -143,6 +147,18 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         git_worktree_remove.handle,
         "删除 git worktree (硬禁 main,locked 拒,force=true 跳过 dirty)",
     ),
+    (
+        "/spcode/git-worktree-lock",  # v2.14.0 (2026-06-26)
+        ["POST"],
+        git_worktree_lock.handle,
+        "锁定 git worktree(可选 --reason),main 允许但 git 自身拒绝",
+    ),
+    (
+        "/spcode/git-worktree-unlock",  # v2.14.0 (2026-06-26)
+        ["POST"],
+        git_worktree_unlock.handle,
+        "解锁 git worktree,main 允许但 git 自身拒绝",
+    ),
 ]
 
 # 旧方法名 -> 新模块级 handler (for back-compat / introspection)
@@ -160,7 +176,9 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_unstage": git_unstage.handle,
     "handle_post_git_commit": git_commit.handle,
     "handle_post_git_worktree_add": git_worktree_add.handle,  # v2.14.0 (2026-06-26)
+    "handle_post_git_worktree_lock": git_worktree_lock.handle,  # v2.14.0 (2026-06-26)
     "handle_post_git_worktree_remove": git_worktree_remove.handle,  # v2.14.0 (2026-06-26)
+    "handle_post_git_worktree_unlock": git_worktree_unlock.handle,  # v2.14.0 (2026-06-26)
 }
 
 
@@ -243,7 +261,7 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
 
 def register_webapi_routes(plugin: SPCodeToolkit) -> None:
-    """Register all 14 ``/spcode/*`` routes against ``plugin.context``.
+    """Register all 16 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
     but never raised — a single broken endpoint should not block
@@ -276,7 +294,9 @@ __all__ = [
     "git_unstage",
     "git_commit",
     "git_worktree_add",  # v2.14.0 (2026-06-26)
+    "git_worktree_lock",  # v2.14.0 (2026-06-26)
     "git_worktree_remove",  # v2.14.0 (2026-06-26)
+    "git_worktree_unlock",  # v2.14.0 (2026-06-26)
     "git_worktrees",
     "plan_mode",
     "project_status",
