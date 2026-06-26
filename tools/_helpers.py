@@ -201,21 +201,35 @@ def _resolve_git_common_dir(git_bin: str, worktree_path: str) -> str:
 def _parse_git_worktree_porcelain(text: str) -> list[dict]:
     """Parse `git worktree list --porcelain` output.
 
-    Returns a list of dicts with keys: path, branch, head_sha, is_main.
+    Returns a list of dicts with keys: path, branch, head_sha, is_main,
+    locked, locked_reason. (v2.14.0: locked / locked_reason added)
     The first worktree in the output is always the main worktree (is_main=True).
     Raises ValueError on unrecognized records.
+
+    Branch prefix stripping: `branch refs/heads/main` → `branch="main"`
+    (preserved from v2.x — do not regress).
     """
     worktrees: list[dict] = []
     current: dict | None = None
+    # v2.14.0+ multiline reason accumulator
+    multiline_buffer: list[str] | None = None
 
     for raw_line in text.splitlines():
         if not raw_line:
+            # Blank line ends current worktree block
+            if multiline_buffer is not None and current is not None:
+                current["locked_reason"] = "\n".join(multiline_buffer)
+                multiline_buffer = None
             if current is not None:
                 worktrees.append(current)
                 current = None
             continue
 
         if raw_line.startswith("worktree "):
+            # Flush prior block's multiline buffer first
+            if multiline_buffer is not None and current is not None:
+                current["locked_reason"] = "\n".join(multiline_buffer)
+                multiline_buffer = None
             if current is not None:
                 worktrees.append(current)
             current = {
@@ -223,23 +237,52 @@ def _parse_git_worktree_porcelain(text: str) -> list[dict]:
                 "branch": None,
                 "head_sha": "",
                 "is_main": False,
+                "locked": False,         # v2.14.0+
+                "locked_reason": None,    # v2.14.0+
             }
         elif current is None:
             raise ValueError(
                 f"Unexpected record outside worktree block: {raw_line!r}"
             )
         elif raw_line.startswith("HEAD "):
+            # Flush multiline buffer before new record
+            if multiline_buffer is not None:
+                current["locked_reason"] = "\n".join(multiline_buffer)
+                multiline_buffer = None
             current["head_sha"] = raw_line[len("HEAD "):]
         elif raw_line.startswith("branch "):
+            if multiline_buffer is not None:
+                current["locked_reason"] = "\n".join(multiline_buffer)
+                multiline_buffer = None
+            # v2.x preserved: strip refs/heads/ prefix
             ref = raw_line[len("branch "):]
             prefix = "refs/heads/"
             current["branch"] = ref[len(prefix):] if ref.startswith(prefix) else ref
-        elif raw_line == "detached":
+        elif raw_line == "locked":
+            if multiline_buffer is not None:
+                current["locked_reason"] = "\n".join(multiline_buffer)
+                multiline_buffer = None
+            # v2.14.0+ — no reason on same line, multiline may follow
+            current["locked"] = True
+            multiline_buffer = []  # start accumulating multiline reason
+        elif raw_line.startswith("locked "):
+            if multiline_buffer is not None:
+                current["locked_reason"] = "\n".join(multiline_buffer)
+                multiline_buffer = None
+            # v2.14.0+ — git 2.30+ supports reason on same line as `locked`
+            current["locked"] = True
+            current["locked_reason"] = raw_line[len("locked "):]
+        elif multiline_buffer is not None:
+            # We're inside a multiline reason continuation
+            multiline_buffer.append(raw_line)
+        elif raw_line.startswith("detached"):
             current["branch"] = None
         else:
             raise ValueError(f"Unknown porcelain record: {raw_line!r}")
 
     if current is not None:
+        if multiline_buffer is not None:
+            current["locked_reason"] = "\n".join(multiline_buffer) or None
         worktrees.append(current)
 
     for i, wt in enumerate(worktrees):

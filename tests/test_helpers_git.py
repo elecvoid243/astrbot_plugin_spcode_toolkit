@@ -91,12 +91,14 @@ def test_parse_single_main_worktree():
     text = "worktree /r/main\nHEAD abc1234\nbranch refs/heads/main\n"
     result = _parse_git_worktree_porcelain(text)
     assert len(result) == 1
-    assert result[0] == {
-        "path": "/r/main",
-        "branch": "main",
-        "head_sha": "abc1234",
-        "is_main": True,
-    }
+    # 字段子集断言(避免 locked / locked_reason 新字段破坏老测试)
+    assert result[0]["path"] == "/r/main"
+    assert result[0]["branch"] == "main"
+    assert result[0]["head_sha"] == "abc1234"
+    assert result[0]["is_main"] is True
+    # 新字段默认值(v2.14.0)
+    assert result[0]["locked"] is False
+    assert result[0]["locked_reason"] is None
 
 
 def test_parse_multiple_worktrees():
