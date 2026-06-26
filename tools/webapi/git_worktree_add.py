@@ -15,6 +15,7 @@ PR-B (v2.14.0, 2026-06-26).
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -50,6 +51,45 @@ def _validate_add_cross_fields(
     if not detach and not branch:
         return "branch is required when detach=false"
     return None
+
+
+def _map_add_stderr_to_reason(stderr: str) -> str:
+    """Map `git worktree add` stderr to ReasonCode.
+
+    Spec §5.2 ADD mapping table.
+
+    Disambiguation notes (CRITICAL):
+      - ``<branch> already exists``  → ``cannot_create_existing``
+      - ``<path>   already exists``  → ``path_exists_nonempty``
+      Both contain "already exists", but **first quoted token** decides:
+        - if quoted token is path-shaped (contains `:` or `/` on POSIX, `\\` on Windows, or starts with `~/`)
+          → ``path_exists_nonempty``
+        - else (alphanumeric/dash/underscore only) → ``cannot_create_existing``
+    """
+    s = stderr.lower()
+
+    # Most specific patterns first (longest/most-unique match wins)
+    if "is already checked out at" in s:
+        return "cannot_create_existing"
+    if "is not a valid branch name" in s:
+        return "invalid_branch"
+    if "is a missing branch name" in s:
+        return "cannot_checkout_missing"
+    if "cannot be used as a worktree name" in s:
+        return "invalid_param"
+    if "invalid start point" in s:
+        return "invalid_param"
+
+    # Disambiguate "already exists": first quoted token decides
+    m = re.search(r"fatal:\s*'([^']*)'\s+already exists", stderr, re.IGNORECASE)
+    if m:
+        token = m.group(1)
+        # Path-shaped tokens: contain / or \ or : or start with ~
+        if "/" in token or "\\" in token or ":" in token or token.startswith("~"):
+            return "path_exists_nonempty"
+        return "cannot_create_existing"
+
+    return "git_error"
 
 
 def _build_git_worktree_add_args(

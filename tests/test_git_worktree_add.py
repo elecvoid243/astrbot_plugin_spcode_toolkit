@@ -158,3 +158,68 @@ def test_build_args_detached_at_commit():
         "/repo", "/target", "abc1234", False, False, True, None
     )
     assert args == ["add", "--detach", "/target", "abc1234"]
+
+
+# ── Task 2.3: _map_add_stderr_to_reason ──────────────────────────────
+
+
+def test_stderr_branch_already_checked_out():
+    from tools.webapi.git_worktree_add import _map_add_stderr_to_reason
+
+    stderr = "fatal: 'feature' is already checked out at '/path'"
+    assert _map_add_stderr_to_reason(stderr) == "cannot_create_existing"
+
+
+def test_stderr_branch_already_exists():
+    from tools.webapi.git_worktree_add import _map_add_stderr_to_reason
+
+    stderr = "fatal: 'feature' already exists"
+    assert _map_add_stderr_to_reason(stderr) == "cannot_create_existing"
+
+
+def test_stderr_branch_not_valid_name():
+    from tools.webapi.git_worktree_add import _map_add_stderr_to_reason
+
+    stderr = "fatal: 'fea..ture' is not a valid branch name"
+    assert _map_add_stderr_to_reason(stderr) == "invalid_branch"
+
+
+def test_stderr_missing_branch_name():
+    from tools.webapi.git_worktree_add import _map_add_stderr_to_reason
+
+    stderr = "fatal: 'feature' is a missing branch name"
+    assert _map_add_stderr_to_reason(stderr) == "cannot_checkout_missing"
+
+
+def test_stderr_path_already_exists():
+    from tools.webapi.git_worktree_add import _map_add_stderr_to_reason
+
+    stderr = "fatal: '/target' already exists"
+    assert _map_add_stderr_to_reason(stderr) == "path_exists_nonempty"
+
+
+def test_stderr_invalid_worktree_name():
+    from tools.webapi.git_worktree_add import _map_add_stderr_to_reason
+
+    stderr = "fatal: '/foo:bar' cannot be used as a worktree name"
+    assert _map_add_stderr_to_reason(stderr) == "invalid_param"
+
+
+def test_stderr_invalid_start_point():
+    from tools.webapi.git_worktree_add import _map_add_stderr_to_reason
+
+    stderr = "fatal: invalid start point: badref"
+    assert _map_add_stderr_to_reason(stderr) == "invalid_param"
+
+
+def test_stderr_unknown_returns_git_error():
+    from tools.webapi.git_worktree_add import _map_add_stderr_to_reason
+
+    stderr = "fatal: unknown error XYZ"
+    assert _map_add_stderr_to_reason(stderr) == "git_error"
+
+
+def test_stderr_empty_returns_git_error():
+    from tools.webapi.git_worktree_add import _map_add_stderr_to_reason
+
+    assert _map_add_stderr_to_reason("") == "git_error"
