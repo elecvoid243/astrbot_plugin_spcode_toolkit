@@ -2227,6 +2227,61 @@ async def test_remove_missing_path_field():
     plugin.get_loaded_project.return_value = {"directory": "/tmp", "loaded_at": 0.0}
     result = await remove_handle(plugin, umo=umo, worktree=None, body={})
     assert result["data"]["reason"] == "path_unsafe"
+
+
+# ── Preflight tests ──
+
+@pytest.mark.asyncio
+async def test_remove_feature_disabled():
+    """配置中 agentsmd_enabled=False → feature_disabled。"""
+    plugin = MagicMock()
+    plugin._config = {"agentsmd_enabled": False, "codegraph_enabled": True}
+    plugin._git_binary.return_value = "git"
+    plugin.get_loaded_project.return_value = {"directory": "/tmp", "loaded_at": 0.0}
+    result = await remove_handle(plugin, umo="test:umo", worktree=None,
+                                 body={"path": "/x"})
+    assert result["data"]["reason"] == "feature_disabled"
+
+
+@pytest.mark.asyncio
+async def test_remove_no_project_loaded():
+    """未加载项目 → no_project_loaded。"""
+    plugin = MagicMock()
+    plugin._config = {"agentsmd_enabled": True, "codegraph_enabled": True}
+    plugin._git_binary.return_value = "git"
+    plugin.get_loaded_project.return_value = None
+    result = await remove_handle(plugin, umo="nonexistent", worktree=None,
+                                 body={"path": "/x"})
+    assert result["data"]["reason"] == "no_project_loaded"
+
+
+@pytest.mark.asyncio
+async def test_remove_not_a_git_repo():
+    """不是 git repo → not_a_git_repo。"""
+    # _git_endpoint_preflight 会调用 git rev-parse,返回非 0 → not_a_git_repo
+    import subprocess as _sp
+    plugin = MagicMock()
+    plugin._config = {"agentsmd_enabled": True, "codegraph_enabled": True}
+    plugin._git_binary.return_value = "git"
+    plugin.get_loaded_project.return_value = {"directory": "/tmp/not-a-repo", "loaded_at": 0.0}
+    with patch("tools.webapi._helpers._run_git_async") as mock_run:
+        mock_run.return_value = {"ok": False, "stderr": "fatal: not a git repository",
+                                 "stdout": "", "code": 128}
+        result = await remove_handle(plugin, umo="test:umo", worktree=None,
+                                     body={"path": "/x"})
+        assert result["data"]["reason"] == "not_a_git_repo"
+
+
+@pytest.mark.asyncio
+async def test_remove_directory_missing():
+    """主目录不存在 → directory_missing。"""
+    plugin = MagicMock()
+    plugin._config = {"agentsmd_enabled": True, "codegraph_enabled": True}
+    plugin._git_binary.return_value = "git"
+    plugin.get_loaded_project.return_value = {"directory": "", "loaded_at": 0.0}
+    result = await remove_handle(plugin, umo="test:umo", worktree=None,
+                                 body={"path": "/x"})
+    assert result["data"]["reason"] == "directory_missing"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -2402,7 +2457,7 @@ async def handle(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_git_worktree_remove.py -v`
-Expected: All PASS (16 cases including 8 stderr mapper + 8 handler)
+Expected: All PASS (16 cases: 4 stderr mapper + 8 handler + 4 preflight = 16)
 
 - [ ] **Step 5: Commit**
 
@@ -2476,7 +2531,19 @@ Expected: All PASS
 
 - [ ] **Step 4: Update route count assertion (13 → 14)**
 
-- [ ] **Step 5: Commit**
+In `tests/test_webapi_end_to_end.py`, replace the existing `test_routes_table_has_thirteen_endpoints` test with the 14-route version:
+
+```python
+def test_routes_table_has_fourteen_endpoints():
+    """The route table lists the 14 documented endpoints
+    (v2.14.0: + /spcode/git-worktree-add + /spcode/git-worktree-remove)."""
+    from tools.webapi import ROUTES
+    assert len(ROUTES) == 14
+    paths = [r[0] for r in ROUTES]
+    assert len(paths) == len(set(paths)), "duplicate routes in ROUTES"
+```
+
+Also update any test that hard-codes `call_count == 13` to `== 14`.
 
 ```bash
 git add tools/webapi/__init__.py tests/test_webapi_end_to_end.py
