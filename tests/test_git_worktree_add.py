@@ -102,9 +102,7 @@ def test_build_args_basic_checkout():
     """add <path> <branch> (create=False, detach=False) → ['add', path, branch]."""
     from tools.webapi.git_worktree_add import _build_git_worktree_add_args
 
-    args = _build_git_worktree_add_args(
-        "/repo", "/target", "feat", False, False, False, None
-    )
+    args = _build_git_worktree_add_args("/target", "feat", False, False, False, None)
     assert args == ["add", "/target", "feat"]
 
 
@@ -112,9 +110,7 @@ def test_build_args_create_new_branch():
     """create=True → ['add', '-b', branch, path]."""
     from tools.webapi.git_worktree_add import _build_git_worktree_add_args
 
-    args = _build_git_worktree_add_args(
-        "/repo", "/target", "new-feat", True, False, False, None
-    )
+    args = _build_git_worktree_add_args("/target", "new-feat", True, False, False, None)
     assert args == ["add", "-b", "new-feat", "/target"]
 
 
@@ -123,7 +119,7 @@ def test_build_args_create_with_base():
     from tools.webapi.git_worktree_add import _build_git_worktree_add_args
 
     args = _build_git_worktree_add_args(
-        "/repo", "/target", "new-feat", True, False, False, "main"
+        "/target", "new-feat", True, False, False, "main"
     )
     assert args == ["add", "-b", "new-feat", "/target", "main"]
 
@@ -132,9 +128,7 @@ def test_build_args_force_reset_existing():
     """force=True → ['add', '-B', branch, path]."""
     from tools.webapi.git_worktree_add import _build_git_worktree_add_args
 
-    args = _build_git_worktree_add_args(
-        "/repo", "/target", "existing", False, True, False, None
-    )
+    args = _build_git_worktree_add_args("/target", "existing", False, True, False, None)
     assert args == ["add", "-B", "existing", "/target"]
 
 
@@ -142,9 +136,7 @@ def test_build_args_detached_at_head():
     """detach=True, branch=None → ['add', '--detach', path]."""
     from tools.webapi.git_worktree_add import _build_git_worktree_add_args
 
-    args = _build_git_worktree_add_args(
-        "/repo", "/target", None, False, False, True, None
-    )
+    args = _build_git_worktree_add_args("/target", None, False, False, True, None)
     assert args == ["add", "--detach", "/target"]
 
 
@@ -152,9 +144,7 @@ def test_build_args_detached_at_commit():
     """detach=True, branch=<sha> → ['add', '--detach', path, sha]."""
     from tools.webapi.git_worktree_add import _build_git_worktree_add_args
 
-    args = _build_git_worktree_add_args(
-        "/repo", "/target", "abc1234", False, False, True, None
-    )
+    args = _build_git_worktree_add_args("/target", "abc1234", False, False, True, None)
     assert args == ["add", "--detach", "/target", "abc1234"]
 
 
@@ -497,18 +487,23 @@ async def test_add_target_inside_existing_wt(primary_repo, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_add_git_returns_path_exists(primary_repo, tmp_path):
-    """L6: git 自身报 'path already exists' → path_exists_nonempty(stderr 映射)。"""
+async def test_add_l5_path_exists_nonempty_blocks(primary_repo, tmp_path):
+    """L5: target 存在且非空(有 ``.git`` 文件 + 内容)→ L5 拦截 → ``path_exists_nonempty``。
+
+    强断言 ``path_exists_nonempty`` —— 因为 L5 在 L6 ``git worktree add``
+    之前触发。``.git`` 是 target **内部的文件**,不是 path 组件 (L2 Step 2
+    检查的是 ``Path(...).parts``,而 ``Path("C:/tmp/feature").parts`` 不含
+    ``.git``),所以 L2 不会拦,直接到 L5。L5 判断 ``os.listdir(target)`` 非空
+    (有 ``.git`` 和 ``a.txt`` 两个 entry) → ``path_exists_nonempty``。
+    """
     plugin, umo, primary = primary_repo
-    # 准备一个 target,里面有 .git 标记但 git 视其为已存在但非合法
     target = tmp_path / "feature"
     target.mkdir()
     (target / "a.txt").write_text("a")
     (target / ".git").write_text("gitdir: /not-a-real-repo")
     body = {"path": str(target), "branch": "feat", "create": True}
     result = await plugin_module_handle(plugin, umo=umo, worktree=None, body=body)
-    # path_exists_nonempty L5 拦截;先于 L6 触发
-    assert result["data"]["reason"] in ("path_exists_nonempty", "git_error")
+    assert result["data"]["reason"] == "path_exists_nonempty"
 
 
 # ─── 4 cannot_create_existing / cannot_checkout_missing tests ────────
@@ -584,18 +579,32 @@ async def test_add_branch_missing(primary_repo, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_add_git_invalid_worktree_name(primary_repo, tmp_path):
-    """L6: git 报 invalid worktree name → invalid_param(stderr 映射)。"""
+async def test_add_git_invalid_worktree_name(primary_repo, tmp_path, monkeypatch):
+    """L6: git 报 ``cannot be used as a worktree name`` → ``invalid_param`` (stderr 映射)。
+
+    通过 monkeypatch ``_run_git_async`` 注入受控的 git stderr (绕过真实
+    ``git worktree add`` 在 Windows 上对 ``:`` 的不同报错),验证 handler
+    走完 L1-L5 后由 L6 stderr mapper 命中 ``invalid_param`` 分支。
+    """
     plugin, umo, primary = primary_repo
-    # 模拟一个含特殊字符的 path(会绕过 L2 _validate_new_worktree_path 检查
-    # 是因为它不查 :字符,只在 git CLI 阶段才报错)
-    # 用 monkeypatch 替换 _validate_new_worktree_path 来注入
-    target = str(tmp_path / "weird:name")  # 实际会被 _validate_new_worktree_path 拒绝
+    target = str(tmp_path / "weird:name")
+
+    # Inject controlled stderr that matches the mapper's invalid_param pattern
+    from tools.webapi import git_worktree_add
+
+    async def fake_run_git_async(args, **kwargs):
+        return {
+            "ok": False,
+            "stdout": "",
+            "stderr": (f"fatal: '{target}' cannot be used as a worktree name"),
+            "code": 128,
+        }
+
+    monkeypatch.setattr(git_worktree_add, "_run_git_async", fake_run_git_async)
+
     body = {"path": target, "branch": "feat", "create": True}
     result = await plugin_module_handle(plugin, umo=umo, worktree=None, body=body)
-    # L2 拒绝(L2 实际不拒 :字符,但 : 在 Windows 上非法); 实际测试用 mock
-    # 注入:这里只验证 reason 是 path_unsafe 或 invalid_param 之一
-    assert result["data"]["reason"] in ("path_unsafe", "invalid_param", "git_error")
+    assert result["data"]["reason"] == "invalid_param"
 
 
 # ─── 1 worktree_not_in_repo test ─────────────────────────────────────
@@ -610,7 +619,9 @@ async def test_add_post_create_common_dir_mismatch(primary_repo, tmp_path, monke
     plugin, umo, primary = primary_repo
     target = str(tmp_path / "feature")
     body = {"path": target, "branch": "feat", "create": True}
-    real_resolve = "tools._helpers._resolve_git_common_dir"
+    # NOTE: handler now imports helpers at module top (PR-B MAJOR-1 refactor),
+    # so monkeypatch must target the handler's own module-level binding —
+    # not the source helper module.
     call_count = {"n": 0}
 
     def fake_resolve(git_bin, worktree_path):
@@ -621,7 +632,9 @@ async def test_add_post_create_common_dir_mismatch(primary_repo, tmp_path, monke
             return "/totally/different"
         return "/default"
 
-    monkeypatch.setattr(real_resolve, fake_resolve)
+    monkeypatch.setattr(
+        "tools.webapi.git_worktree_add._resolve_git_common_dir", fake_resolve
+    )
     result = await plugin_module_handle(plugin, umo=umo, worktree=None, body=body)
     assert result["data"]["reason"] == "worktree_not_in_repo"
 

@@ -16,8 +16,22 @@ PR-B (v2.14.0, 2026-06-26).
 from __future__ import annotations
 
 import logging
+import os
 import re
+import time as _time
 from typing import TYPE_CHECKING
+
+from ._helpers import (
+    _git_endpoint_preflight,
+    _make_envelope,
+    _run_git_async,
+)
+from .._helpers import (
+    _is_valid_ref_name,
+    _list_worktrees_safe,
+    _resolve_git_common_dir,
+    _validate_new_worktree_path,
+)
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
@@ -113,7 +127,6 @@ def _map_add_stderr_to_reason(stderr: str) -> str:
 
 
 def _build_git_worktree_add_args(
-    directory: str,
     new_path: str,
     branch: str | None,
     create: bool,
@@ -180,13 +193,14 @@ async def handle(
     configured blacklist (the prior module-level constant was never
     populated in production).
     """
-    import os
-    import time as _time
-
     # ── L1: body type guard ─────────────────────────────────────────
+    # NOTE: L1 fires BEFORE preflight, so ``directory`` is unknown here.
+    # Per spec §5.3 the failure envelope's ``worktree`` field should
+    # reflect the primary worktree. Since primary is not yet resolved,
+    # we emit an empty string as a sentinel (the only field that L1
+    # cannot populate). This keeps the envelope shape consistent with
+    # L2-L7 which all return ``worktree=directory``.
     if not isinstance(body, dict):
-        from ._helpers import _make_envelope
-
         return _make_envelope(
             success=False,
             reason="invalid_body",
@@ -194,7 +208,7 @@ async def handle(
             loaded=False,
             directory="",
             umo=umo,
-            worktree=worktree,
+            worktree="",
             stderr=f"body must be a dict, got {type(body).__name__}",
         )
     body = body or {}
@@ -205,8 +219,6 @@ async def handle(
         return int((_time.time() - t0) * 1000)
 
     # ── Preflight (5-step) ─────────────────────────────────────────
-    from ._helpers import _git_endpoint_preflight, _make_envelope, _run_git_async
-
     err, ctx = await _git_endpoint_preflight(
         plugin,
         umo=umo,
@@ -221,8 +233,6 @@ async def handle(
     git_bin = plugin._git_binary()
 
     # ── L2: 4-step new-path defense (with blacklist injection) ─────
-    from .._helpers import _is_valid_ref_name, _validate_new_worktree_path
-
     new_path, path_err = _validate_new_worktree_path(
         body.get("path"),
         blacklist=plugin._config.get("file_remove_blacklist"),
@@ -302,7 +312,6 @@ async def handle(
     # contract for the builder function. The handler must prepend
     # "worktree" when constructing the full CLI.
     add_args = [git_bin, "-C", directory, "worktree"] + _build_git_worktree_add_args(
-        directory,
         new_path,
         branch,
         create,
@@ -325,8 +334,6 @@ async def handle(
         )
 
     # ── L7: post-create git-common-dir verification (防越权兜底) ────
-    from .._helpers import _list_worktrees_safe, _resolve_git_common_dir
-
     try:
         new_common = _resolve_git_common_dir(git_bin, new_path)
         primary_common = _resolve_git_common_dir(git_bin, directory)
