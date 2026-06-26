@@ -92,3 +92,26 @@ def test_make_envelope_extra_kwargs_pass_through():
     assert data["umo"] == "u:m"
     assert data["worktree"] == "/repo"
     assert data["reason"] is None
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v2.14.0 worktree-mgmt 11 新增 ReasonCode 常量
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_worktree_mgmt_reason_codes_defined():
+    """v2.14.0 + 11 new ReasonCode constants for worktree-mgmt endpoints."""
+    from tools.webapi._helpers import ReasonCode
+    # ADD-specific
+    assert ReasonCode.INVALID_BRANCH == "invalid_branch"
+    assert ReasonCode.PATH_EXISTS_NONEMPTY == "path_exists_nonempty"
+    assert ReasonCode.CANNOT_CREATE_EXISTING == "cannot_create_existing"
+    assert ReasonCode.CANNOT_CHECKOUT_MISSING == "cannot_checkout_missing"
+    assert ReasonCode.WORKTREE_NOT_IN_REPO == "worktree_not_in_repo"
+    # REMOVE / LOCK / UNLOCK
+    assert ReasonCode.WORKTREE_NOT_FOUND == "worktree_not_found"
+    assert ReasonCode.CANNOT_REMOVE_MAIN == "cannot_remove_main"
+    assert ReasonCode.WORKTREE_LOCKED == "worktree_locked"
+    assert ReasonCode.WORKTREE_DIRTY == "worktree_dirty"
+    assert ReasonCode.ALREADY_LOCKED == "already_locked"
+    assert ReasonCode.NOT_LOCKED == "not_locked"

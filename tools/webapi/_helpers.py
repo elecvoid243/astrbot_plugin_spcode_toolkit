@@ -160,6 +160,19 @@ class ReasonCode:
     REF_NOT_FOUND = "ref_not_found"          # v3.8 (2026-06-25): git-show ref 不存在 / ambiguous
     COMMIT_TOO_LARGE = "commit_too_large"    # v3.8 (2026-06-25): --numstat 输出超 1 MB
 
+    # ── v2.14.0 新增(worktree-mgmt 专用) ──
+    INVALID_BRANCH         = "invalid_branch"           # ADD: branch 格式非法
+    PATH_EXISTS_NONEMPTY   = "path_exists_nonempty"     # ADD: target 已存在非空
+    CANNOT_CREATE_EXISTING = "cannot_create_existing"   # ADD: branch 已存在 & create=false
+    CANNOT_CHECKOUT_MISSING = "cannot_checkout_missing" # ADD: branch 不存在 & create=false
+    WORKTREE_NOT_IN_REPO   = "worktree_not_in_repo"     # ADD: post-create 防越权兜底
+    WORKTREE_NOT_FOUND     = "worktree_not_found"       # REMOVE/LOCK/UNLOCK: list 中查不到
+    CANNOT_REMOVE_MAIN     = "cannot_remove_main"       # REMOVE: 硬禁止删 main
+    WORKTREE_LOCKED        = "worktree_locked"          # REMOVE: target 已 locked
+    WORKTREE_DIRTY         = "worktree_dirty"           # REMOVE: 工作树有改动
+    ALREADY_LOCKED         = "already_locked"           # LOCK: 已 locked
+    NOT_LOCKED             = "not_locked"               # UNLOCK: 未 locked
+
 
 def _make_envelope(
     *,
