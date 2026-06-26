@@ -59,7 +59,11 @@
 Create `tests/test_git_worktree_porcelain_locked.py`:
 
 ```python
-"""Tests for tools._helpers._parse_git_worktree_porcelain locked extension."""
+"""Tests for tools._helpers._parse_git_worktree_porcelain locked extension.
+
+Uses subset assertions (not `==`) so they remain backward-compat with the
+existing strict-dict test in tests/test_helpers_git.py::test_parse_single_main_worktree.
+"""
 from tools._helpers import _parse_git_worktree_porcelain
 
 
@@ -74,6 +78,8 @@ def test_parse_unlocked_worktree():
     assert len(result) == 1
     assert result[0]["locked"] is False
     assert result[0]["locked_reason"] is None
+    # branch prefix stripping preserved (regression guard)
+    assert result[0]["branch"] == "main"
 
 
 def test_parse_locked_worktree_no_reason():
@@ -101,6 +107,35 @@ def test_parse_locked_worktree_with_reason():
     result = _parse_git_worktree_porcelain(text)
     assert result[0]["locked"] is True
     assert result[0]["locked_reason"] == "in use by background agent"
+
+
+def test_parse_locked_with_multiline_reason():
+    """git 2.30+ 多行 reason:locked 行后跟额外 reason 行。
+
+    实际 git 行为:`locked <reason-text>` 单行优先,但某些 git 版本
+    在 reason 含特殊字符时会把 reason 放到下一行(空行分隔前先写 reason)。
+
+    为防御性,我们接受:locked 行后**紧跟**的非空且非"worktree "/"HEAD "/"branch "/"locked "
+    开头的行视为 multiline reason 续行。
+    """
+    text = (
+        "worktree /path/to/feature\n"
+        "HEAD def456\n"
+        "branch refs/heads/feature\n"
+        "locked\n"
+        "reason line one\n"
+        "reason line two\n"
+        "\n"
+        "worktree /path/to/main\n"
+        "HEAD abc\n"
+        "branch refs/heads/main\n"
+    )
+    result = _parse_git_worktree_porcelain(text)
+    assert len(result) == 2
+    assert result[0]["locked"] is True
+    # multiline reason concatenated with newlines preserved
+    assert "reason line one" in result[0]["locked_reason"]
+    assert "reason line two" in result[0]["locked_reason"]
 
 
 def test_parse_multiple_worktrees_mixed_lock_state():
@@ -145,7 +180,7 @@ Expected: FAIL with `KeyError: 'locked'` (existing parser doesn't set this field
 
 - [ ] **Step 3: Extend parser to set locked fields**
 
-In `tools/_helpers.py:201-248`, modify `_parse_git_worktree_porcelain`:
+In `tools/_helpers.py:201-248`, modify `_parse_git_worktree_porcelain` — **保留现有 `refs/heads/` 前缀剥离逻辑**(防御回归),增加 locked 字段与 multiline reason 支持:
 
 ```python
 def _parse_git_worktree_porcelain(text: str) -> list[dict]:
@@ -155,18 +190,31 @@ def _parse_git_worktree_porcelain(text: str) -> list[dict]:
     locked, locked_reason. (v2.14.0: locked / locked_reason added)
     The first worktree in the output is always the main worktree (is_main=True).
     Raises ValueError on unrecognized records.
+
+    Branch prefix stripping: `branch refs/heads/main` → `branch="main"`
+    (preserved from v2.x — do not regress).
     """
     worktrees: list[dict] = []
     current: dict | None = None
+    # v2.14.0+ multiline reason accumulator
+    multiline_buffer: list[str] | None = None
 
     for raw_line in text.splitlines():
         if not raw_line:
+            # Blank line ends current worktree block
+            if multiline_buffer is not None and current is not None:
+                current["locked_reason"] = "\n".join(multiline_buffer)
+                multiline_buffer = None
             if current is not None:
                 worktrees.append(current)
                 current = None
             continue
 
         if raw_line.startswith("worktree "):
+            # Flush prior block's multiline buffer first
+            if multiline_buffer is not None and current is not None:
+                current["locked_reason"] = "\n".join(multiline_buffer)
+                multiline_buffer = None
             if current is not None:
                 worktrees.append(current)
             current = {
@@ -182,22 +230,44 @@ def _parse_git_worktree_porcelain(text: str) -> list[dict]:
                 f"Unexpected record outside worktree block: {raw_line!r}"
             )
         elif raw_line.startswith("HEAD "):
+            # Flush multiline buffer before new record
+            if multiline_buffer is not None:
+                current["locked_reason"] = "\n".join(multiline_buffer)
+                multiline_buffer = None
             current["head_sha"] = raw_line[len("HEAD "):]
         elif raw_line.startswith("branch "):
-            current["branch"] = raw_line[len("branch "):]
+            if multiline_buffer is not None:
+                current["locked_reason"] = "\n".join(multiline_buffer)
+                multiline_buffer = None
+            # v2.x preserved: strip refs/heads/ prefix
+            ref = raw_line[len("branch "):]
+            prefix = "refs/heads/"
+            current["branch"] = ref[len(prefix):] if ref.startswith(prefix) else ref
         elif raw_line == "locked":
-            # v2.14.0+ — no reason on same line
+            if multiline_buffer is not None:
+                current["locked_reason"] = "\n".join(multiline_buffer)
+                multiline_buffer = None
+            # v2.14.0+ — no reason on same line, multiline may follow
             current["locked"] = True
+            multiline_buffer = []  # start accumulating multiline reason
         elif raw_line.startswith("locked "):
+            if multiline_buffer is not None:
+                current["locked_reason"] = "\n".join(multiline_buffer)
+                multiline_buffer = None
             # v2.14.0+ — git 2.30+ supports reason on same line as `locked`
             current["locked"] = True
             current["locked_reason"] = raw_line[len("locked "):]
+        elif multiline_buffer is not None:
+            # We're inside a multiline reason continuation
+            multiline_buffer.append(raw_line)
         elif raw_line.startswith("detached"):
             current["branch"] = None
         else:
             raise ValueError(f"Unknown porcelain record: {raw_line!r}")
 
     if current is not None:
+        if multiline_buffer is not None:
+            current["locked_reason"] = "\n".join(multiline_buffer)
         worktrees.append(current)
 
     for i, wt in enumerate(worktrees):
@@ -209,23 +279,46 @@ def _parse_git_worktree_porcelain(text: str) -> list[dict]:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_git_worktree_porcelain_locked.py -v`
-Expected: 5 passed
+Expected: 6 passed (含 multiline)
 
-- [ ] **Step 5: Verify existing tests still pass (backward compat)**
+- [ ] **Step 5: Verify existing tests still pass + 修复 test_helpers_git.py 严格 dict 等式**
 
-Run: `pytest tests/test_helpers_git.py tests/test_git_worktrees.py -v`
-Expected: All passed (existing tests don't check `locked` field, so adding default `False`/`None` is harmless)
+Run: `pytest tests/test_helpers_git.py -v`
+Expected: **FAIL** at `test_parse_single_main_worktree`(严格 `==` 断言加了 `locked` / `locked_reason` 后会失败)。
+
+修复 `tests/test_helpers_git.py:90-97` 的严格等式为字段子集断言(避免新字段破坏老测试):
+
+```python
+def test_parse_single_main_worktree():
+    text = "worktree /r/main\nHEAD abc1234\nbranch refs/heads/main\n"
+    result = _parse_git_worktree_porcelain(text)
+    assert len(result) == 1
+    # 字段子集断言(避免 locked / locked_reason 新字段破坏老测试)
+    assert result[0]["path"] == "/r/main"
+    assert result[0]["branch"] == "main"
+    assert result[0]["head_sha"] == "abc1234"
+    assert result[0]["is_main"] is True
+    # 新字段默认值(v2.14.0)
+    assert result[0]["locked"] is False
+    assert result[0]["locked_reason"] is None
+```
+
+Run: `pytest tests/test_helpers_git.py tests/test_git_worktrees.py tests/test_git_worktree_porcelain_locked.py -v`
+Expected: All passed
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tools/_helpers.py tests/test_git_worktree_porcelain_locked.py
+git add tools/_helpers.py tests/test_helpers_git.py tests/test_git_worktree_porcelain_locked.py
 git commit -m "feat(helpers): extend _parse_git_worktree_porcelain with locked fields
 
 - Add locked: bool field (default False)
 - Add locked_reason: str | None field (git 2.30+)
-- Handle both bare 'locked' line and 'locked <reason>' line
-- Pure additive: existing fields unchanged, backward compat preserved
+- Support multiline reason (git 2.30+ formats)
+- PRESERVE refs/heads/ prefix stripping (regression guard)
+- Update existing strict-dict test to subset assertion
+
+Pure additive for callers that don't check new fields.
 
 Author: elecvoid243 @ 2026-06-26"
 ```
@@ -457,85 +550,103 @@ from tools._helpers import _validate_new_worktree_path
 
 
 def test_validate_new_path_accepts_absolute_posix(tmp_path):
-    target = tmp_path / "feature"
-    ok, err = _validate_new_worktree_path("git", str(target))
-    assert ok == str(target)
+    target = str(tmp_path / "feature")
+    ok, err = _validate_new_worktree_path(target)
+    assert ok == target
     assert err is None
 
 
 def test_validate_new_path_accepts_absolute_windows_style(tmp_path):
-    target = tmp_path / "feature"
-    ok, err = _validate_new_worktree_path("git", str(target))
+    """Windows 风格绝对路径同样接受(无 `\\` 段时)。"""
+    target = str(tmp_path / "feature")
+    ok, err = _validate_new_worktree_path(target)
     assert err is None
     assert ok is not None
 
 
 def test_validate_new_path_rejects_dotdot(tmp_path):
     target = str(tmp_path / ".." / "escape")
-    ok, err = _validate_new_worktree_path("git", target)
+    ok, err = _validate_new_worktree_path(target)
     assert ok is None
     assert err == "path_unsafe"
 
 
 def test_validate_new_path_rejects_relative(tmp_path):
     target = "./feature"
-    ok, err = _validate_new_worktree_path("git", target)
+    ok, err = _validate_new_worktree_path(target)
     assert ok is None
     assert err == "path_unsafe"
 
 
 def test_validate_new_path_rejects_dot_git_component(tmp_path):
     target = str(tmp_path / ".git" / "feature")
-    ok, err = _validate_new_worktree_path("git", target)
+    ok, err = _validate_new_worktree_path(target)
     assert ok is None
     assert err == "path_unsafe"
 
 
 def test_validate_new_path_rejects_empty():
-    ok, err = _validate_new_worktree_path("git", "")
+    ok, err = _validate_new_worktree_path("")
     assert ok is None
     assert err == "path_unsafe"
 
 
 def test_validate_new_path_rejects_too_long(tmp_path):
     target = str(tmp_path / ("a" * 5000))
-    ok, err = _validate_new_worktree_path("git", target)
+    ok, err = _validate_new_worktree_path(target)
     assert ok is None
     assert err == "path_unsafe"
 
 
 def test_validate_new_path_rejects_missing_parent(tmp_path):
     target = str(tmp_path / "nonexistent_dir" / "feature")
-    ok, err = _validate_new_worktree_path("git", target)
+    ok, err = _validate_new_worktree_path(target)
     assert ok is None
     assert err == "path_unsafe"
 
 
-def test_validate_new_path_rejects_backslash(tmp_path):
-    target = str(tmp_path) + "\\feature"
-    ok, err = _validate_new_worktree_path("git", target)
+def test_validate_new_path_rejects_backslash():
+    ok, err = _validate_new_worktree_path("C:\\Users\\foo\\feature")
     assert ok is None
     assert err == "path_unsafe"
 
 
 def test_validate_new_path_none_input():
-    ok, err = _validate_new_worktree_path("git", None)
+    ok, err = _validate_new_worktree_path(None)
+    assert ok is None
+    assert err == "path_unsafe"
+
+
+def test_validate_new_path_rejects_blacklisted(monkeypatch, tmp_path):
+    """防御 4: 黑名单路径(如 C:\\Windows 等)被拒绝。
+
+    通过 monkeypatch 设置 file_remove_blacklist 配置项,验证 helper 拒绝该路径。
+    """
+    from tools import _helpers
+    monkeypatch.setattr(_helpers, "_FILE_REMOVE_BLACKLIST", [str(tmp_path)])
+    target = str(tmp_path / "feature")
+    ok, err = _validate_new_worktree_path(target)
     assert ok is None
     assert err == "path_unsafe"
 ```
+
+注:`_FILE_REMOVE_BLACKLIST` 是 `tools/_helpers.py` 模块级常量(若不存在,Task 1.4b 提前加)。
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_helpers_worktree.py -k "validate_new_path" -v`
 Expected: FAIL with `ImportError: cannot import name '_validate_new_worktree_path'`
 
-- [ ] **Step 3: Implement helper**
+- [ ] **Step 3: Implement helper (4-step defense with blacklist)**
 
 In `tools/_helpers.py`, add after `_is_valid_ref_name`:
 
 ```python
+# 模块级黑名单常量(spec §4.2 防御 4),与 file_remove_blacklist 保持一致
+_FILE_REMOVE_BLACKLIST: list[str] = []
+
+
 def _validate_new_worktree_path(
-    git_bin: str,
     new_path: str | None,
 ) -> tuple[str | None, str | None]:
     """ADD endpoint path validation. Target may not exist yet.
@@ -544,7 +655,7 @@ def _validate_new_worktree_path(
       1. format     — non-empty / ≤4096 chars / no backslash / absolute / no ..
       2. .git component — no path component may be `.git`
       3. parent dir — must exist and be writable
-      4. blacklist  — outside system dirs (delegated to file_remove_blacklist)
+      4. blacklist  — outside _FILE_REMOVE_BLACKLIST entries
 
     Returns (resolved_absolute_path, None) | (None, "path_unsafe").
     Spec: docs/superpowers/specs/2026-06-26-git-worktree-management-design.md §4.2
@@ -569,8 +680,15 @@ def _validate_new_worktree_path(
         return None, "path_unsafe"
     if not os.access(parent, os.W_OK):
         return None, "path_unsafe"
+    # Step 4: blacklist (e.g. C:\Windows, /etc, etc.)
+    resolved = os.path.normcase(os.path.abspath(new_path))
+    for blocked in _FILE_REMOVE_BLACKLIST:
+        if resolved.startswith(os.path.normcase(blocked)):
+            return None, "path_unsafe"
     return new_path, None
 ```
+
+**注**:签名变更 — 去掉 `git_bin` 参数(本 helper 不需要 git binary)。所有调用方(包括后续 Chunk 2 的 ADD handler)需相应更新。
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -603,14 +721,15 @@ import subprocess
 from tools._helpers import _resolve_target_worktree
 
 
-def _make_test_repo_with_two_worktrees(tmp_path, monkeypatch):
-    """Helper: create primary + linked worktree, return (primary, linked, git_bin)."""
+def _make_test_repo_with_two_worktrees(tmp_path):
+    """Helper: create primary + linked worktree, return (primary, linked).
+
+    无 monkeypatch 参数 — 测试不需要 mock,使用真实 git 命令(tmp_path 自动清理)。
+    """
     primary = tmp_path / "primary"
     primary.mkdir()
     linked = tmp_path / "linked"
-    subprocess.run(["git", "init", "--bare", str(tmp_path / "bare.git")],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(primary), "init", "-b", "main"],
+    subprocess.run(["git", "init", "-b", "main", str(primary)],
                    check=True, capture_output=True)
     subprocess.run(["git", "-C", str(primary), "config", "user.email", "t@t.com"],
                    check=True, capture_output=True)
@@ -623,22 +742,23 @@ def _make_test_repo_with_two_worktrees(tmp_path, monkeypatch):
                    check=True, capture_output=True)
     subprocess.run(["git", "-C", str(primary), "worktree", "add", str(linked), "-b", "feat"],
                    check=True, capture_output=True)
-    return primary, linked, "git"
+    return primary, linked
 
 
 def test_resolve_target_finds_existing(tmp_path):
-    primary, linked, git_bin = _make_test_repo_with_two_worktrees(tmp_path, None)
-    target_wt, err = _resolve_target_worktree(git_bin, str(primary), str(linked))
+    primary, linked = _make_test_repo_with_two_worktrees(tmp_path)
+    target_wt, err = _resolve_target_worktree("git", str(primary), str(linked))
     assert err is None
     assert target_wt is not None
-    assert target_wt["path"].lower() == str(linked).lower()
+    # Windows / POSIX 大小写不敏感比较
+    assert os.path.normcase(target_wt["path"]) == os.path.normcase(str(linked))
     assert target_wt["is_main"] is False
 
 
 def test_resolve_target_unknown_returns_not_found(tmp_path):
-    primary, _, git_bin = _make_test_repo_with_two_worktrees(tmp_path, None)
+    primary, _ = _make_test_repo_with_two_worktrees(tmp_path)
     target_wt, err = _resolve_target_worktree(
-        git_bin, str(primary), str(primary / "does_not_exist")
+        "git", str(primary), str(primary / "does_not_exist")
     )
     assert target_wt is None
     assert err == "worktree_not_found"
@@ -667,7 +787,7 @@ def test_resolve_target_relative_path():
 Run: `pytest tests/test_helpers_worktree.py -k "resolve_target" -v`
 Expected: FAIL with `ImportError: cannot import name '_resolve_target_worktree'`
 
-- [ ] **Step 3: Implement helper**
+- [ ] **Step 3: Implement helper (using `run_cmd` for consistency)**
 
 In `tools/_helpers.py`, add after `_validate_new_worktree_path`:
 
@@ -683,10 +803,10 @@ def _resolve_target_worktree(
 
     Returns:
       (worktree_dict, None) — target found in list
-      (None, "worktree_not_found") — format OK but not in list
+      (None, "worktree_not_found") — format OK but not in list / git list 失败
       (None, "path_unsafe") — format check failed
     """
-    # Step 1: basic format
+    # Step 1: basic format (same rules as _validate_new_worktree_path)
     if not body_path or not isinstance(body_path, str):
         return None, "path_unsafe"
     if len(body_path) > 4096:
@@ -698,15 +818,16 @@ def _resolve_target_worktree(
     if ".." in body_path.split("/"):
         return None, "path_unsafe"
 
-    # Step 2: enumerate worktrees via list --porcelain
-    list_result = subprocess.run(
+    # Step 2: enumerate worktrees via run_cmd (与项目其他 git 调用统一)
+    from . import _helpers  # late import to avoid cycles
+    list_result = _helpers.run_cmd(
         [git_bin, "-C", primary_dir, "worktree", "list", "--porcelain"],
-        capture_output=True, text=True, encoding="utf-8", timeout=10,
+        encoding="utf-8",
     )
-    if list_result.returncode != 0:
+    if not list_result["ok"]:
         return None, "worktree_not_found"
     try:
-        worktrees = _parse_git_worktree_porcelain(list_result.stdout)
+        worktrees = _parse_git_worktree_porcelain(list_result["stdout"])
     except ValueError:
         return None, "worktree_not_found"
 
@@ -718,7 +839,9 @@ def _resolve_target_worktree(
     return None, "worktree_not_found"
 ```
 
-Note: existing `_parse_git_worktree_porcelain` already imported at top of file.
+Notes:
+- 复用项目标准的 `run_cmd`(而非裸 `subprocess.run`),确保 `git` 未安装时返回 `{ok: False, error: ...}` 而不是抛 `FileNotFoundError`。
+- `from . import _helpers` 用 late import 避免循环依赖(若 tools/_helpers.py 当前没有 `__init__.py` 暴露 `run_cmd`,需要添加)。
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -747,9 +870,15 @@ Author: elecvoid243 @ 2026-06-26"
 Add to `tests/test_git_worktrees.py`:
 
 ```python
-def test_git_worktrees_response_includes_locked_field(tmp_path):
-    """GET 端点返回数据应附加 locked 字段(pure additive)。"""
-    # Setup: create primary + locked worktree
+import subprocess
+import pytest
+from unittest.mock import MagicMock, patch
+from tools.webapi.git_worktrees import handle as wt_list_handle
+
+
+@pytest.fixture
+def locked_worktree_repo(tmp_path):
+    """Create a primary repo with one locked linked worktree."""
     primary = tmp_path / "primary"
     linked = tmp_path / "linked"
     subprocess.run(["git", "init", "-b", "main", str(primary)],
@@ -764,30 +893,111 @@ def test_git_worktrees_response_includes_locked_field(tmp_path):
                    check=True, capture_output=True)
     subprocess.run(["git", "-C", str(primary), "worktree", "add", str(linked), "-b", "feat"],
                    check=True, capture_output=True)
+    return primary, linked
+
+
+def _make_plugin_mock(directory):
+    plugin = MagicMock()
+    plugin._config = {"agentsmd_enabled": True, "codegraph_enabled": True}
+    plugin._git_binary.return_value = "git"
+    plugin.get_loaded_project.return_value = {"directory": directory, "loaded_at": 0.0}
+    return plugin
+
+
+@pytest.mark.asyncio
+async def test_git_worktrees_response_includes_locked_field(locked_worktree_repo):
+    """GET 端点返回数据应附加 locked 字段(pure additive)。"""
+    primary, linked = locked_worktree_repo
     subprocess.run(["git", "-C", str(primary), "worktree", "lock", str(linked)],
                    check=True, capture_output=True)
+    plugin = _make_plugin_mock(str(primary))
+    # 使用项目标准的 run_cmd(参考现有 test_git_worktrees.py 用法)
+    with patch("tools.webapi.git_worktrees.run_cmd") as mock_run:
+        # 模拟 git worktree list --porcelain 输出(2 个 worktree,linked 已 lock)
+        mock_run.return_value = {
+            "ok": True,
+            "stdout": (
+                f"worktree {primary}\n"
+                "HEAD abc1234\n"
+                "branch refs/heads/main\n"
+                "\n"
+                f"worktree {linked}\n"
+                "HEAD def5678\n"
+                "branch refs/heads/feat\n"
+                "locked\n"
+            ),
+            "stderr": "",
+            "code": 0,
+        }
+        result = await wt_list_handle(plugin)
+    assert result["data"]["loaded"] is True
+    worktrees = result["data"]["worktrees"]
+    assert len(worktrees) == 2
+    main_wt = next(w for w in worktrees if w["is_main"])
+    linked_wt = next(w for w in worktrees if not w["is_main"])
+    assert main_wt["locked"] is False
+    assert main_wt["locked_reason"] is None
+    assert linked_wt["locked"] is True
+    assert linked_wt["locked_reason"] is None  # bare `locked` line → no reason
 
-    # Invoke handler with mocked context
-    # (use existing fixture pattern from test_git_worktrees.py for loading project)
-    # ...
 
-    assert "locked" in wt
-    assert wt["locked"] is True
-    assert wt["locked_reason"] is None  # no --reason
-
-
-def test_git_worktrees_response_includes_locked_reason(tmp_path):
+@pytest.mark.asyncio
+async def test_git_worktrees_response_includes_locked_reason(locked_worktree_repo):
     """Locked with --reason → locked_reason 字段传递。"""
-    # similar setup + git worktree lock --reason "..."
-    # assert wt["locked_reason"] == "..."
+    primary, linked = locked_worktree_repo
+    subprocess.run(
+        ["git", "-C", str(primary), "worktree", "lock", "--reason", "test reason", str(linked)],
+        check=True, capture_output=True,
+    )
+    plugin = _make_plugin_mock(str(primary))
+    with patch("tools.webapi.git_worktrees.run_cmd") as mock_run:
+        mock_run.return_value = {
+            "ok": True,
+            "stdout": (
+                f"worktree {primary}\n"
+                "HEAD abc1234\n"
+                "branch refs/heads/main\n"
+                "\n"
+                f"worktree {linked}\n"
+                "HEAD def5678\n"
+                "branch refs/heads/feat\n"
+                "locked test reason\n"
+            ),
+            "stderr": "",
+            "code": 0,
+        }
+        result = await wt_list_handle(plugin)
+    worktrees = result["data"]["worktrees"]
+    linked_wt = next(w for w in worktrees if not w["is_main"])
+    assert linked_wt["locked"] is True
+    assert linked_wt["locked_reason"] == "test reason"
 
 
-def test_git_worktrees_parser_unlocked_worktree_unchanged():
-    """Unlocked worktree → locked=False (与既有 v1 行为一致,无破坏)。"""
-    # assert wt["locked"] is False
+@pytest.mark.asyncio
+async def test_git_worktrees_unlocked_default_false(locked_worktree_repo):
+    """Unlocked worktree → locked=False(与既有 v1 行为一致,无破坏)。"""
+    primary, _ = locked_worktree_repo
+    # linked 未 lock
+    plugin = _make_plugin_mock(str(primary))
+    with patch("tools.webapi.git_worktrees.run_cmd") as mock_run:
+        mock_run.return_value = {
+            "ok": True,
+            "stdout": (
+                f"worktree {primary}\n"
+                "HEAD abc1234\n"
+                "branch refs/heads/main\n"
+            ),
+            "stderr": "",
+            "code": 0,
+        }
+        result = await wt_list_handle(plugin)
+    worktrees = result["data"]["worktrees"]
+    assert len(worktrees) == 1
+    assert worktrees[0]["locked"] is False
+    assert worktrees[0]["locked_reason"] is None
 ```
 
-Adapt test setup to match existing `test_git_worktrees.py` fixture patterns. Use existing `plugin` and `umo` fixtures.
+测试采用与项目既有 `test_git_worktrees.py` 一致的 mock `run_cmd` 模式,无需真实 git repo,执行快。
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -847,7 +1057,7 @@ This task is just a verification step. No commit.
 - [ ] **Step 1: Run full test suite**
 
 Run: `pytest tests/ -v`
-Expected: All PASS (existing 50+ tests + 21 new tests in this chunk)
+Expected: All PASS (existing 50+ tests + 42 new tests in this chunk,具体 6 parser + 1 reason + 16 ref-name + 11 new-path + 5 resolve-target + 3 GET-locked = 42 净新增)
 
 - [ ] **Step 2: Run ruff lint**
 
@@ -1244,12 +1454,14 @@ Add to `tests/test_git_worktree_add.py`:
 
 ```python
 import pytest
+import subprocess
+from unittest.mock import MagicMock
 from tools.webapi.git_worktree_add import handle as add_handle
 
 
 @pytest.fixture
 def loaded_primary_repo(tmp_path):
-    """Create a primary repo with one commit, return (plugin_mock, umo, primary_dir)."""
+    """Create a primary repo with one commit + mock plugin."""
     primary = tmp_path / "primary"
     primary.mkdir()
     subprocess.run(["git", "init", "-b", "main", str(primary)],
@@ -1262,28 +1474,24 @@ def loaded_primary_repo(tmp_path):
     subprocess.run(["git", "-C", str(primary), "add", "."], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(primary), "commit", "-m", "init"],
                    check=True, capture_output=True)
-    # plugin_mock and umo using existing fixtures pattern from test_git_worktrees.py
-    # (mock SPCodeToolkit with _config, _git_binary, get_loaded_project)
-    plugin, umo = _make_plugin_mock_with_loaded_project(str(primary))
-    return plugin, umo, primary
+    plugin = _make_plugin_mock_with_loaded_project(str(primary))
+    return plugin, "test:umo", primary
 
 
 def _make_plugin_mock_with_loaded_project(directory):
-    """Create a mock plugin with the directory loaded as primary."""
-    from unittest.mock import MagicMock
     plugin = MagicMock()
     plugin._config = {"agentsmd_enabled": True, "codegraph_enabled": True}
     plugin._git_binary.return_value = "git"
-    umo = "test:umo"
     plugin.get_loaded_project.return_value = {"directory": directory, "loaded_at": 0.0}
-    return plugin, umo
+    return plugin
 
 
 @pytest.mark.asyncio
-async def test_add_basic_checkout_existing_branch(loaded_primary_repo, tmp_path):
+async def test_add_basic_create_new_branch(loaded_primary_repo, tmp_path):
+    """ADD create=true → 新建分支并创建 worktree。"""
     plugin, umo, primary = loaded_primary_repo
     target = str(tmp_path / "feature")
-    body = {"path": target, "branch": "feat"}
+    body = {"path": target, "branch": "feat", "create": True}
     result = await add_handle(plugin, umo=umo, worktree=None, body=body)
     assert result["status"] == "ok"
     data = result["data"]
@@ -1312,8 +1520,7 @@ async def test_add_missing_branch_field(loaded_primary_repo, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_add_no_project_loaded(tmp_path):
-    from unittest.mock import MagicMock
+async def test_add_no_project_loaded():
     plugin = MagicMock()
     plugin._config = {"agentsmd_enabled": True, "codegraph_enabled": True}
     plugin._git_binary.return_value = "git"
@@ -1384,7 +1591,8 @@ async def handle(
     git_bin = plugin._git_binary()
 
     # ── 防御 2: new path 4-step defense ──
-    new_path, path_err = _validate_new_worktree_path(git_bin, body.get("path"))
+    # Note: _validate_new_worktree_path signature is (new_path) only (no git_bin needed)
+    new_path, path_err = _validate_new_worktree_path(body.get("path"))
     if path_err is not None:
         return _make_envelope(
             success=False, reason="path_unsafe",
