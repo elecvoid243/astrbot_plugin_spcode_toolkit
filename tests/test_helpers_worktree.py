@@ -2,7 +2,14 @@
 
 Spec: docs/superpowers/specs/2026-06-26-git-worktree-management-design.md §4.2
 """
-from tools._helpers import _is_valid_ref_name, _validate_new_worktree_path
+import os
+import subprocess
+
+from tools._helpers import (
+    _is_valid_ref_name,
+    _resolve_target_worktree,
+    _validate_new_worktree_path,
+)
 
 
 # ─── _is_valid_ref_name tests (Task 1.3) ────────────────────────────────
@@ -155,4 +162,68 @@ def test_validate_new_path_rejects_blacklisted(monkeypatch, tmp_path):
     target = str(tmp_path / "feature")
     ok, err = _validate_new_worktree_path(target)
     assert ok is None
+    assert err == "path_unsafe"
+
+
+# ─── _resolve_target_worktree tests (Task 1.5) ─────────────────────────
+
+
+def _make_test_repo_with_two_worktrees(tmp_path):
+    """Helper: create primary + linked worktree, return (primary, linked).
+
+    无 monkeypatch 参数 — 测试不需要 mock,使用真实 git 命令(tmp_path 自动清理)。
+    """
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    linked = tmp_path / "linked"
+    subprocess.run(["git", "init", "-b", "main", str(primary)],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(primary), "config", "user.email", "t@t.com"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(primary), "config", "user.name", "T"],
+                   check=True, capture_output=True)
+    (primary / "a.txt").write_text("a")
+    subprocess.run(["git", "-C", str(primary), "add", "a.txt"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(primary), "commit", "-m", "init"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(primary), "worktree", "add", str(linked), "-b", "feat"],
+                   check=True, capture_output=True)
+    return primary, linked
+
+
+def test_resolve_target_finds_existing(tmp_path):
+    primary, linked = _make_test_repo_with_two_worktrees(tmp_path)
+    target_wt, err = _resolve_target_worktree("git", str(primary), str(linked))
+    assert err is None
+    assert target_wt is not None
+    # Windows / POSIX 大小写不敏感比较
+    assert os.path.normcase(target_wt["path"]) == os.path.normcase(str(linked))
+    assert target_wt["is_main"] is False
+
+
+def test_resolve_target_unknown_returns_not_found(tmp_path):
+    primary, _ = _make_test_repo_with_two_worktrees(tmp_path)
+    target_wt, err = _resolve_target_worktree(
+        "git", str(primary), str(primary / "does_not_exist")
+    )
+    assert target_wt is None
+    assert err == "worktree_not_found"
+
+
+def test_resolve_target_dotdot_returns_unsafe():
+    target_wt, err = _resolve_target_worktree("git", "/tmp", "/foo/../escape")
+    assert target_wt is None
+    assert err == "path_unsafe"
+
+
+def test_resolve_target_empty_path():
+    target_wt, err = _resolve_target_worktree("git", "/tmp", "")
+    assert target_wt is None
+    assert err == "path_unsafe"
+
+
+def test_resolve_target_relative_path():
+    target_wt, err = _resolve_target_worktree("git", "/tmp", "relative/path")
+    assert target_wt is None
     assert err == "path_unsafe"

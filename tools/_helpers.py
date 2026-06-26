@@ -382,6 +382,51 @@ def _parse_git_worktree_porcelain(text: str) -> list[dict]:
     return worktrees
 
 
+def _resolve_target_worktree(
+    git_bin: str,
+    primary_dir: str,
+    body_path: str | None,
+) -> tuple[dict | None, str | None]:
+    """REMOVE/LOCK/UNLOCK shared: format-check body path + look up in worktree list.
+
+    Spec: docs/superpowers/specs/2026-06-26-git-worktree-management-design.md §4.2
+
+    Returns:
+      (worktree_dict, None) — target found in list
+      (None, "worktree_not_found") — format OK but not in list / git list 失败
+      (None, "path_unsafe") — format check failed
+    """
+    # Step 1: basic format (same rules as _validate_new_worktree_path)
+    if not body_path or not isinstance(body_path, str):
+        return None, "path_unsafe"
+    if len(body_path) > 4096:
+        return None, "path_unsafe"
+    if not os.path.isabs(body_path):
+        return None, "path_unsafe"
+    parts_norm = body_path.replace("\\", "/").split("/")
+    if ".." in parts_norm:
+        return None, "path_unsafe"
+
+    # Step 2: enumerate worktrees via run_cmd (与项目其他 git 调用统一)
+    list_result = run_cmd(
+        [git_bin, "-C", primary_dir, "worktree", "list", "--porcelain"],
+        encoding="utf-8",
+    )
+    if not list_result["ok"]:
+        return None, "worktree_not_found"
+    try:
+        worktrees = _parse_git_worktree_porcelain(list_result["stdout"])
+    except ValueError:
+        return None, "worktree_not_found"
+
+    # Step 3: case-insensitive path match (Windows normcase)
+    target_norm = os.path.normcase(body_path)
+    for wt in worktrees:
+        if os.path.normcase(wt["path"]) == target_norm:
+            return wt, None
+    return None, "worktree_not_found"
+
+
 def _validate_worktree_param(
     git_bin: str,
     loaded_dir: str,
