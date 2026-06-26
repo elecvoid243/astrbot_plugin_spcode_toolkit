@@ -7,8 +7,18 @@ PR-D (v2.14.0, 2026-06-26).
   L1: body type guard (non-dict → invalid_body)
   L2: _git_endpoint_preflight (5-step)
   L3: _resolve_target_worktree (format + list lookup → path_unsafe / worktree_not_found)
-  L4: git worktree unlock <path> + stderr → not_locked
+  L4: git worktree unlock <path> + stderr → not_locked / worktree_not_found / git_error
   L5: _list_worktrees_safe refresh on success
+
+Note on L4 design (vs LOCK handler):
+  UNLOCK does NOT have an explicit "not_locked" business gate. Reason:
+  - git itself returns "fatal: '/target' is not locked" for already-unlocked
+    worktrees, which we map to not_locked via stderr parser.
+  - Skipping the explicit check makes UNLOCK symmetric with LOCK's design
+    philosophy ("no business gate on main worktree; let git decide") and
+    avoids redundant git list lookup overhead.
+  - All non-zero git exit codes still produce well-defined ReasonCodes
+    (worktree_not_found / not_locked / git_error) via stderr mapping.
 """
 
 from __future__ import annotations
@@ -41,11 +51,13 @@ def _map_unlock_stderr_to_reason(stderr: str) -> str:
     Real git stderr formats observed:
       - "fatal: '/target' is not a working tree"     → worktree_not_found
       - "fatal: '/target' is not locked"              → not_locked
+      - "fatal: The main working tree cannot be locked or unlocked" → git_error
+        (no special reason code; falls through to default)
     """
     s = (stderr or "").lower()
     if "is not a working tree" in s:
         return "worktree_not_found"
-    if "is not locked" in s:
+    if "not locked" in s:
         return "not_locked"
     return "git_error"
 
@@ -129,6 +141,8 @@ async def handle(
         )
 
     # ── L4: git worktree unlock <path> ──────────────────────────────
+    # No explicit "not_locked" business gate: git returns
+    # "fatal: '/target' is not locked" → mapped to not_locked below.
     args = [git_bin, "-C", directory, "worktree", "unlock", target_wt["path"]]
     result = await _run_git_async(args, encoding="utf-8", timeout=10.0)
     if not result["ok"]:
