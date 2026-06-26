@@ -198,6 +198,46 @@ def _resolve_git_common_dir(git_bin: str, worktree_path: str) -> str:
     return os.path.normcase(os.path.abspath(os.path.join(worktree_path, raw)))
 
 
+def _is_valid_ref_name(ref: str | None) -> bool:
+    """Lightweight git ref-format validation.
+
+    Allows: branch names, tag names, commit SHAs (short or full),
+    HEAD~N / HEAD^ shortcuts. Rejects: empty, too long (>1024 chars),
+    or containing characters that git's check-ref-format rejects:
+    space, ~, ^, :, ?, *, [, \\, .., ending in .lock/-/.
+    """
+    if not ref or not isinstance(ref, str):
+        return False
+    if len(ref) > 1024:
+        return False
+    # Disallowed character set per git-check-ref-format rules.
+    # Tilde / caret are normally forbidden, but HEAD~N / HEAD^ are git's
+    # revision expressions and the spec/plan tests require them to pass
+    # (see tests/test_helpers_worktree.py::test_valid_HEAD_shorthand).
+    is_head_expr = ref == "HEAD" or ref.startswith("HEAD~") or ref.startswith("HEAD^")
+    forbidden = set(" ~^:?*[\\\x00\x01\x02\x03\x04\x05\x06\x07"
+                    "\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f"
+                    "\x10\x11\x12\x13\x14\x15\x16\x17"
+                    "\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f")
+    if is_head_expr:
+        forbidden -= {"~", "^"}
+    if any(c in forbidden for c in ref):
+        return False
+    # Range-based disallowed characters
+    if ".." in ref:
+        return False
+    # No leading dash
+    if ref.startswith("-"):
+        return False
+    # No trailing characters
+    if ref.endswith(".") or ref.endswith(".lock") or ref.endswith("/"):
+        return False
+    # No @{ in middle
+    if "@{" in ref:
+        return False
+    return True
+
+
 def _parse_git_worktree_porcelain(text: str) -> list[dict]:
     """Parse `git worktree list --porcelain` output.
 
