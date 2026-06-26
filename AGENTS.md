@@ -51,6 +51,11 @@ pytest tests/test_path_safety.py
 pytest tests/test_project_cmd.py
 pytest tests/test_smoke_todo_refactor.py
 pytest tests/test_todo_list.py
+pytest tests/test_git_worktree_add.py
+pytest tests/test_git_worktree_remove.py
+pytest tests/test_git_worktree_lock.py
+pytest tests/test_git_worktree_unlock.py
+pytest tests/test_git_worktree_e2e.py
 
 # 单个测试用例(按函数名)
 pytest tests/test_file_remove.py::test_specific_function_name
@@ -114,6 +119,12 @@ astrbot_plugin_spcode_toolkit/
 │   ├── test_project_cmd.py
 │   ├── test_smoke_todo_refactor.py
 │   ├── test_todo_list.py
+│   ├── test_git_worktree_add.py
+│   ├── test_git_worktree_remove.py
+│   ├── test_git_worktree_lock.py
+│   ├── test_git_worktree_unlock.py
+│   ├── test_git_worktree_e2e.py
+│   ├── test_helpers_worktree.py
 │   └── fixtures/                 # 测试夹具(样本文件/目录)
 │
 └── tools/                        # 工具实现层
@@ -148,7 +159,11 @@ astrbot_plugin_spcode_toolkit/
         ├── git_unstage.py        #   POST /spcode/git-unstage          (v3.7+)
         ├── git_commit.py         #   POST /spcode/git-commit           (v3.7+)
         ├── file_browser.py       #   GET  /spcode/file-browser
-        └── file_restore.py       #   POST /spcode/file-restore
+        ├── file_restore.py       #   POST /spcode/file-restore
+        ├── git_worktree_add.py   #   POST /spcode/git-worktree-add     (v2.14.0 PR-B)
+        ├── git_worktree_remove.py #  POST /spcode/git-worktree-remove   (v2.14.0 PR-C)
+        ├── git_worktree_lock.py   #  POST /spcode/git-worktree-lock     (v2.14.0 PR-D)
+        └── git_worktree_unlock.py #  POST /spcode/git-worktree-unlock   (v2.14.0 PR-D)
 ```
 
 ### 架构分层
@@ -301,6 +316,10 @@ astrbot_plugin_spcode_toolkit/
 | `/spcode/git-commit` | POST | git commit(严格最小,仅 message) | body: `{message:"…"}` |
 | `/spcode/file-browser` | GET | 读取文件内容 / 列出单层目录 | `umo`, `path`, `worktree?`, `if_none_match?` |
 | `/spcode/file-restore` | POST | 从快照恢复文件 | body: `{path:"…"}` |
+| `/spcode/git-worktree-add` | POST | 新建 git worktree(CLI 旗标平铺) | body: `{path, branch?, create?, force?, detach?, base?}` |
+| `/spcode/git-worktree-remove` | POST | 删除 git worktree(硬禁 main,locked 拒,`force=true` 跳过 dirty) | body: `{path, force?}` |
+| `/spcode/git-worktree-lock` | POST | 锁定 git worktree(可选 `--reason`),main 允许但 git 自身拒绝 | body: `{path, reason?}` |
+| `/spcode/git-worktree-unlock` | POST | 解锁 git worktree,main 允许但 git 自身拒绝 | body: `{path}` |
 
 **v3.7 (2026-06-24) 新增 4 个端点**:`git-log`(读)、`git-stage`/`git-unstage`/
 `git-commit`(写,合称 git workflow)。所有写端点共享 5 步前置校验 +
@@ -353,6 +372,35 @@ astrbot_plugin_spcode_toolkit/
 - `docs/superpowers/specs/2026-06-18-git-worktree-switcher-design.md` — worktree 防御链
 - `docs/superpowers/specs/2026-06-23-git-stage-untage-commit-log-design.md` — git workflow 4 端点
 - `docs/superpowers/plans/2026-06-23-git-stage-untage-commit-log-impl.md` — 6 PR 实施记录
+- `docs/superpowers/specs/2026-06-26-git-worktree-management-design.md` —
+  v2.14.0 worktree management 4 端点 (ADD / REMOVE / LOCK / UNLOCK)
+
+**v2.14.0 (2026-06-26) worktree management 4 端点(PR-B / C / D)**:
+- `POST /spcode/git-worktree-add` — PR-B(`-b/-B/--detach/--force` 旗标平铺,
+  `create=true AND force=true` 互斥,`detach` + `create` 互斥)
+- `POST /spcode/git-worktree-remove` — PR-C(8 层防御:硬禁 main,locked 拒,
+  `force=true` 跳过 dirty)
+- `POST /spcode/git-worktree-lock` — PR-D(6 层防御,可选 `--reason`,
+  main 允许但 git 自身拒绝)
+- `POST /spcode/git-worktree-unlock` — PR-D(5 层防御,二次 unlock → `not_locked`,
+  非 idempotent)
+
+**v2.14.0 端点 (git-worktree-*) 共享约束**:
+- `_resolve_target_worktree` 4 步路径防御(格式 + list 查找):
+  含 `..` 段 / 绝对路径 / `path_unsafe` 直接拒绝
+- 业务闸:REMOVE 硬禁 main(force=true 不绕过)+ locked 拒(force=true 不绕过);
+  LOCK/UNLOCK 无 handler 层业务闸,git 自身拒绝
+- `worktree` 参数沿用 6 步防御链
+
+**v2.14.0 单元测试**:
+- `tests/test_git_worktree_add.py` — ADD 单元测试(~26 cases)
+- `tests/test_git_worktree_remove.py` — REMOVE 单元测试(~16 cases)
+- `tests/test_git_worktree_lock.py` — LOCK 单元测试(14 cases)
+- `tests/test_git_worktree_unlock.py` — UNLOCK 单元测试(14 cases)
+- `tests/test_helpers_worktree.py` — helpers 单元测试
+- `tests/test_git_worktree_e2e.py` — 5 个 E2E 生命周期 smoke 测试
+- `tests/test_webapi_end_to_end.py` — 16 路由表 + `_wrap` +
+  `register_webapi_routes` smoke (route count 14→16)
 
 ## pytest 速查
 

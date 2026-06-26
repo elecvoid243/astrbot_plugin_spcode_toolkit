@@ -403,6 +403,10 @@ AGENTS.md 是 OpenCode 提出的项目级 LLM 指令文件，功能类似 Cursor
 | `/spcode/git-commit` | POST | git commit(仅 message) | body: `{message:"…"}` |
 | `/spcode/file-browser` | GET | 读文件内容 / 列单层目录 | `umo`, `path`, `worktree?`, `if_none_match?` |
 | `/spcode/file-restore` | POST | 从快照恢复文件 | body: `{path:"…"}` |
+| `/spcode/git-worktree-add` | POST | 新建 git worktree(`-b/-B/--detach/--force` 平铺) | body: `{path, branch?, create?, force?, detach?, base?}` |
+| `/spcode/git-worktree-remove` | POST | 删除 git worktree(硬禁 main,locked 拒,`force=true` 跳过 dirty) | body: `{path, force?}` |
+| `/spcode/git-worktree-lock` | POST | 锁定 git worktree(可选 `--reason`),main 允许但 git 自身拒绝 | body: `{path, reason?}` |
+| `/spcode/git-worktree-unlock` | POST | 解锁 git worktree,main 允许但 git 自身拒绝 | body: `{path}` |
 
 **所有写端点 (git-stage / git-unstage / git-commit / file-restore) 共享约束**:
 - 单次请求文件数 ≤ 100
