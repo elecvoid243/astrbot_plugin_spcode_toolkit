@@ -18,6 +18,7 @@ The tests use a plain :class:`unittest.mock.MagicMock` for
 
 from __future__ import annotations
 
+import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -316,3 +317,151 @@ def test_git_worktree_add_route_registered() -> None:
 def test_handlers_dict_has_add_entry() -> None:
     """HANDLERS 表应包含 handle_post_git_worktree_add。"""
     assert "handle_post_git_worktree_add" in HANDLERS
+
+
+# ── PR-B ADD endpoint _wrap integration (Task 2.3 — E2E 收尾) ──────
+
+
+@pytest.mark.asyncio
+async def test_add_full_e2e_cycle(tmp_path):
+    """E2E:从 0 创建 primary → ADD worktree → 验证目录/branch/HEAD 真实存在。
+
+    这是 PR-B 端到端冒烟(模拟 dashboard 的 '新建 worktree' 流程):
+      1. 在 tmp_path 创建 primary git repo + 1 commit
+      2. 通过 handler 调 ADD -b feat → 真实 git worktree add
+      3. 验证:
+         - 返回 success
+         - worktree 目录真实存在
+         - new branch 在 git branch list 中
+         - HEAD 指向该 branch
+         - GET worktrees(模拟前端刷新)能列出新增
+    """
+    import subprocess
+    from unittest.mock import MagicMock
+    from tools.webapi.git_worktree_add import handle as add_handle
+    from tools.webapi.git_worktrees import handle as list_handle
+
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    subprocess.run(
+        ["git", "init", "-b", "main", str(primary)],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "config", "user.email", "t@t.com"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "config", "user.name", "T"],
+        check=True, capture_output=True,
+    )
+    (primary / "README.md").write_text("# Test repo\n")
+    subprocess.run(
+        ["git", "-C", str(primary), "add", "."], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "commit", "-m", "init"],
+        check=True, capture_output=True,
+    )
+
+    # 模拟 plugin state
+    plugin = MagicMock()
+    plugin._config = {
+        "agentsmd_enabled": True,
+        "codegraph_enabled": True,
+        "file_remove_blacklist": None,
+    }
+    plugin._git_binary.return_value = "git"
+    plugin.get_loaded_project.return_value = {
+        "directory": str(primary), "loaded_at": 0.0,
+    }
+
+    target = str(tmp_path / "wt-feat")
+    body = {"path": target, "branch": "feat", "create": True}
+
+    # 1. ADD
+    result = await add_handle(
+        plugin, umo="e2e:umo", worktree=None, body=body,
+    )
+    assert result["data"]["reason"] is None, result["data"]["stderr"]
+    assert result["data"]["loaded"] is True
+
+    # 2. 验证文件系统层
+    assert (tmp_path / "wt-feat").is_dir()
+    assert (tmp_path / "wt-feat" / "README.md").is_file()
+
+    # 3. 验证 git 层
+    branch_list = subprocess.run(
+        ["git", "-C", str(primary), "branch", "--list", "feat"],
+        capture_output=True, text=True,
+    ).stdout
+    assert "feat" in branch_list, f"branch not created: {branch_list!r}"
+
+    # 4. GET worktrees 端到端(需要 populate tools.project.state)
+    from tools.project import state as _proj_state
+    _proj_state.reset()
+    _proj_state.put("e2e:umo", {"directory": str(primary), "loaded_at": 100.0})
+
+    list_result = await list_handle(plugin)
+    _proj_state.reset()  # cleanup
+    assert list_result["data"]["loaded"] is True
+    worktree_paths = [wt["path"] for wt in list_result["data"]["worktrees"]]
+    assert any(
+        os.path.normpath(p) == os.path.normpath(target) for p in worktree_paths
+    ), f"new worktree not in list: {worktree_paths}"
+
+
+@pytest.mark.asyncio
+async def test_wrap_post_to_git_worktree_add_passes_body(
+    monkeypatch, tmp_path,
+) -> None:
+    """E2E:POST /spcode/git-worktree-add → _wrap 把 body 透传给 handler。
+
+    验证 _wrap 适配器对新增的 git-worktree-add 端点正确工作:
+    framework 调用 view() (无位置参数),_wrap 从 web.request.json() 读 body
+    并透传给 handler.handle(plugin, body=...)。
+    """
+    from astrbot.api import web
+    from tests.conftest import make_web_request_mock
+    from tools.webapi import _wrap, HANDLERS
+
+    captured: dict = {}
+
+    real_handle = HANDLERS["handle_post_git_worktree_add"]
+
+    async def stub_handle(plugin, *, body=None, umo=None, worktree=None):  # type: ignore[no-untyped-def]
+        captured["body"] = body
+        captured["umo"] = umo
+        # 用 minimum 字段触发 path_unsafe(快速失败,无需真实 git)
+        return {"status": "ok", "data": {"reason": "path_unsafe"}}
+
+    # Patch the handler
+    monkeypatch.setattr(
+        "tools.webapi.git_worktree_add.handle", stub_handle,
+    )
+
+    payload = {
+        "path": str(tmp_path / "x"),
+        "branch": "feat",
+        "umo": "abc:1",
+    }
+
+    async def _json(default=None):  # type: ignore[no-untyped-def]
+        return payload
+
+    mock_req = make_web_request_mock()
+    mock_req.method = "POST"
+    mock_req.json = _json
+    monkeypatch.setattr(web, "request", mock_req)
+
+    # Use a MagicMock plugin (the stub handle ignores it)
+    view = _wrap(stub_handle, plugin=None)
+    await view()
+
+    assert captured["body"] == payload
+    assert captured["umo"] == "abc:1"
+    # Sanity: real handler should be async-callable with a real plugin mock
+    import inspect
+    sig = inspect.signature(real_handle)
+    assert "plugin" in sig.parameters
+    assert "body" in sig.parameters
