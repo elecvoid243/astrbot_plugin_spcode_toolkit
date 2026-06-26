@@ -238,6 +238,57 @@ def _is_valid_ref_name(ref: str | None) -> bool:
     return True
 
 
+# 模块级黑名单常量(spec §4.2 防御 4),与 file_remove_blacklist 保持一致
+_FILE_REMOVE_BLACKLIST: list[str] = []
+
+
+def _validate_new_worktree_path(
+    new_path: str | None,
+) -> tuple[str | None, str | None]:
+    """ADD endpoint path validation. Target may not exist yet.
+
+    4-step defense:
+      1. format     — non-empty / ≤4096 chars / absolute / no ``..`` segment
+      2. .git component — no path component may be ``.git``
+      3. parent dir — must exist and be writable
+      4. blacklist  — outside _FILE_REMOVE_BLACKLIST entries
+
+    Note: Backslashes are **allowed** because Windows absolute paths naturally
+    contain them (e.g. ``C:\\Users\\foo\\feature``). Other rules (absolute,
+    no ``..`` segment, blacklist) are sufficient to defend against path
+    traversal; backslashes are just separator characters.
+
+    Returns (resolved_absolute_path, None) | (None, "path_unsafe").
+    Spec: docs/superpowers/specs/2026-06-26-git-worktree-management-design.md §4.2
+    """
+    if not new_path or not isinstance(new_path, str):
+        return None, "path_unsafe"
+    if len(new_path) > 4096:
+        return None, "path_unsafe"
+    if not os.path.isabs(new_path):
+        return None, "path_unsafe"
+    # Normalize separators for ``..`` check (both / and \\ are separators)
+    parts_norm = new_path.replace("\\", "/").split("/")
+    if ".." in parts_norm:
+        return None, "path_unsafe"
+    # Step 2: .git component check
+    parts = Path(new_path).parts
+    if any(part == ".git" for part in parts):
+        return None, "path_unsafe"
+    # Step 3: parent dir must exist and be writable
+    parent = os.path.dirname(new_path)
+    if not parent or not os.path.isdir(parent):
+        return None, "path_unsafe"
+    if not os.access(parent, os.W_OK):
+        return None, "path_unsafe"
+    # Step 4: blacklist (e.g. C:\\Windows, /etc, etc.)
+    resolved = os.path.normcase(os.path.abspath(new_path))
+    for blocked in _FILE_REMOVE_BLACKLIST:
+        if resolved.startswith(os.path.normcase(blocked)):
+            return None, "path_unsafe"
+    return new_path, None
+
+
 def _parse_git_worktree_porcelain(text: str) -> list[dict]:
     """Parse `git worktree list --porcelain` output.
 
