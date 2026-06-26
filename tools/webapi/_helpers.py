@@ -3,6 +3,7 @@
 Only imported by webapi/* handler modules. Do NOT import from main.py
 (circular dependency) or tools/_helpers.py (cross-layer coupling).
 """
+
 from __future__ import annotations
 import asyncio
 import os
@@ -61,7 +62,8 @@ async def _run_git_async(
             )
         else:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout,
+                proc.communicate(),
+                timeout=timeout,
             )
     except asyncio.TimeoutError:
         try:
@@ -144,34 +146,40 @@ class ReasonCode:
     INVALID_BODY = "invalid_body"
     INVALID_FILES = "invalid_files"
     INVALID_ALL = "invalid_all"
-    EMPTY_MESSAGE = "empty_message"          # legacy alias for INVALID_MESSAGE
-    MESSAGE_TOO_LONG = "message_too_long"    # legacy alias for INVALID_MESSAGE
-    INVALID_MESSAGE = "invalid_message"      # PR-5: git-commit 统一 message 校验
+    EMPTY_MESSAGE = "empty_message"  # legacy alias for INVALID_MESSAGE
+    MESSAGE_TOO_LONG = "message_too_long"  # legacy alias for INVALID_MESSAGE
+    INVALID_MESSAGE = "invalid_message"  # PR-5: git-commit 统一 message 校验
     INVALID_PARAM = "invalid_param"
 
     # ── 文件路径 / 范围类 ──
     PATH_UNSAFE = "path_unsafe"
-    NOTHING_STAGED = "nothing_staged"        # legacy alias for NOTHING_TO_COMMIT
+    NOTHING_STAGED = "nothing_staged"  # legacy alias for NOTHING_TO_COMMIT
     NOTHING_TO_COMMIT = "nothing_to_commit"  # PR-5: git-commit 无 staged 改动
     PRE_COMMIT_HOOK_FAILED = "pre_commit_hook_failed"  # legacy alias for HOOK_REJECTED
-    HOOK_REJECTED = "hook_rejected"          # PR-5: pre-commit / commit-msg 拒绝
-    IDENTITY_NOT_SET = "identity_not_set"    # PR-5: user.email / user.name 未设
+    HOOK_REJECTED = "hook_rejected"  # PR-5: pre-commit / commit-msg 拒绝
+    IDENTITY_NOT_SET = "identity_not_set"  # PR-5: user.email / user.name 未设
     EMPTY_REPOSITORY = "empty_repository"
-    REF_NOT_FOUND = "ref_not_found"          # v3.8 (2026-06-25): git-show ref 不存在 / ambiguous
-    COMMIT_TOO_LARGE = "commit_too_large"    # v3.8 (2026-06-25): --numstat 输出超 1 MB
+    REF_NOT_FOUND = (
+        "ref_not_found"  # v3.8 (2026-06-25): git-show ref 不存在 / ambiguous
+    )
+    COMMIT_TOO_LARGE = "commit_too_large"  # v3.8 (2026-06-25): --numstat 输出超 1 MB
 
     # ── v2.14.0 新增(worktree-mgmt 专用) ──
-    INVALID_BRANCH         = "invalid_branch"           # ADD: branch 格式非法
-    PATH_EXISTS_NONEMPTY   = "path_exists_nonempty"     # ADD: target 已存在非空
-    CANNOT_CREATE_EXISTING = "cannot_create_existing"   # ADD: branch 已存在 & create=false
-    CANNOT_CHECKOUT_MISSING = "cannot_checkout_missing" # ADD: branch 不存在 & create=false
-    WORKTREE_NOT_IN_REPO   = "worktree_not_in_repo"     # ADD: post-create 防越权兜底
-    WORKTREE_NOT_FOUND     = "worktree_not_found"       # REMOVE/LOCK/UNLOCK: list 中查不到
-    CANNOT_REMOVE_MAIN     = "cannot_remove_main"       # REMOVE: 硬禁止删 main
-    WORKTREE_LOCKED        = "worktree_locked"          # REMOVE: target 已 locked
-    WORKTREE_DIRTY         = "worktree_dirty"           # REMOVE: 工作树有改动
-    ALREADY_LOCKED         = "already_locked"           # LOCK: 已 locked
-    NOT_LOCKED             = "not_locked"               # UNLOCK: 未 locked
+    INVALID_BRANCH = "invalid_branch"  # ADD: branch 格式非法
+    PATH_EXISTS_NONEMPTY = "path_exists_nonempty"  # ADD: target 已存在非空
+    CANNOT_CREATE_EXISTING = (
+        "cannot_create_existing"  # ADD: branch 已存在 & create=false
+    )
+    CANNOT_CHECKOUT_MISSING = (
+        "cannot_checkout_missing"  # ADD: branch 不存在 & create=false
+    )
+    WORKTREE_NOT_IN_REPO = "worktree_not_in_repo"  # ADD: post-create 防越权兜底
+    WORKTREE_NOT_FOUND = "worktree_not_found"  # REMOVE/LOCK/UNLOCK: list 中查不到
+    CANNOT_REMOVE_MAIN = "cannot_remove_main"  # REMOVE: 硬禁止删 main
+    WORKTREE_LOCKED = "worktree_locked"  # REMOVE: target 已 locked
+    WORKTREE_DIRTY = "worktree_dirty"  # REMOVE: 工作树有改动
+    ALREADY_LOCKED = "already_locked"  # LOCK: 已 locked
+    NOT_LOCKED = "not_locked"  # UNLOCK: 未 locked
 
 
 def _make_envelope(
@@ -243,8 +251,11 @@ async def _git_endpoint_preflight(
     for flag in feature_flags:
         if not cfg.get(flag, True):
             return _make_envelope(
-                success=False, reason=ReasonCode.FEATURE_DISABLED,
-                elapsed_ms=0, umo=umo, worktree=worktree_param,
+                success=False,
+                reason=ReasonCode.FEATURE_DISABLED,
+                elapsed_ms=0,
+                umo=umo,
+                worktree=worktree_param,
             ), None
 
     # 2. umo 解析 + 回退
@@ -257,8 +268,11 @@ async def _git_endpoint_preflight(
             umo, info = max(items.items(), key=lambda kv: kv[1].get("loaded_at", 0.0))
     if info is None:
         return _make_envelope(
-            success=False, reason=ReasonCode.NO_PROJECT_LOADED,
-            elapsed_ms=0, umo=umo, worktree=worktree_param,
+            success=False,
+            reason=ReasonCode.NO_PROJECT_LOADED,
+            elapsed_ms=0,
+            umo=umo,
+            worktree=worktree_param,
         ), None
 
     directory = info.get("directory", "")
@@ -267,20 +281,29 @@ async def _git_endpoint_preflight(
     if worktree_param is not None and worktree_param.strip():
         validated_wt, wt_err = _validate_worktree_param(
             plugin._git_binary(),  # type: ignore[attr-defined]
-            directory, worktree_param,
+            directory,
+            worktree_param,
         )
         if wt_err is not None:
             return _make_envelope(
-                success=False, reason=ReasonCode.WORKTREE_INVALID,
-                elapsed_ms=0, umo=umo, worktree=worktree_param, directory=directory,
+                success=False,
+                reason=ReasonCode.WORKTREE_INVALID,
+                elapsed_ms=0,
+                umo=umo,
+                worktree=worktree_param,
+                directory=directory,
             ), None
         directory = validated_wt
 
     # 4. 目录存在性
     if not Path(directory).is_dir():
         return _make_envelope(
-            success=False, reason=ReasonCode.DIRECTORY_MISSING,
-            elapsed_ms=0, umo=umo, worktree=directory, directory=directory,
+            success=False,
+            reason=ReasonCode.DIRECTORY_MISSING,
+            elapsed_ms=0,
+            umo=umo,
+            worktree=directory,
+            directory=directory,
         ), None
 
     # 5. git repo probe
@@ -297,8 +320,12 @@ async def _git_endpoint_preflight(
         else:
             reason = ReasonCode.GIT_ERROR
         return _make_envelope(
-            success=False, reason=reason,
-            elapsed_ms=0, umo=umo, worktree=directory, directory=directory,
+            success=False,
+            reason=reason,
+            elapsed_ms=0,
+            umo=umo,
+            worktree=directory,
+            directory=directory,
             stderr=probe.get("stderr", "") or probe.get("error", ""),
         ), None
 

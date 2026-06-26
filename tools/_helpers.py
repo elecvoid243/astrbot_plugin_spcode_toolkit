@@ -215,10 +215,12 @@ def _is_valid_ref_name(ref: str | None) -> bool:
     # revision expressions and the spec/plan tests require them to pass
     # (see tests/test_helpers_worktree.py::test_valid_HEAD_shorthand).
     is_head_expr = ref == "HEAD" or ref.startswith("HEAD~") or ref.startswith("HEAD^")
-    forbidden = set(" ~^:?*[\\\x00\x01\x02\x03\x04\x05\x06\x07"
-                    "\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f"
-                    "\x10\x11\x12\x13\x14\x15\x16\x17"
-                    "\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f")
+    forbidden = set(
+        " ~^:?*[\\\x00\x01\x02\x03\x04\x05\x06\x07"
+        "\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f"
+        "\x10\x11\x12\x13\x14\x15\x16\x17"
+        "\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f"
+    )
     if is_head_expr:
         forbidden -= {"~", "^"}
     if any(c in forbidden for c in ref):
@@ -238,12 +240,10 @@ def _is_valid_ref_name(ref: str | None) -> bool:
     return True
 
 
-# 模块级黑名单常量(spec §4.2 防御 4),与 file_remove_blacklist 保持一致
-_FILE_REMOVE_BLACKLIST: list[str] = []
-
-
 def _validate_new_worktree_path(
     new_path: str | None,
+    *,
+    blacklist: list[str] | None = None,
 ) -> tuple[str | None, str | None]:
     """ADD endpoint path validation. Target may not exist yet.
 
@@ -251,15 +251,33 @@ def _validate_new_worktree_path(
       1. format     — non-empty / ≤4096 chars / absolute / no ``..`` segment
       2. .git component — no path component may be ``.git``
       3. parent dir — must exist and be writable
-      4. blacklist  — outside _FILE_REMOVE_BLACKLIST entries
+      4. blacklist  — outside the caller-supplied ``blacklist`` entries
+        (caller passes ``plugin._config.get("file_remove_blacklist")``;
+        see ``tools/agentsmd/_handlers.py:77`` for the same injection pattern)
 
     Note: Backslashes are **allowed** because Windows absolute paths naturally
     contain them (e.g. ``C:\\Users\\foo\\feature``). Other rules (absolute,
     no ``..`` segment, blacklist) are sufficient to defend against path
     traversal; backslashes are just separator characters.
 
+    Args:
+        new_path: candidate absolute path the caller wants to create.
+        blacklist: optional list of absolute-path prefixes that are forbidden
+            (e.g. ``["C:\\Windows", "/etc"]``). Each entry is normalized
+            case-insensitively before comparison. ``None`` / empty means no
+            user-supplied blacklist is in effect.
+
     Returns (resolved_absolute_path, None) | (None, "path_unsafe").
     Spec: docs/superpowers/specs/2026-06-26-git-worktree-management-design.md §4.2
+
+    Security note (MAJOR-1, 2026-06-26): blacklist is now a **function
+    parameter**, not a module-level mutable global. This guarantees that
+    the value used at call time is exactly what the caller passed — the
+    earlier module-level ``_FILE_REMOVE_BLACKLIST = []`` was never
+    populated in production, so the Step 4 defense was effectively a
+    no-op. The caller (POST /spcode/git-worktree-add handler, in
+    Chunk 2 of the plan) is responsible for reading the plugin config
+    and passing it in.
     """
     if not new_path or not isinstance(new_path, str):
         return None, "path_unsafe"
@@ -282,8 +300,9 @@ def _validate_new_worktree_path(
     if not os.access(parent, os.W_OK):
         return None, "path_unsafe"
     # Step 4: blacklist (e.g. C:\\Windows, /etc, etc.)
+    # MAJOR-1 fix: parameter injection instead of module-level mutable global
     resolved = os.path.normcase(os.path.abspath(new_path))
-    for blocked in _FILE_REMOVE_BLACKLIST:
+    for blocked in blacklist or []:
         if resolved.startswith(os.path.normcase(blocked)):
             return None, "path_unsafe"
     return new_path, None
@@ -324,31 +343,29 @@ def _parse_git_worktree_porcelain(text: str) -> list[dict]:
             if current is not None:
                 worktrees.append(current)
             current = {
-                "path": raw_line[len("worktree "):],
+                "path": raw_line[len("worktree ") :],
                 "branch": None,
                 "head_sha": "",
                 "is_main": False,
-                "locked": False,         # v2.14.0+
-                "locked_reason": None,    # v2.14.0+
+                "locked": False,  # v2.14.0+
+                "locked_reason": None,  # v2.14.0+
             }
         elif current is None:
-            raise ValueError(
-                f"Unexpected record outside worktree block: {raw_line!r}"
-            )
+            raise ValueError(f"Unexpected record outside worktree block: {raw_line!r}")
         elif raw_line.startswith("HEAD "):
             # Flush multiline buffer before new record
             if multiline_buffer is not None:
                 current["locked_reason"] = "\n".join(multiline_buffer)
                 multiline_buffer = None
-            current["head_sha"] = raw_line[len("HEAD "):]
+            current["head_sha"] = raw_line[len("HEAD ") :]
         elif raw_line.startswith("branch "):
             if multiline_buffer is not None:
                 current["locked_reason"] = "\n".join(multiline_buffer)
                 multiline_buffer = None
             # v2.x preserved: strip refs/heads/ prefix
-            ref = raw_line[len("branch "):]
+            ref = raw_line[len("branch ") :]
             prefix = "refs/heads/"
-            current["branch"] = ref[len(prefix):] if ref.startswith(prefix) else ref
+            current["branch"] = ref[len(prefix) :] if ref.startswith(prefix) else ref
         elif raw_line == "locked":
             if multiline_buffer is not None:
                 current["locked_reason"] = "\n".join(multiline_buffer)
@@ -362,7 +379,7 @@ def _parse_git_worktree_porcelain(text: str) -> list[dict]:
                 multiline_buffer = None
             # v2.14.0+ — git 2.30+ supports reason on same line as `locked`
             current["locked"] = True
-            current["locked_reason"] = raw_line[len("locked "):]
+            current["locked_reason"] = raw_line[len("locked ") :]
         elif multiline_buffer is not None:
             # We're inside a multiline reason continuation
             multiline_buffer.append(raw_line)
@@ -397,7 +414,12 @@ async def _list_worktrees_safe(git_bin: str, primary_dir: str) -> list[dict]:
     """
     try:
         proc = await asyncio.create_subprocess_exec(
-            git_bin, "-C", primary_dir, "worktree", "list", "--porcelain",
+            git_bin,
+            "-C",
+            primary_dir,
+            "worktree",
+            "list",
+            "--porcelain",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

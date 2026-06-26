@@ -155,15 +155,41 @@ def test_validate_new_path_none_input():
     assert err == "path_unsafe"
 
 
-def test_validate_new_path_rejects_blacklisted(monkeypatch, tmp_path):
+def test_validate_new_path_rejects_blacklisted(tmp_path):
     """防御 4: 黑名单路径(如 C:\\Windows 等)被拒绝。
 
-    通过 monkeypatch 设置 file_remove_blacklist 配置项,验证 helper 拒绝该路径。
+    通过 ``blacklist`` 关键字参数注入黑名单,验证 helper 拒绝该路径。
+    MAJOR-1 fix (2026-06-26): 改为函数参数注入(与 agentsmd/_handlers.py:77 模式一致),
+    不再依赖模块级 ``_FILE_REMOVE_BLACKLIST``(该变量生产路径上从未被填充)。
     """
-    from tools import _helpers
-    monkeypatch.setattr(_helpers, "_FILE_REMOVE_BLACKLIST", [str(tmp_path)])
     target = str(tmp_path / "feature")
-    ok, err = _validate_new_worktree_path(target)
+    ok, err = _validate_new_worktree_path(target, blacklist=[str(tmp_path)])
+    assert ok is None
+    assert err == "path_unsafe"
+
+
+def test_validate_new_path_blacklist_none_allows(tmp_path):
+    """``blacklist=None``(默认)→ 不应用黑名单,合法路径被接受。"""
+    target = str(tmp_path / "feature")
+    ok, err = _validate_new_worktree_path(target, blacklist=None)
+    assert err is None
+    assert ok == target
+
+
+def test_validate_new_path_blacklist_empty_allows(tmp_path):
+    """``blacklist=[]``(空 list)→ 不应用黑名单,合法路径被接受。"""
+    target = str(tmp_path / "feature")
+    ok, err = _validate_new_worktree_path(target, blacklist=[])
+    assert err is None
+    assert ok == target
+
+
+def test_validate_new_path_blacklist_prefix_match(tmp_path):
+    """``blacklist=[<parent>]`` → 父目录下的子路径被拒绝(prefix match)。"""
+    parent = tmp_path / "blocked"
+    parent.mkdir()
+    child = parent / "feature"
+    ok, err = _validate_new_worktree_path(str(child), blacklist=[str(parent)])
     assert ok is None
     assert err == "path_unsafe"
 

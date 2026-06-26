@@ -13,8 +13,8 @@ import pytest
 from tools.project import state as _proj_state
 from tools.webapi import git_worktrees
 
-# 启用 pytest-asyncio 严格模式
-pytestmark = pytest.mark.asyncio
+# Advisory-5 fix (2026-06-26): 不在模块级挂 asyncio mark — 否则同步 test 也会被
+# 标记,在 strict 模式下触发 PytestWarning/失败。按函数装饰 async test 即可。
 
 
 def test_make_git_worktrees_empty_envelope_has_required_fields():
@@ -30,6 +30,7 @@ def test_make_git_worktrees_empty_envelope_has_required_fields():
     assert env["data"]["elapsed_ms"] == 5
 
 
+@pytest.mark.asyncio
 async def test_handle_returns_no_project_loaded_envelope():
     """空 _loaded_projects 时,返回 no_project_loaded envelope。"""
     plugin = MagicMock()
