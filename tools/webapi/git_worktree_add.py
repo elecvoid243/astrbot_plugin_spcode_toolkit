@@ -52,6 +52,48 @@ def _validate_add_cross_fields(
     return None
 
 
+def _build_git_worktree_add_args(
+    directory: str,
+    new_path: str,
+    branch: str | None,
+    create: bool,
+    force: bool,
+    detach: bool,
+    base: str | None,
+) -> list[str]:
+    """Build `git worktree add` CLI args (excluding `git -C <dir>` prefix).
+
+    Mapping (spec §3.1.1):
+      create=True,  force=False  → ['add', '-b', branch, path]            ( + [base] if base)
+      create=False, force=True   → ['add', '-B', branch, path]            ( + [base] if base)
+      detach=True                → ['add', '--detach', path]              ( + [branch] if branch)
+      else                       → ['add', path, branch]   (basic checkout)
+    """
+    args = ["add"]
+    if create:
+        args.append("-b")
+        args.append(branch)
+        args.append(new_path)
+        if base is not None:
+            args.append(base)
+    elif force:
+        args.append("-B")
+        args.append(branch)
+        args.append(new_path)
+        if base is not None:
+            args.append(base)
+    elif detach:
+        args.append("--detach")
+        args.append(new_path)
+        if branch is not None:
+            args.append(branch)
+    else:
+        # basic: add <path> <branch>
+        args.append(new_path)
+        args.append(branch)
+    return args
+
+
 async def handle(
     plugin: "SPCodeToolkit",
     *,
