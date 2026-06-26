@@ -90,11 +90,11 @@ def test_git_show_handler_excluded_from_smoke() -> None:
     assert "handle_get_git_show" not in (set(HANDLERS.keys()) - _SKIP_FILE_BROWSER)
 
 
-def test_routes_table_has_twelve_endpoints() -> None:
-    """The route table lists the 12 documented endpoints.
+def test_routes_table_has_thirteen_endpoints() -> None:
+    """The route table lists the 13 documented endpoints.
 
-    8 v3.6 / v3.7 / v3.8 GET 端点 + 4 POST 写端点 = 12。
-    v3.8 (2026-06-25) 新增 /spcode/git-show。
+    8 GET + 5 POST = 13。
+    v2.14.0 (2026-06-26) 新增 /spcode/git-worktree-add。
     """
     routes = {entry[0] for entry in ROUTES}
     assert routes == {
@@ -110,11 +110,12 @@ def test_routes_table_has_twelve_endpoints() -> None:
         "/spcode/git-commit",  # PR-5 (2026-06-24)
         "/spcode/file-browser",
         "/spcode/file-restore",
+        "/spcode/git-worktree-add",  # v2.14.0 (2026-06-26)
     }
-    # Methods sanity: 8 GET + 4 POST
+    # Methods sanity: 8 GET + 5 POST
     methods = [m for entry in ROUTES for m in entry[1]]
     assert methods.count("GET") == 8
-    assert methods.count("POST") == 4
+    assert methods.count("POST") == 5
 
 
 # === _wrap adapter ====================================================
@@ -276,13 +277,12 @@ async def test_wrap_get_query_via_web_request(monkeypatch) -> None:
 # === register_webapi_routes ===========================================
 
 
-def test_register_webapi_routes_calls_context_twelve_times() -> None:
+def test_register_webapi_routes_calls_context_thirteen_times() -> None:
     """``register_webapi_routes`` must call ``register_web_api`` once per route."""
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    # 12 endpoints (v3.7: 6 v3.6 + git-log + git-stage + git-unstage + git-commit;
-    # v2.13: + git-status; v3.8: + git-show) -> 12 invocations
-    assert plugin.context.register_web_api.call_count == 12
+    # 13 endpoints (v2.14.0: + /spcode/git-worktree-add)
+    assert plugin.context.register_web_api.call_count == 13
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -299,6 +299,20 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 12 routes.
+    # Should not raise; should attempt all 13 routes.
     register_webapi_routes(plugin)
-    assert call_count == 12
+    assert call_count == 13
+
+
+# ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────
+
+
+def test_git_worktree_add_route_registered() -> None:
+    """git_worktree_add 应在 ROUTES 表中注册 (PR-B ADD endpoint)。"""
+    routes = [r[0] for r in ROUTES]
+    assert "/spcode/git-worktree-add" in routes
+
+
+def test_handlers_dict_has_add_entry() -> None:
+    """HANDLERS 表应包含 handle_post_git_worktree_add。"""
+    assert "handle_post_git_worktree_add" in HANDLERS
