@@ -382,6 +382,40 @@ def _parse_git_worktree_porcelain(text: str) -> list[dict]:
     return worktrees
 
 
+async def _list_worktrees_safe(git_bin: str, primary_dir: str) -> list[dict]:
+    """List worktrees asynchronously with full error tolerance.
+
+    Used by all 4 write endpoints' success paths (ADD/REMOVE/LOCK/UNLOCK) to
+    return the updated worktree list. Always returns a list (possibly empty)
+    on git errors — caller decides how to handle empty.
+
+    Returns [] on:
+      - git binary not found (FileNotFoundError)
+      - git command timeout
+      - non-zero exit code
+      - porcelain parse failure
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            git_bin, "-C", primary_dir, "worktree", "list", "--porcelain",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+    except (FileNotFoundError, asyncio.TimeoutError, Exception):
+        return []
+
+    if proc.returncode != 0:
+        return []
+
+    try:
+        return _parse_git_worktree_porcelain(
+            stdout.decode("utf-8", errors="replace").rstrip("\r\n")
+        )
+    except ValueError:
+        return []
+
+
 def _resolve_target_worktree(
     git_bin: str,
     primary_dir: str,
