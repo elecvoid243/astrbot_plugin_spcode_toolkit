@@ -28,7 +28,7 @@
 | `tools/webapi/git_worktree_unlock.py` | create | UNLOCK handler | Chunk 4 |
 | `tests/test_helpers_worktree.py` | create | 12 cases for new helpers | Chunk 1 |
 | `tests/test_git_worktree_porcelain_locked.py` | create | 6 cases for parser extension | Chunk 1 |
-| `tests/test_git_worktree_add.py` | create | 26 cases for ADD | Chunk 2 |
+| `tests/test_git_worktree_add.py` | create | 30 cases for ADD (11 cross-validate + 6 build_args + 9 stderr mapper + 4 handler) | Chunk 2 |
 | `tests/test_git_worktree_remove.py` | create | 16 cases for REMOVE | Chunk 3 |
 | `tests/test_git_worktree_lock.py` | create | 14 cases for LOCK+UNLOCK | Chunk 4 |
 | `tests/test_worktree_mgmt_e2e.py` | create | 5 cases real-repo E2E | Chunk 4 |
@@ -1052,12 +1052,157 @@ This task is just a verification step. No commit.
 
 ---
 
-### Task 1.8: Run full test suite + ruff lint to verify PR-A baseline
+### Task 1.9: Implement `_list_worktrees_safe` async helper (generic utility)
+
+**Files:**
+- Modify: `tools/_helpers.py` (add helper)
+- Test: `tests/test_helpers_worktree.py` (extend)
+
+**Why in Chunk 1:** This helper is a **generic async wrapper** around `git worktree list --porcelain`, used by ALL 4 write endpoints' success paths (ADD/REMOVE/LOCK/UNLOCK) to return the updated worktree list. Putting it in Chunk 1 avoids the TDD discipline issue of Task 2.4 (where the handler test referenced it before it was defined).
+
+- [ ] **Step 1: Write failing tests**
+
+Add to `tests/test_helpers_worktree.py`:
+
+```python
+import asyncio
+from tools._helpers import _list_worktrees_safe
+
+
+def _make_primary_with_two_worktrees(tmp_path):
+    """Helper: primary + 2 linked worktrees, return primary dir path."""
+    primary = tmp_path / "primary"
+    linked1 = tmp_path / "linked1"
+    linked2 = tmp_path / "linked2"
+    subprocess.run(["git", "init", "-b", "main", str(primary)],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(primary), "config", "user.email", "t@t.com"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(primary), "config", "user.name", "T"],
+                   check=True, capture_output=True)
+    (primary / "a.txt").write_text("a")
+    subprocess.run(["git", "-C", str(primary), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(primary), "commit", "-m", "init"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(primary), "worktree", "add", str(linked1), "-b", "f1"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(primary), "worktree", "add", str(linked2), "-b", "f2"],
+                   check=True, capture_output=True)
+    return primary
+
+
+@pytest.mark.asyncio
+async def test_list_worktrees_safe_returns_all(tmp_path):
+    """列出 primary + 2 linked → 返回 3 个 worktree dict。"""
+    primary = _make_primary_with_two_worktrees(tmp_path)
+    result = await _list_worktrees_safe("git", str(primary))
+    assert len(result) == 3
+    assert result[0]["is_main"] is True
+    assert not result[1]["is_main"]
+    assert not result[2]["is_main"]
+
+
+@pytest.mark.asyncio
+async def test_list_worktrees_safe_includes_locked_field(tmp_path):
+    """list 输出包含 locked 字段(Task 1.1 扩展后)。"""
+    primary = _make_primary_with_two_worktrees(tmp_path)
+    # Lock first linked
+    subprocess.run(["git", "-C", str(primary), "worktree", "lock", str(tmp_path / "linked1")],
+                   check=True, capture_output=True)
+    result = await _list_worktrees_safe("git", str(primary))
+    assert result[0]["locked"] is False
+    assert result[1]["locked"] is True
+    assert result[2]["locked"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_worktrees_safe_invalid_dir_returns_empty():
+    """primary 不是 git repo → 返回空 list(不抛异常)。"""
+    result = await _list_worktrees_safe("git", "/nonexistent/path")
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_list_worktrees_safe_git_unavailable(tmp_path):
+    """git binary 缺失 → 返回空 list(不抛 FileNotFoundError)。"""
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    # 用不存在的 binary 触发 FileNotFoundError
+    result = await _list_worktrees_safe("/nonexistent/git-binary", str(primary))
+    assert result == []
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `pytest tests/test_helpers_worktree.py -k "list_worktrees_safe" -v`
+Expected: FAIL with `ImportError: cannot import name '_list_worktrees_safe'`
+
+- [ ] **Step 3: Implement helper**
+
+In `tools/_helpers.py`, add after `_resolve_target_worktree`:
+
+```python
+async def _list_worktrees_safe(git_bin: str, primary_dir: str) -> list[dict]:
+    """List worktrees asynchronously with full error tolerance.
+
+    Used by all 4 write endpoints' success paths (ADD/REMOVE/LOCK/UNLOCK) to
+    return the updated worktree list. Always returns a list (possibly empty)
+    on git errors — caller decides how to handle empty.
+
+    Returns [] on:
+      - git binary not found (FileNotFoundError)
+      - git command timeout
+      - non-zero exit code
+      - porcelain parse failure
+    """
+    import asyncio
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            git_bin, "-C", primary_dir, "worktree", "list", "--porcelain",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+    except (FileNotFoundError, asyncio.TimeoutError, Exception):
+        return []
+
+    if proc.returncode != 0:
+        return []
+
+    try:
+        return _parse_git_worktree_porcelain(
+            stdout.decode("utf-8", errors="replace").rstrip("\r\n")
+        )
+    except ValueError:
+        return []
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `pytest tests/test_helpers_worktree.py -k "list_worktrees_safe" -v`
+Expected: 4 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tools/_helpers.py tests/test_helpers_worktree.py
+git commit -m "feat(helpers): add _list_worktrees_safe async wrapper
+
+Used by all 4 write endpoints (ADD/REMOVE/LOCK/UNLOCK) to return the
+updated worktree list. Tolerates git binary missing / timeout / non-zero
+exit by returning empty list.
+
+Author: elecvoid243 @ 2026-06-26"
+```
+
+---
+
+### Task 1.10: Run full test suite + ruff lint to verify PR-A baseline
 
 - [ ] **Step 1: Run full test suite**
 
 Run: `pytest tests/ -v`
-Expected: All PASS (existing 50+ tests + 42 new tests in this chunk,具体 6 parser + 1 reason + 16 ref-name + 11 new-path + 5 resolve-target + 3 GET-locked = 42 净新增)
+Expected: All PASS (existing 50+ tests + 46 new tests in this chunk,具体 6 parser + 1 reason + 16 ref-name + 11 new-path + 5 resolve-target + 3 GET-locked + 4 list-worktrees-safe = 46 净新增)
 
 - [ ] **Step 2: Run ruff lint**
 
@@ -1409,20 +1554,46 @@ def _map_add_stderr_to_reason(stderr: str) -> str:
     """Map git worktree add stderr to ReasonCode.
 
     Spec §5.2 ADD mapping table.
+
+    Disambiguation notes (CRITICAL):
+      - `branch already exists`    → `cannot_create_existing` (git: 'feat' already exists)
+      - `path already exists`      → `path_exists_nonempty` (git: '/target' already exists)
+      Both contain "already exists", but **first quoted token** decides:
+        - if quoted token is path-shaped (contains `:` or `/` on POSIX, `\\` on Windows, or starts with `~/`)
+          → path_exists_nonempty
+        - else (alphanumeric/dash/underscore only)
+          → cannot_create_existing
+    Real git stderr samples (verified via `git worktree add`):
+      - fatal: 'feature-x' already exists                       → cannot_create_existing
+      - fatal: '/repo/.worktrees/feat' already exists            → path_exists_nonempty
+      - fatal: 'feature-x' is already checked out at '/path'    → cannot_create_existing
     """
     s = stderr.lower()
-    if "is already checked out at" in s or "already exists" in s:
+
+    # Most specific patterns first (longest/most-unique match wins)
+    if "is already checked out at" in s:
         return "cannot_create_existing"
     if "is not a valid branch name" in s:
         return "invalid_branch"
     if "is a missing branch name" in s:
         return "cannot_checkout_missing"
-    if "already exists" in s:
-        return "path_exists_nonempty"
     if "cannot be used as a worktree name" in s:
         return "invalid_param"
     if "invalid start point" in s:
         return "invalid_param"
+
+    # Disambiguate "already exists":
+    # Extract the first quoted token from stderr (e.g. fatal: 'X' already exists)
+    import re
+    m = re.search(r"fatal:\s*'([^']*)'\s+already exists", stderr, re.IGNORECASE)
+    if m:
+        token = m.group(1)
+        # Path-shaped tokens: contain / or \ or : or start with ~
+        if "/" in token or "\\" in token or ":" in token or token.startswith("~"):
+            return "path_exists_nonempty"
+        # Otherwise it's a branch name
+        return "cannot_create_existing"
+
     return "git_error"
 ```
 
@@ -1563,6 +1734,15 @@ async def handle(
     import os
     import time as _time
 
+    # Body type guard:malformed JSON / non-dict body → invalid_body envelope
+    if not isinstance(body, dict):
+        from ._helpers import _make_envelope
+        return _make_envelope(
+            success=False, reason="invalid_body",
+            elapsed_ms=0, loaded=False,
+            directory="", umo=None, worktree=None,
+            stderr=f"body must be a dict, got {type(body).__name__}",
+        )
     body = body or {}
 
     t0 = _time.time()
@@ -1693,63 +1873,21 @@ async def handle(
     )
 ```
 
-Note: `_list_worktrees_safe` needs to be added to `tools/_helpers.py` if not present. Add this small helper in Task 2.4a (next task) before the rest of Task 2.4 tests can run.
+Note: `_list_worktrees_safe` is **already implemented in Chunk 1 Task 1.9** as a generic async helper. No implementation needed here. (Task 1.9 was promoted from inline Task 2.4a to fix TDD discipline issue.)
 
-- [ ] **Step 4: Add `_list_worktrees_safe` helper to `tools/_helpers.py`**
-
-Create task 2.4a before continuing. This helper is used by both ADD (success path) and will be used by REMOVE/LOCK/UNLOCK.
-
-In `tools/_helpers.py`, add:
-
-```python
-async def _list_worktrees_safe(git_bin: str, primary_dir: str) -> list[dict]:
-    """List worktrees asynchronously with error tolerance.
-
-    Used by write endpoints' success path to return the updated list.
-    Returns empty list on git error (caller decides how to handle).
-    """
-    import asyncio
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            git_bin, "-C", primary_dir, "worktree", "list", "--porcelain",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
-        if proc.returncode != 0:
-            return []
-        return _parse_git_worktree_porcelain(
-            stdout.decode("utf-8", errors="replace").rstrip("\r\n")
-        )
-    except (asyncio.TimeoutError, Exception):
-        return []
-```
-
-- [ ] **Step 5: Re-run tests to verify they pass**
+- [ ] **Step 4: Re-run tests to verify they pass**
 
 Run: `pytest tests/test_git_worktree_add.py -k "test_add_basic or test_add_relative or test_add_missing or test_add_no_project" -v`
-Expected: All PASS (assuming test_add_basic_checkout_existing_branch creates a branch first OR uses create=true to make a new branch — adjust test if needed)
+Expected: All PASS
 
-Note: `test_add_basic_checkout_existing_branch` should be changed to use `create=true` since the test repo only has `main` branch initially:
-
-```python
-@pytest.mark.asyncio
-async def test_add_basic_create_new_branch(loaded_primary_repo, tmp_path):
-    plugin, umo, primary = loaded_primary_repo
-    target = str(tmp_path / "feature")
-    body = {"path": target, "branch": "feat", "create": True}
-    result = await add_handle(plugin, umo=umo, worktree=None, body=body)
-    assert result["data"]["reason"] is None
-    assert result["data"]["created"]["is_main"] is False
-```
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add tools/webapi/git_worktree_add.py tools/_helpers.py tests/test_git_worktree_add.py
+git add tools/webapi/git_worktree_add.py tests/test_git_worktree_add.py
 git commit -m "feat(endpoint): git_worktree_add - 7-layer defense handler
 
-Includes _list_worktrees_safe async helper.
+Note: _list_worktrees_safe async helper is in Task 1.9 (Chunk 1).
+Imports _list_worktrees_safe + 2 new helpers + 11 ReasonCode from Task 1.x.
 
 Author: elecvoid243 @ 2026-06-26"
 ```
@@ -1831,7 +1969,20 @@ Expected: All PASS (existing 50+ + new from PR-A + Chunk 2 ADD)
 
 - [ ] **Step 6: Update route count assertion (12 → 13)**
 
-In `tests/test_webapi_end_to_end.py`, update `test_routes_table_has_twelve_endpoints` (or similar) to expect 13 routes. Rename test method.
+In `tests/test_webapi_end_to_end.py`, replace the existing `test_routes_table_has_twelve_endpoints` test with the new 13-route version:
+
+```python
+def test_routes_table_has_thirteen_endpoints():
+    """The route table lists the 13 documented endpoints
+    (v2.14.0: + /spcode/git-worktree-add)."""
+    from tools.webapi import ROUTES
+    assert len(ROUTES) == 13
+    # Verify no duplicate routes
+    paths = [r[0] for r in ROUTES]
+    assert len(paths) == len(set(paths)), "duplicate routes in ROUTES"
+```
+
+Also update any test that hard-codes `call_count == 12` to `== 13` (e.g., `test_register_webapi_routes_calls_context_twelve_times` → `_thirteen_times`).
 
 - [ ] **Step 7: Commit**
 
@@ -2134,6 +2285,15 @@ async def handle(
       - dirty → worktree_dirty unless force=true
     """
     import time as _time
+    # Body type guard:malformed JSON / non-dict body → invalid_body envelope
+    if not isinstance(body, dict):
+        from ._helpers import _make_envelope
+        return _make_envelope(
+            success=False, reason="invalid_body",
+            elapsed_ms=0, loaded=False,
+            directory="", umo=None, worktree=None,
+            stderr=f"body must be a dict, got {type(body).__name__}",
+        )
     body = body or {}
 
     t0 = _time.time()
@@ -2527,6 +2687,15 @@ async def handle(
 ) -> dict:
     """POST /spcode/git-worktree-lock handler."""
     import time as _time
+    # Body type guard:malformed JSON / non-dict body → invalid_body envelope
+    if not isinstance(body, dict):
+        from ._helpers import _make_envelope
+        return _make_envelope(
+            success=False, reason="invalid_body",
+            elapsed_ms=0, loaded=False,
+            directory="", umo=None, worktree=None,
+            stderr=f"body must be a dict, got {type(body).__name__}",
+        )
     body = body or {}
 
     t0 = _time.time()
@@ -2667,6 +2836,15 @@ async def handle(
 ) -> dict:
     """POST /spcode/git-worktree-unlock handler."""
     import time as _time
+    # Body type guard:malformed JSON / non-dict body → invalid_body envelope
+    if not isinstance(body, dict):
+        from ._helpers import _make_envelope
+        return _make_envelope(
+            success=False, reason="invalid_body",
+            elapsed_ms=0, loaded=False,
+            directory="", umo=None, worktree=None,
+            stderr=f"body must be a dict, got {type(body).__name__}",
+        )
     body = body or {}
 
     t0 = _time.time()
