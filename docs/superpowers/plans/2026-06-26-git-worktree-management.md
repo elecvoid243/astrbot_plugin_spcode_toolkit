@@ -2019,7 +2019,7 @@ Create `tests/test_git_worktree_remove.py`:
 """Tests for POST /spcode/git-worktree-remove endpoint."""
 import subprocess
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from tools.webapi.git_worktree_remove import (
     handle as remove_handle,
     _map_remove_stderr_to_reason,
@@ -2686,6 +2686,83 @@ async def test_lock_main_worktree_allowed(tmp_path):
     assert result["data"]["locked"] is True
 
 
+@pytest.mark.asyncio
+async def test_lock_git_returns_already_locked(tmp_path):
+    """git worktree lock 返回 'already locked' → already_locked(集成层)。"""
+    primary, links = _make_test_repo(tmp_path, n_linked=1)
+    subprocess.run(["git", "-C", str(primary), "worktree", "lock", links[0]],
+                   check=True, capture_output=True)
+    plugin = _make_plugin_mock(str(primary))
+    result = await lock_handle(plugin, umo="t:u", worktree=None,
+                                body={"path": links[0]})
+    assert result["data"]["reason"] == "already_locked"
+
+
+@pytest.mark.asyncio
+async def test_lock_success_envelope_shape(tmp_path):
+    """完整 envelope:loaded / directory / umo / worktree / locked / lock_reason / worktrees[]。"""
+    primary, links = _make_test_repo(tmp_path, n_linked=1)
+    plugin = _make_plugin_mock(str(primary))
+    result = await lock_handle(plugin, umo="t:u", worktree=None,
+                                body={"path": links[0], "reason": "integration test"})
+    data = result["data"]
+    assert data["loaded"] is True
+    assert data["directory"] == str(primary)
+    assert data["umo"] == "t:u"
+    assert data["worktree"] == links[0]
+    assert data["locked"] is True
+    assert data["lock_reason"] == "integration test"
+    assert isinstance(data["worktrees"], list)
+    assert len(data["worktrees"]) == 2
+    linked_in_list = next(w for w in data["worktrees"] if w["path"] == links[0])
+    assert linked_in_list["locked"] is True
+
+
+@pytest.mark.asyncio
+async def test_unlock_git_returns_not_locked(tmp_path):
+    """git worktree unlock 返回 'not locked' → not_locked(集成层)。"""
+    primary, links = _make_test_repo(tmp_path, n_linked=1)
+    plugin = _make_plugin_mock(str(primary))
+    result = await unlock_handle(plugin, umo="t:u", worktree=None,
+                                  body={"path": links[0]})
+    assert result["data"]["reason"] == "not_locked"
+
+
+@pytest.mark.asyncio
+async def test_unlock_success_envelope_shape(tmp_path):
+    """UNLOCK 成功响应 envelope 完整结构。"""
+    primary, links = _make_test_repo(tmp_path, n_linked=1)
+    subprocess.run(["git", "-C", str(primary), "worktree", "lock", links[0]],
+                   check=True, capture_output=True)
+    plugin = _make_plugin_mock(str(primary))
+    result = await unlock_handle(plugin, umo="t:u", worktree=None,
+                                  body={"path": links[0]})
+    data = result["data"]
+    assert data["loaded"] is True
+    assert data["directory"] == str(primary)
+    assert data["umo"] == "t:u"
+    assert data["worktree"] == links[0]
+    assert data["locked"] is False
+    assert isinstance(data["worktrees"], list)
+    linked_in_list = next(w for w in data["worktrees"] if w["path"] == links[0])
+    assert linked_in_list["locked"] is False
+
+
+@pytest.mark.asyncio
+async def test_lock_unlock_no_project_loaded():
+    """两个端点都需 preflight,未加载项目 → no_project_loaded。"""
+    plugin = MagicMock()
+    plugin._config = {"agentsmd_enabled": True, "codegraph_enabled": True}
+    plugin._git_binary.return_value = "git"
+    plugin.get_loaded_project.return_value = None
+    lock_result = await lock_handle(plugin, umo="nonexistent", worktree=None,
+                                     body={"path": "/x"})
+    assert lock_result["data"]["reason"] == "no_project_loaded"
+    unlock_result = await unlock_handle(plugin, umo="nonexistent", worktree=None,
+                                        body={"path": "/x"})
+    assert unlock_result["data"]["reason"] == "no_project_loaded"
+
+
 # ── UNLOCK tests ──
 
 @pytest.mark.asyncio
@@ -3218,16 +3295,172 @@ Author: elecvoid243 @ 2026-06-26"
 **Files:**
 - Create: `docs/webapi-git-worktree-mgmt-api.md`
 
-- [ ] **Step 1: Write docs**
+- [ ] **Step 1: Write docs (complete content)**
 
-Create file with full API contract for all 4 endpoints. Reference: spec §3.
+Create `docs/webapi-git-worktree-mgmt-api.md` with the following content (full markdown, ~250 lines):
 
-Key sections:
-- Overview (4 endpoints)
-- Per-endpoint: request/response/errors
-- i18n key namespace
-- Versioning (v2.14.0)
-- Cross-references to spec
+```markdown
+# Git Worktree Management API (v2.14.0)
+
+> **For dashboard developers:** This document specifies the 4 new POST endpoints
+> for managing git worktrees from the AstrBot Dashboard. For internal design
+> rationale, see `docs/superpowers/specs/2026-06-26-git-worktree-management-design.md`.
+
+## Overview
+
+| Endpoint | Methods | Purpose | Auth |
+|----------|---------|---------|------|
+| `/spcode/git-worktree-add` | POST | Create a new worktree | Admin (L1) |
+| `/spcode/git-worktree-remove` | POST | Remove a worktree (main forbidden) | Admin (L1) |
+| `/spcode/git-worktree-lock` | POST | Lock a worktree | Admin (L1) |
+| `/spcode/git-worktree-unlock` | POST | Unlock a worktree | Admin (L1) |
+
+All endpoints are mounted under the prefix `/spcode` and require the user to have loaded a project (via `get_loaded_project`).
+
+---
+
+## 1. POST `/spcode/git-worktree-add`
+
+### Request body
+
+```jsonc
+{
+  "path":   "/abs/path/to/worktree",  // required, ≤4096 chars, absolute
+  "branch": "feature-x",              // required iff detach=false
+  "create": false,                    // -b: force new branch
+  "force":  false,                    // -B: force reset existing branch
+  "detach": false,                    // --detach: detached HEAD
+  "base":   null                      // start-point for create=true
+}
+```
+
+### Success response (200)
+
+```jsonc
+{
+  "status": "ok",
+  "data": {
+    "loaded": true,
+    "directory": "/path/to/primary",
+    "umo": "<user-message-origin>",
+    "worktree": "/path/to/new/worktree",
+    "created": { "path": "...", "branch": "...", "head_sha": "...", "is_main": false, "locked": false },
+    "worktrees": [ /* full list (含新增) */ ],
+    "reason": null,
+    "stderr": "",
+    "elapsed_ms": 145
+  }
+}
+```
+
+### Reason codes
+
+`invalid_body`, `invalid_branch`, `invalid_param`, `path_unsafe`, `path_exists_nonempty`, `cannot_create_existing`, `cannot_checkout_missing`, `worktree_not_in_repo`, `git_error`, plus inherited preflight (`feature_disabled`, `no_project_loaded`, `directory_missing`, `not_a_git_repo`, `git_unavailable`).
+
+### Example
+
+```bash
+curl -X POST http://localhost:8080/spcode/git-worktree-add \
+  -H "Content-Type: application/json" \
+  -d '{"path": "/repo/.worktrees/feature-x", "branch": "feature-x", "create": true}'
+```
+
+---
+
+## 2. POST `/spcode/git-worktree-remove`
+
+### Request body
+
+```jsonc
+{ "path": "/abs/path/to/worktree", "force": false }
+```
+
+### Success response (200)
+
+```jsonc
+{ "status": "ok", "data": { "loaded": true, "removed_path": "...", "worktrees": [/* 剩余 */], ... } }
+```
+
+### Reason codes
+
+`worktree_not_found`, `cannot_remove_main`, `worktree_locked`, `worktree_dirty`, `path_unsafe`, `git_error`, plus inherited preflight.
+
+### Example
+
+```bash
+curl -X POST http://localhost:8080/spcode/git-worktree-remove \
+  -H "Content-Type: application/json" \
+  -d '{"path": "/repo/.worktrees/feature-x"}'
+```
+
+---
+
+## 3. POST `/spcode/git-worktree-lock`
+
+### Request body
+
+```jsonc
+{ "path": "/abs/path/to/worktree", "reason": "in use by background agent" }
+```
+
+### Success response (200)
+
+```jsonc
+{ "status": "ok", "data": { "loaded": true, "worktree": "...", "locked": true, "lock_reason": "...", "worktrees": [/* full list */], ... } }
+```
+
+### Reason codes
+
+`worktree_not_found`, `already_locked`, `path_unsafe`, `git_error`, plus inherited preflight.
+
+---
+
+## 4. POST `/spcode/git-worktree-unlock`
+
+### Request body
+
+```jsonc
+{ "path": "/abs/path/to/worktree" }
+```
+
+### Success response (200)
+
+```jsonc
+{ "status": "ok", "data": { "loaded": true, "worktree": "...", "locked": false, "worktrees": [/* full list */], ... } }
+```
+
+### Reason codes
+
+`worktree_not_found`, `not_locked`, `path_unsafe`, `git_error`, plus inherited preflight.
+
+---
+
+## i18n key namespace
+
+```jsonc
+// dashboard/src/i18n/locales/{zh-CN,en-US,...}/features/chat.json
+{
+  "spcodeWorktreeMgmt": {
+    "add":    { "error": { "invalid_body": "...", "path_unsafe": "...", /* 11 keys per endpoint */ } },
+    "remove": { "error": { ... } },
+    "lock":   { "error": { ... } },
+    "unlock": { "error": { ... } }
+  }
+}
+```
+
+## Versioning
+
+- **Version**: v2.14.0 (minor bump)
+- **Added**: 4 POST endpoints
+- **Backwards compatibility**: 100% (additive only)
+
+## Cross-references
+
+- Design spec: `docs/superpowers/specs/2026-06-26-git-worktree-management-design.md`
+- Implementation plan: `docs/superpowers/plans/2026-06-26-git-worktree-management.md`
+- Predecessor: `docs/superpowers/specs/2026-06-18-git-worktree-switcher-design.md`
+```
 
 - [ ] **Step 2: Commit**
 
@@ -3257,15 +3490,107 @@ Add 4 rows to endpoint table:
 | [`/spcode/git-worktree-unlock`](docs/webapi-git-worktree-mgmt-api.md#post-spcodegit-worktree-unlock) | POST | 解锁 git worktree | Dashboard 解锁按钮 |
 ```
 
-- [ ] **Step 2: Update `AGENTS.md`**
+- [ ] **Step 2: Update `AGENTS.md`** (4 rows + §3.7 增量 + 14→16 路由说明)
 
-Add same 4 rows to the endpoint table in §"Web API 端点". Update route count (12 → 16).
+**a)** Add 4 rows to endpoint table in §"Web API 端点"(同 README):
 
-- [ ] **Step 3: Commit**
+```markdown
+| `/spcode/git-worktree-add` | POST | 创建 git worktree(git CLI 旗标平铺) | Dashboard 新建对话框 |
+| `/spcode/git-worktree-remove` | POST | 删除 git worktree(禁用 main) | Dashboard 删除按钮 |
+| `/spcode/git-worktree-lock` | POST | 锁定 git worktree | Dashboard 锁定按钮 |
+| `/spcode/git-worktree-unlock` | POST | 解锁 git worktree | Dashboard 解锁按钮 |
+```
+
+**b)** Add new section after §3.6 called "### §3.7 worktree-mgmt v3.9":
+
+```markdown
+### §3.7 worktree-mgmt v3.9 (新增 4 端点)
+
+> 4 个 POST 端点(/spcode/git-worktree-add/-remove/-lock/-unlock)。
+> 共享基础:
+>   - `_validate_new_worktree_path`(tools/_helpers.py)— ADD 专用 4 步防御
+>   - `_resolve_target_worktree`(tools/_helpers.py)— REMOVE/LOCK/UNLOCK 共享
+>   - `_list_worktrees_safe`(tools/_helpers.py)— 4 端点成功路径统一返回最新列表
+>   - `_is_valid_ref_name`(tools/_helpers.py)— ADD 端点 branch 格式校验
+>   - 11 个新 ReasonCode:
+>     invalid_branch, path_exists_nonempty, cannot_create_existing,
+>     cannot_checkout_missing, worktree_not_in_repo, worktree_not_found,
+>     cannot_remove_main, worktree_locked, worktree_dirty,
+>     already_locked, not_locked
+
+**安全模型**:
+- ADD:7 层防御(4 步 path + 交叉校验 + ref-format + path-exists + git + post-create git-common-dir 兜底)
+- REMOVE:3 道业务闸(main 硬禁 / locked 拒 / dirty 预查 force=true 跳过)
+- LOCK/UNLOCK:format + list 预查 + already/not 闸
+
+**GET 扩展**:`/spcode/git-worktree-list` 返回数据新增 `locked: bool` / `locked_reason: str | None`(纯 additive,老客户端零影响)
+```
+
+**c)** Update route count line in §"Web API 端点":
+- Find: 旧版 12 → 16 描述
+- Replace with: "总数 12 → 16(v3.9 经 13 → 14 → 16 中间态)"
+
+- [ ] **Step 3: 同步更新 test_webapi_end_to_end.py**(与 14→16 同步)
+
+完整 diff:
+
+```python
+# 旧:test_routes_table_has_fourteen_endpoints (Chunk 3 后)
+# 新:test_routes_table_has_sixteen_endpoints
+def test_routes_table_has_sixteen_endpoints():
+    """The route table lists the 16 documented endpoints
+    (v2.14.0: + git-worktree-add / -remove / -lock / -unlock)."""
+    from tools.webapi import ROUTES
+    assert len(ROUTES) == 16
+    paths = [r[0] for r in ROUTES]
+    assert paths == sorted(set(paths)), "duplicate routes"
+    methods = [m for entry in ROUTES for m in entry[1]]
+    assert methods.count("GET") == 8
+    assert methods.count("POST") == 8
+
+
+# 旧:test_register_webapi_routes_calls_context_fourteen_times
+# 新:test_register_webapi_routes_calls_context_sixteen_times
+def test_register_webapi_routes_calls_context_sixteen_times():
+    from unittest.mock import MagicMock
+    from tools.webapi import register_webapi_routes
+    app = MagicMock()
+    register_webapi_routes(app)
+    assert app.router.add_route.call_count == 16
+
+
+# 旧:test_register_webapi_routes_continues_on_failure (call_count == 14)
+# 新:call_count == 16
+def test_register_webapi_routes_continues_on_failure():
+    # ... (call_count 断言改为 16)
+
+
+# 新增聚合测试
+def test_handlers_dict_has_four_worktree_entries():
+    from tools.webapi import HANDLERS
+    for key in (
+        "handle_post_git_worktree_add",
+        "handle_post_git_worktree_remove",
+        "handle_post_git_worktree_lock",
+        "handle_post_git_worktree_unlock",
+    ):
+        assert key in HANDLERS, f"missing handler: {key}"
+```
+
+- [ ] **Step 4: Commit (split 2 commits for clearer history)**
 
 ```bash
 git add README.md AGENTS.md
 git commit -m "docs: update README and AGENTS with 4 new worktree-mgmt endpoints
+
+Author: elecvoid243 @ 2026-06-26"
+
+git add tests/test_webapi_end_to_end.py
+git commit -m "test(webapi): sync end-to-end test to 16 routes
+
+- Rename _fourteen_endpoints → _sixteen_endpoints
+- Update call_count assertion 14 → 16
+- Add test_handlers_dict_has_four_worktree_entries (聚合)
 
 Author: elecvoid243 @ 2026-06-26"
 ```
