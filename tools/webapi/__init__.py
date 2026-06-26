@@ -1,7 +1,7 @@
 # tools/webapi/__init__.py
 """Web API endpoint handlers, extracted from main.py.
 
-This package owns the 13 ``/spcode/*`` HTTP endpoints consumed by the
+This package owns the 14 ``/spcode/*`` HTTP endpoints consumed by the
 Dashboard / WebUI:
 
   * ``/spcode/project-status``  (GET)
@@ -16,7 +16,8 @@ Dashboard / WebUI:
   * ``/spcode/git-unstage``     (POST)  # v3.7
   * ``/spcode/git-commit``      (POST)  # v3.7
   * ``/spcode/git-show``        (GET)   # v3.8 (2026-06-25)
-  * ``/spcode/git-worktree-add`` (POST)  # v2.14.0 (2026-06-26) — PR-B ADD endpoint
+  * ``/spcode/git-worktree-add``   (POST)  # v2.14.0 (2026-06-26) — PR-B ADD endpoint
+  * ``/spcode/git-worktree-remove`` (POST) # v2.14.0 (2026-06-26) — PR-C REMOVE endpoint
 
 Each endpoint lives in its own module (e.g. ``project_status.handle``).
 ``register_webapi_routes`` is the single entry-point main.py calls
@@ -48,6 +49,7 @@ from . import (
     git_status,
     git_unstage,
     git_worktree_add,  # v2.14.0 (2026-06-26)
+    git_worktree_remove,  # v2.14.0 (2026-06-26)
     git_worktrees,
     plan_mode,
     project_status,
@@ -135,6 +137,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         git_worktree_add.handle,
         "创建 git worktree(git CLI 旗标平铺)",
     ),
+    (
+        "/spcode/git-worktree-remove",  # v2.14.0 (2026-06-26)
+        ["POST"],
+        git_worktree_remove.handle,
+        "删除 git worktree (硬禁 main,locked 拒,force=true 跳过 dirty)",
+    ),
 ]
 
 # 旧方法名 -> 新模块级 handler (for back-compat / introspection)
@@ -152,6 +160,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_unstage": git_unstage.handle,
     "handle_post_git_commit": git_commit.handle,
     "handle_post_git_worktree_add": git_worktree_add.handle,  # v2.14.0 (2026-06-26)
+    "handle_post_git_worktree_remove": git_worktree_remove.handle,  # v2.14.0 (2026-06-26)
 }
 
 
@@ -234,7 +243,7 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
 
 def register_webapi_routes(plugin: SPCodeToolkit) -> None:
-    """Register all 13 ``/spcode/*`` routes against ``plugin.context``.
+    """Register all 14 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
     but never raised — a single broken endpoint should not block
@@ -267,6 +276,7 @@ __all__ = [
     "git_unstage",
     "git_commit",
     "git_worktree_add",  # v2.14.0 (2026-06-26)
+    "git_worktree_remove",  # v2.14.0 (2026-06-26)
     "git_worktrees",
     "plan_mode",
     "project_status",

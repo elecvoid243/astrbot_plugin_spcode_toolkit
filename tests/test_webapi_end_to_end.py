@@ -91,11 +91,12 @@ def test_git_show_handler_excluded_from_smoke() -> None:
     assert "handle_get_git_show" not in (set(HANDLERS.keys()) - _SKIP_FILE_BROWSER)
 
 
-def test_routes_table_has_thirteen_endpoints() -> None:
-    """The route table lists the 13 documented endpoints.
+def test_routes_table_has_fourteen_endpoints() -> None:
+    """The route table lists the 14 documented endpoints.
 
-    8 GET + 5 POST = 13。
-    v2.14.0 (2026-06-26) 新增 /spcode/git-worktree-add。
+    8 GET + 6 POST = 14。
+    v2.14.0 (2026-06-26) 新增 /spcode/git-worktree-add (PR-B)
+                + /spcode/git-worktree-remove (PR-C)。
     """
     routes = {entry[0] for entry in ROUTES}
     assert routes == {
@@ -112,11 +113,12 @@ def test_routes_table_has_thirteen_endpoints() -> None:
         "/spcode/file-browser",
         "/spcode/file-restore",
         "/spcode/git-worktree-add",  # v2.14.0 (2026-06-26)
+        "/spcode/git-worktree-remove",  # v2.14.0 (2026-06-26)
     }
-    # Methods sanity: 8 GET + 5 POST
+    # Methods sanity: 8 GET + 6 POST
     methods = [m for entry in ROUTES for m in entry[1]]
     assert methods.count("GET") == 8
-    assert methods.count("POST") == 5
+    assert methods.count("POST") == 6
 
 
 # === _wrap adapter ====================================================
@@ -278,12 +280,12 @@ async def test_wrap_get_query_via_web_request(monkeypatch) -> None:
 # === register_webapi_routes ===========================================
 
 
-def test_register_webapi_routes_calls_context_thirteen_times() -> None:
+def test_register_webapi_routes_calls_context_fourteen_times() -> None:
     """``register_webapi_routes`` must call ``register_web_api`` once per route."""
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    # 13 endpoints (v2.14.0: + /spcode/git-worktree-add)
-    assert plugin.context.register_web_api.call_count == 13
+    # 14 endpoints (v2.14.0: + /spcode/git-worktree-add + /spcode/git-worktree-remove)
+    assert plugin.context.register_web_api.call_count == 14
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -300,9 +302,9 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 13 routes.
+    # Should not raise; should attempt all 14 routes.
     register_webapi_routes(plugin)
-    assert call_count == 13
+    assert call_count == 14
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────
@@ -317,6 +319,20 @@ def test_git_worktree_add_route_registered() -> None:
 def test_handlers_dict_has_add_entry() -> None:
     """HANDLERS 表应包含 handle_post_git_worktree_add。"""
     assert "handle_post_git_worktree_add" in HANDLERS
+
+
+# ─── PR-C (v2.14.0, 2026-06-26) ────────────────────────────────────
+
+
+def test_git_worktree_remove_route_registered() -> None:
+    """git_worktree_remove 应在 ROUTES 表中注册 (PR-C REMOVE endpoint)。"""
+    routes = [r[0] for r in ROUTES]
+    assert "/spcode/git-worktree-remove" in routes
+
+
+def test_handlers_dict_has_remove_entry() -> None:
+    """HANDLERS 表应包含 handle_post_git_worktree_remove。"""
+    assert "handle_post_git_worktree_remove" in HANDLERS
 
 
 # ── PR-B ADD endpoint _wrap integration (Task 2.3 — E2E 收尾) ──────
