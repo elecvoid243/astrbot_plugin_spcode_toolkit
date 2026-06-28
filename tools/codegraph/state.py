@@ -1,8 +1,9 @@
 """codegraph 模块级状态(从 main.py:211-212 提取,PR-6 2026-06-23)。
 
 状态:
-    _codegraph_task:        asyncio.Task | None   # 当前 MCP 启动任务
-    _codegraph_dir_locks:   dict[str, Lock]       # 每目录一个 lock(防并发 init 写坏 .codegraph/)
+    _codegraph_task:           asyncio.Task | None   # 当前 MCP 启动任务
+    _codegraph_dir_locks:      dict[str, Lock]       # 每目录一个 lock(防并发 init 写坏 .codegraph/)
+    _active_project_path:      str                   # 最后成功应用的 codegraph 项目路径(v2.14.x)
 
 设计意图:把 main.py 的实例属性改为模块级单例。
 - 原 main.py:  self._codegraph_task / self._codegraph_dir_locks(per-Plugin 实例)
@@ -20,6 +21,24 @@ from typing import Optional
 
 _codegraph_task: Optional[asyncio.Task] = None
 _codegraph_dir_locks: dict[str, asyncio.Lock] = {}
+_active_project_path: str = ""
+
+
+def get_active_project_path() -> str:
+    """返回最后成功生效的 codegraph 项目路径(空字符串 = 未设定)。
+
+    由 CodegraphManager.set_project 在 MCP 重启成功后设置。
+    """
+    return _active_project_path
+
+
+def set_active_project_path(path: str) -> None:
+    """记录成功生效的 codegraph 项目路径。
+
+    仅应在 set_project 完成 MCP 重启且确认成功后调用。
+    """
+    global _active_project_path
+    _active_project_path = path
 
 
 def get_task() -> Optional[asyncio.Task]:
@@ -46,6 +65,7 @@ def reset() -> None:
     WARNING:不取消 task,不释放 lock — 调用方负责在调用 reset() 之前
     先 set_task(None) 并确保所有 lock 持有者都已退出。
     """
-    global _codegraph_task
+    global _codegraph_task, _active_project_path
     _codegraph_task = None
+    _active_project_path = ""
     _codegraph_dir_locks.clear()
