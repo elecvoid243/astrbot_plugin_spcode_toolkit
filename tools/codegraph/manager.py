@@ -113,6 +113,7 @@ class CodegraphManager:
                 config=cfg,
                 timeout=180,
             )
+            _state.set_active_project_path(target_str)
             yield event.plain_result(
                 f"✅ codegraph 已切换到新项目: {target_str}\n"
                 "   后续 LLM 调用的 codegraph_* 工具默认在此目录下操作"
