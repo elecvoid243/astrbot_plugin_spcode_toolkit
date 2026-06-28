@@ -234,6 +234,13 @@ class ProjectManager:
             async for msg in self._plugin.codegraph.set_project(event, default_project):
                 yield msg
         else:
+            # codegraph_project 未配置 → 跳过 set 不会记录 active_project。
+            # 但 /project unload 的语义是"卸载项目",需清掉上一次成功 set 的记录,
+            # 避免端点继续显示已卸载的路径(此状态与 MCP 实际 --path 可能不一致,
+            # 需前端由 mcp_running 字段做二次判断)。
+            from ..codegraph import state as _cg_state
+
+            _cg_state.set_active_project_path("")
             yield event.plain_result(
                 "ℹ️ codegraph_project 未配置,跳过 codegraph set。"
                 "MCP 当前默认项目维持原状。"

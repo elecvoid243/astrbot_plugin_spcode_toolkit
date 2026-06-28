@@ -637,7 +637,13 @@ def test_project_unload_with_default_project_set():
 
 
 def test_project_unload_without_default_project():
-    """codegraph_project 未配置 → 跳过 codegraph set,只卸 agentsmd。"""
+    """codegraph_project 未配置 → 跳过 codegraph set,只卸 agentsmd。
+
+    v2.14.x:同时清空 _active_project_path,避免端点继续显示已卸载路径。
+    """
+    from tools.codegraph import state as _cg_state
+
+    _cg_state.set_active_project_path("/old/loaded/proj")
     plugin = _make_plugin(codegraph_project="")
     _set_loaded("test:umo", {
         "directory": "/loaded/proj",
@@ -656,6 +662,8 @@ def test_project_unload_without_default_project():
     assert any("codegraph_project 未配置" in m for m in msgs)
     # 状态被清空(即便 set 跳过)
     assert _get_loaded("test:umo") is None
+    # v2.14.x: active_project 也应被清空
+    assert _cg_state.get_active_project_path() == ""
 
 
 def test_project_unload_clears_state():
