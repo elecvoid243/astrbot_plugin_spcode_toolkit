@@ -24,7 +24,7 @@ class TodoDeleteTool(_TodoToolBase):
     name: str = "todo_delete"
     description: str = (
         "Delete one or more items by id from the current todo list. "
-        "item_ids can be a single int or a list[int] for batch delete. "
+        "item_ids must be a list[int] (batch delete preferred). "
         "Any missing id → all-or-nothing rollback. "
         "Returns full list + stats. "
         "For removing the ENTIRE list (not individual items), use todo_clear."
@@ -34,19 +34,19 @@ class TodoDeleteTool(_TodoToolBase):
             "type": "object",
             "properties": {
                 "item_ids": {
-                    "anyOf": [
-                        {"type": "integer"},
-                        {"type": "array", "items": {"type": "integer"}, "minItems": 1},
-                    ],
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "minItems": 1,
+                    "maxItems": 100,
                     "description": (
-                        "Target item id(s) to delete. "
-                        "Single int → delete one. "
-                        "list[int] → batch delete. "
+                        "Target item id(s) to delete. ALWAYS pass as a JSON array, "
+                        "e.g. [3] or [1, 3, 5]. "
                         "0 is rejected (use todo_clear to wipe the entire list)."
                     ),
                 },
             },
             "required": ["item_ids"],
+            "additionalProperties": False,
         }
     )
 
@@ -59,7 +59,7 @@ class TodoDeleteTool(_TodoToolBase):
         if item_ids is None:
             return self._err(
                 "item_ids 必填",
-                proposal="传入 item_ids=3 或 item_ids=[1, 3, 5]",
+                proposal="传入 item_ids=[3] 或 item_ids=[1, 3, 5]",
             )
         # v2.12 (PR-split-modify): item_ids=0 是历史 todo_modify(mode='delete', item_ids=0)
         # 清空整个 list 的旧约定。v2.12 起该语义已迁移到 todo_clear,本工具拒绝 0

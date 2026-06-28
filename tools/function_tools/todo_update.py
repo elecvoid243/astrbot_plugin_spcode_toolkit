@@ -24,7 +24,7 @@ class TodoUpdateTool(_TodoToolBase):
     name: str = "todo_update"
     description: str = (
         "Update status and/or notes of one or more items by id. "
-        "item_ids can be a single int or a list[int] for batch update. "
+        "item_ids must be a list[int] (batch update preferred). "
         "Any missing id → all-or-nothing rollback. "
         "Returns full list + stats."
     )
@@ -33,36 +33,32 @@ class TodoUpdateTool(_TodoToolBase):
             "type": "object",
             "properties": {
                 "item_ids": {
-                    "anyOf": [
-                        {"type": "integer"},
-                        {"type": "array", "items": {"type": "integer"}, "minItems": 1},
-                    ],
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "minItems": 1,
                     "description": (
-                        "Target item id(s). "
-                        "Single int → update one item. "
-                        "list[int] → batch update with the same status/notes. Prefer batch update rather than multiple function calls."
+                        "Target item id(s). ALWAYS pass as a JSON array, "
+                        "e.g. [3] or [1, 3, 5]. "
+                        "Batch update is preferred over multiple single-item calls."
                     ),
                 },
                 "status": {
                     "type": "string",
                     "enum": ["pending", "in_progress", "done", "cancelled"],
                     "description": (
-                        "New status. Omit (or pass empty string) = keep existing status."
+                        "New status. OMIT this key to keep the current status."
                     ),
                 },
                 "notes": {
                     "type": "string",
                     "description": (
-                        "New notes value (tri-state). "
-                        'OVERWRITE: pass a non-empty string, e.g. "blocked on review". '
-                        'CLEAR: pass the empty string "". '
-                        "KEEP: OMIT this key entirely from the JSON object — "
-                        "do NOT write null, \"\", or any placeholder to express 'keep'; "
-                        "leaving the key out means 'leave the existing notes unchanged'."
+                        "New notes. OMIT this key to leave notes unchanged. "
+                        'Pass empty string "" to clear notes.'
                     ),
                 },
             },
             "required": ["item_ids"],
+            "additionalProperties": False,
         }
     )
 
@@ -77,7 +73,7 @@ class TodoUpdateTool(_TodoToolBase):
         if item_ids is None:
             return self._err(
                 "item_ids 必填",
-                proposal="传入 item_ids=3 或 item_ids=[1, 3, 5]",
+                proposal="传入 item_ids=[3] 或 item_ids=[1, 3, 5]",
             )
         # notes 三态 → TodoStore.update() 的 (notes, clear_notes) 二元
         if notes is None or notes is _todo_list_mod.UNSET_NOTES:
