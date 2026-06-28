@@ -20,6 +20,7 @@ Dashboard / WebUI:
   * ``/spcode/git-worktree-remove`` (POST) # v2.14.0 (2026-06-26) — PR-C REMOVE endpoint
   * ``/spcode/git-worktree-lock``   (POST) # v2.14.0 (2026-06-26) — PR-D LOCK endpoint
   * ``/spcode/git-worktree-unlock`` (POST) # v2.14.0 (2026-06-26) — PR-D UNLOCK endpoint
+  * ``/spcode/codegraph-status``    (GET)  # v2.14.x (2026-06-28)
 
 Each endpoint lives in its own module (e.g. ``project_status.handle``).
 ``register_webapi_routes`` is the single entry-point main.py calls
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
     from main import SPCodeToolkit
 
 from . import (
+    codegraph_status,  # v2.14.x (2026-06-28)
     file_browser,
     file_restore,
     git_commit,
@@ -159,6 +161,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         git_worktree_unlock.handle,
         "解锁 git worktree,main 允许但 git 自身拒绝",
     ),
+    (
+        "/spcode/codegraph-status",  # v2.14.x (2026-06-28)
+        ["GET"],
+        codegraph_status.handle,
+        "获取 codegraph MCP 运行状态(供 dashboard 显示)",
+    ),
 ]
 
 # 旧方法名 -> 新模块级 handler (for back-compat / introspection)
@@ -179,6 +187,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_worktree_lock": git_worktree_lock.handle,  # v2.14.0 (2026-06-26)
     "handle_post_git_worktree_remove": git_worktree_remove.handle,  # v2.14.0 (2026-06-26)
     "handle_post_git_worktree_unlock": git_worktree_unlock.handle,  # v2.14.0 (2026-06-26)
+    "handle_get_codegraph_status": codegraph_status.handle,  # v2.14.x (2026-06-28)
 }
 
 
@@ -284,6 +293,7 @@ __all__ = [
     "HANDLERS",
     "_wrap",
     "register_webapi_routes",
+    "codegraph_status",  # v2.14.x (2026-06-28)
     "file_browser",
     "file_restore",
     "git_diff",
