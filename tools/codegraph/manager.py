@@ -24,6 +24,7 @@ from .._codegraph_mcp import (
     ensure_stdio_allowlist,
     resolve_project_path,
 )
+from .._helpers import _NO_WINDOW_KWARGS
 from . import state as _state
 from .bootstrap import build_mcp_cfg
 
@@ -197,6 +198,8 @@ class CodegraphManager:
                     *cmd_args,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+                    **_NO_WINDOW_KWARGS,
                 )
             except FileNotFoundError as e:
                 yield event.plain_result(f"❌ 启动 codegraph 失败: {e}")
@@ -251,6 +254,8 @@ class CodegraphManager:
                         *retry_args,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
+                        # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+                        **_NO_WINDOW_KWARGS,
                     )
                     try:
                         stdout2, stderr2 = await asyncio.wait_for(

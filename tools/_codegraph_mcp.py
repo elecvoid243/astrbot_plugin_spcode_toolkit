@@ -143,6 +143,14 @@ def candidate_npm_roots() -> list[str]:
     if env:
         roots.append(env)
     # 2. 调 `npm config get prefix`
+    # WHY ``**_NO_WINDOW_KWARGS``: pythonw.exe 启动下 npm.exe (CUI) 弹黑窗。
+    # 复用 tools._helpers 的统一直路常量(但 codegraph_mcp 在 tools. 同级,
+    # 直接 import 也行;这里独立防御避免增加跨模块依赖)。
+    _no_window = (
+        {"creationflags": subprocess.CREATE_NO_WINDOW}
+        if sys.platform == "win32"
+        else {}
+    )
     npm_exe = shutil.which("npm")
     if npm_exe:
         try:
@@ -151,6 +159,7 @@ def candidate_npm_roots() -> list[str]:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                **_no_window,
             )
             if r.returncode == 0 and r.stdout.strip():
                 roots.append(r.stdout.strip())

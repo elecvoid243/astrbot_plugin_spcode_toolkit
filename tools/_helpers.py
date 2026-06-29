@@ -15,6 +15,32 @@ from pathlib import Path
 from typing import Any
 
 
+# 抑制 pythonw.exe 启动下子进程弹 cmd 黑窗的统一直路常量。
+#
+# WHY:
+#   AstrBot 主程序可能用 pythonw.exe(GUI subsystem,无控制台)启动;此时 Windows
+#   内核会自动为每个 CUI 子进程(git.exe / cppcheck.exe / ruff.exe / codegraph
+#   MCP launcher)创建并显示一个新控制台窗口后立即关闭——视觉上是一次黑窗闪烁。
+#   修复:在 spawn 时显式传入 ``creationflags=CREATE_NO_WINDOW``。
+#
+# 用法:
+#   - 同步: ``subprocess.run(..., **_NO_WINDOW_KWARGS)``
+#   - 异步: ``asyncio.create_subprocess_exec(..., **_NO_WINDOW_KWARGS)``
+#
+# 跨平台:
+#   - win32: 返回 ``{"creationflags": subprocess.CREATE_NO_WINDOW}``
+#   - 其他: 返回 ``{}``,相当于无操作(non-Windows 上 ``CREATE_NO_WINDOW`` 不存在)
+#
+# Refs:
+#   - subprocess.CREATE_NO_WINDOW 只在 win32 平台上有定义
+#   - asyncio.create_subprocess_exec 同样支持 ``creationflags`` kwarg
+_NO_WINDOW_KWARGS: dict[str, int] = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW}
+    if sys.platform == "win32"
+    else {}
+)
+
+
 def run_cmd(
     cmd_args: list[str],
     cwd: str = "",
@@ -26,6 +52,12 @@ def run_cmd(
     返回:
         ok=True  → {"ok": True, "stdout": str, "stderr": str, "code": int}
         ok=False → {"ok": False, "error": str}
+
+    WHY ``**_NO_WINDOW_KWARGS``:
+        本 wrapper 是 es_search / git_worktrees 等多个工具的中央入口。
+        修复 pythonw.exe(GUI subsystem)启动下**所有**走本函数 spawn 的子
+        进程弹 cmd 黑窗,只在 wrapper 这一处加 flag 即可;
+        真正的 5+ 个 caller 自动继承。详见模块顶部 ``_NO_WINDOW_KWARGS`` 注释。
     """
     if not cwd:
         cwd = "."
@@ -38,6 +70,8 @@ def run_cmd(
             timeout=timeout,
             encoding=encoding,
             errors="replace",
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+            **_NO_WINDOW_KWARGS,
         )
         return {
             "ok": result.returncode == 0,
@@ -194,6 +228,8 @@ def _resolve_git_common_dir(git_bin: str, worktree_path: str) -> str:
         text=True,
         encoding="utf-8",
         timeout=10,
+        # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+        **_NO_WINDOW_KWARGS,
     ).stdout.strip()
     return os.path.normcase(os.path.abspath(os.path.join(worktree_path, raw)))
 
@@ -422,6 +458,8 @@ async def _list_worktrees_safe(git_bin: str, primary_dir: str) -> list[dict]:
             "--porcelain",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+            **_NO_WINDOW_KWARGS,
         )
         stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
     except (FileNotFoundError, asyncio.TimeoutError, Exception):

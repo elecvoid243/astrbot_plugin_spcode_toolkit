@@ -46,7 +46,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ._helpers import detect_console_encoding, proposal_reply
+from ._helpers import _NO_WINDOW_KWARGS, detect_console_encoding, proposal_reply
 
 # ── 扩展名 → formatter 路由表 ─────────────────────────
 # 顺序敏感:.py 必须先于 ASTYLE_SUFFIXES 集合。
@@ -218,6 +218,8 @@ def _find_ruff() -> list[str]:
             capture_output=True,
             timeout=5,
             check=True,
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+            **_NO_WINDOW_KWARGS,
         )
         return [sys.executable, "-m", "ruff"]
     except Exception:
@@ -254,6 +256,8 @@ def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
             args, capture_output=True, text=True,
             encoding="utf-8", errors="replace",
             timeout=_FORMAT_TIMEOUT,
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+            **_NO_WINDOW_KWARGS,
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "ruff 超时"}
@@ -383,6 +387,8 @@ def _format_with_astyle(
             text=True,
             encoding=detect_console_encoding(),
             errors="replace",
+            # astyle.exe 是 Windows CUI 子程序;pythonw.exe 启动下抑制黑窗
+            **_NO_WINDOW_KWARGS,
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "astyle 超时"}

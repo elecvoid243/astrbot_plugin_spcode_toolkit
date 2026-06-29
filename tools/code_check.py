@@ -26,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ._helpers import detect_console_encoding, proposal_reply
+from ._helpers import _NO_WINDOW_KWARGS, detect_console_encoding, proposal_reply
 
 # 扩展名 → linter 映射
 _PY_SUFFIXES = {".py"}
@@ -257,6 +257,8 @@ def _run_cppcheck(p: Path) -> dict | None:
             encoding=detect_console_encoding(),
             errors="replace",
             timeout=30,
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+            **_NO_WINDOW_KWARGS,
         )
         # cppcheck 2.21+ 总是返回 0，所以**只**依赖输出内容判断
         all_issues = _parse_cppcheck_output(r.stderr or "")
@@ -297,6 +299,8 @@ def _find_ruff() -> list:
             capture_output=True,
             timeout=5,
             check=True,
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+            **_NO_WINDOW_KWARGS,
         )
         return [sys.executable, "-m", "ruff"]
     except Exception:
@@ -319,6 +323,8 @@ def _run_ruff(p: Path) -> dict:
             capture_output=True,
             text=True,
             timeout=30,
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+            **_NO_WINDOW_KWARGS,
         )
         if r.returncode == 0:
             return {"ok": True, "linter": "ruff", "issues": [], "count": 0}
@@ -354,6 +360,8 @@ def _find_cpplint() -> list:
             capture_output=True,
             timeout=5,
             check=True,
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+            **_NO_WINDOW_KWARGS,
         )
         return [sys.executable, "-m", "cpplint"]
     except Exception:
@@ -383,6 +391,8 @@ def _run_cpplint_only(p: Path) -> dict:
             encoding=detect_console_encoding(),
             errors="replace",
             timeout=30,
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+            **_NO_WINDOW_KWARGS,
         )
         # cpplint 把 issues 写到 STDERR，把 "Done processing" + "Total errors" 写到 STDOUT。
         # 早期版本只用 r.stdout 解析时漏掉了所有 issues（count=0 但 cpplint_total_reported>0）。

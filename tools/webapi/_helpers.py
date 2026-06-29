@@ -7,10 +7,21 @@ Only imported by webapi/* handler modules. Do NOT import from main.py
 from __future__ import annotations
 import asyncio
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Mapping
 
 from astrbot.api.web import JSONResponse  # _JSONResponseCompat 父类
+
+# pythonw.exe 启动下抑制子进程弹 cmd 黑窗的统一直路常量。
+# WHY: 见 tools/_helpers.py 中同名常量的定义;此处与 tools/_helpers.py
+# 平行复刻,因为项目约定 webapi 层不依赖 tools._helpers。
+_NO_WINDOW_KWARGS: dict[str, int] = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW}
+    if sys.platform == "win32"
+    else {}
+)
 
 
 # 从 main.py line 80-136 整体迁移,行为不变。
@@ -49,6 +60,8 @@ async def _run_git_async(
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd or None,
             env=env,
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+            **_NO_WINDOW_KWARGS,
         )
     except FileNotFoundError:
         cmd_name = cmd_args[0] if cmd_args else "command"

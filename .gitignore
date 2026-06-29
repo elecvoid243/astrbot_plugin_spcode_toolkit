@@ -8,4 +8,4 @@ data/
 docs/
 .worktrees/
 logo.png
-.codegraph/daemon.pid
+.codegraph/

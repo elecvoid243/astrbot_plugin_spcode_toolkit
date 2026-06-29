@@ -191,6 +191,15 @@ class SPCodeToolkit(star.Star):
         # git 可用性探测(失败仅记 WARNING,不阻塞插件加载)
         try:
             import subprocess as _sp
+            import sys as _sys
+
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+            # CREATE_NO_WINDOW 仅 win32 有定义(由 subprocess 模块按平台条件导出)。
+            _NO_WINDOW: dict = (
+                {"creationflags": _sp.CREATE_NO_WINDOW}
+                if _sys.platform == "win32"
+                else {}
+            )
 
             _git_probe = _sp.run(
                 [self._git_binary(), "--version"],
@@ -199,6 +208,7 @@ class SPCodeToolkit(star.Star):
                 timeout=5,
                 encoding=_GIT_DIFF_ENCODING,
                 errors="replace",
+                **_NO_WINDOW,
             )
             if _git_probe.returncode == 0:
                 _first_line = (
