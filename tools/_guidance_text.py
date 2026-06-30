@@ -31,3 +31,24 @@ FILE_REMOVE_GUIDANCE: str = f"""
 {FILE_REMOVE_GUIDANCE_MARKER}
 Priority use 'astrbot_file_remove' for file or directory deletion. DO NOT use shell commands (such as' rm '/' del ') or Python calls to bypass it.
 """
+
+
+# 6 个 todo_* 工具启用时注入到 system_prompt 末尾的约束。
+# 设计目标:让 LLM 在 multi-step 任务中"先建 list、再动手、逐条标 done",
+# 仿照 OpenCode anthropic.txt "Task Management" 段 + todowrite.txt 模板。
+# 措辞刻意用 "VERY frequently" / 粗体强调 / Do NOT batch 提升触发率与单步粒度。
+# 无 session state 依赖——只靠 self._tool_names 作为 gate。
+# 设计依据:docs/superpowers/specs/2026-06-30-todo-llm-inject-design.md
+TODO_GUIDANCE_MARKER: str = "# Todo list usage"
+
+TODO_GUIDANCE: str = f"""
+{TODO_GUIDANCE_MARKER}
+You have access to the `todo_*` tools to plan and track multi-step tasks.
+Use these tools VERY frequently:
+- Call `todo_create(items=[...])` **before** starting the first step of a multi-step task (3+ steps).
+- Call `todo_update(item_ids=[N], status="in_progress")` when you start an item.
+- Call `todo_update(item_ids=[N], status="done")` **as soon as** you complete an item. Do NOT batch.
+
+If you do not use these tools when planning, you may forget important tasks — and that is unacceptable.
+Keep at most one item in_progress at a time.
+"""

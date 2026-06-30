@@ -16,7 +16,11 @@ from typing import TYPE_CHECKING
 
 from .._helpers import _validate_worktree_param, detect_console_encoding
 from ..project import state as _proj_state
-from ._helpers import _JSONResponseCompat, _run_git_async
+from ._helpers import (
+    _JSONResponseCompat,
+    _compute_git_etag,
+    _run_git_async,
+)
 from .file_browser import (
     _common_cache_headers,
     _get_if_none_match,
@@ -197,21 +201,18 @@ def _build_stat_text(files_changed: list[dict]) -> str:
 
 
 async def _compute_diff_etag(git_bin: str, directory: str) -> str:
-    """为 git-diff 端点计算弱 ETag。
+    """为 git-diff 端点计算弱 ETag(委托给共享 helper)。
 
-    组合三件信号:
-    - ``git rev-parse HEAD`` SHA(commit 变 → diff 变)
-    - worktree 根目录 mtime(新增/删除文件变)
-    - ``.git/index`` mtime(``git add`` / ``git update-index`` 变)
+    v3.5 (2026-06-30): 委托给 ``_compute_git_etag`` 统一实现,加入 3 路
+    porcelain 探测解决 ETag staleness。详见
+    ``tools/webapi/_helpers.py:_compute_git_etag`` docstring。
 
-    Why 不用 ``git diff-files --quiet`` 探针(50-200ms):绝大多数 polling 是无
-    操作场景,HEAD/index 不变 → 直接 304;有编辑的漏检窗口 = 1 个 poll 周期
-    (5-10s),由下一次 poll 自然纠正。接受这个 staleness 以换 ETag 计算的
-    12ms 总开销(``rev-parse`` ~10ms + 2 stat ~2ms)。
+    旧 v3.4 算法只用 HEAD SHA + wt_mtime + idx_mtime,用户在 worktree 内
+    编辑文件 (不 git add) 时 3 个信号都不变 → ETag 不变 → 304 stale。
+    新算法额外包含 3 路 git 探测的 SHA-1 哈希,文件级真实变化立刻体现。
 
-    v3.3 (2026-06-21): 引入支持 HTTP 缓存。
-    v3.4 (2026-06-21) P0 perf: 加 1.5s TTL in-memory 缓存。dashboard 5-10s
-    polling 时,N 个请求共享 1 个 ``rev-parse HEAD`` 调用。
+    v3.4 P0 perf: 1.5s TTL in-memory 缓存保留(LRU 64 容量),让 dashboard
+    5-10s polling 时 N 个请求共享 1 个 ETag 计算。
     """
     # 缓存查询(命中且未过期 → 直接返回)
     now = _time.monotonic()
@@ -221,34 +222,8 @@ async def _compute_diff_etag(git_bin: str, directory: str) -> str:
         _DIFF_ETAG_CACHE.move_to_end(directory)
         return cached[0]
 
-    # 缓存未命中或过期 → 重新算
-    head_sha = "no-head"
-    try:
-        # P1 perf (v3.4, 2026-06-21): 用 _run_git_async 代替 run_sync(run_cmd, ...),
-        # 让事件循环直接管理 git 子进程,不占 ThreadPoolExecutor worker。
-        head_result = await _run_git_async(
-            [git_bin, "-C", directory, "rev-parse", "HEAD"],
-            timeout=5.0,
-            encoding="utf-8",
-        )
-        if head_result.get("ok") and head_result.get("stdout"):
-            head_sha = head_result["stdout"]
-    except Exception:
-        pass
-
-    wt_mtime = 0
-    try:
-        wt_mtime = int(Path(directory).stat().st_mtime)
-    except OSError:
-        pass
-
-    idx_mtime = 0
-    try:
-        idx_mtime = int((Path(directory) / ".git" / "index").stat().st_mtime)
-    except OSError:
-        pass
-
-    etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}"'
+    # 缓存未命中或过期 → 委托统一 helper 计算
+    etag = await _compute_git_etag(git_bin, directory)
 
     # 写入缓存 + LRU 驱逐
     _DIFF_ETAG_CACHE[directory] = (etag, now)

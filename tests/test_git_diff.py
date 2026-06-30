@@ -317,41 +317,70 @@ async def test_handle_git_diff_max_bytes_constant(plugin, tmp_path):
     assert result["data"]["max_bytes"] == 1024 * 1024
 
 
-async def test_handle_git_diff_git_calls_run_concurrently(plugin, tmp_path, monkeypatch):
-    """4 git calls must run concurrently, not serially. Verify with timing.
+async def test_handle_git_diff_git_calls_run_serial(plugin, tmp_path, monkeypatch):
+    """v3.5 (2026-06-30): 全部 git 调用按既定顺序串行执行(无 asyncio.gather)。
 
-    Each stubbed ``run_cmd`` call sleeps 0.1s + pays a real ``subprocess.run``
-    overhead (~0.07s on Windows) for the underlying ``git --version``.
+    v3.3 时代这个测试名叫 ``test_handle_git_diff_git_calls_run_concurrently``,
+    验证 probe + diff/numstat/asyncio.gather 4 路并发。
+    v3.4 (2026-06-21) P2 perf 改回串行(diff → numstat,走 page cache 命中),
+    旧测试目标已过时。
+    v3.5 (2026-06-30) ETag 修复后,git 调用数从 3 (probe + diff + numstat) 增到
+    7 (4 ETag 探测 + 1 probe + 1 diff + 1 numstat),全部按既定顺序串行。
 
-    Expected total wall time:
-      - **Concurrent** (probe + 4 gather in parallel): ~0.17s (probe) +
-        ~0.17s (4 parallel) = **~0.35s** + asyncio overhead ≈ 0.4-0.5s
-      - **Serial** (probe + 4 gather in sequence): ~0.17s + 4×0.17s = **~0.85s**
-        + overhead ≈ 0.9-1.0s
-
-    Threshold 0.6s clearly distinguishes the two while tolerating CI jitter.
+    新测试目标:
+      - 顺序:Etag 4 个 → probe → diff → numstat
+      - 计数:7 个 _run_git_async 调用
+      - 每个调用都有真实 git 路径特征(rev-parse / diff-files / diff-index /
+        ls-files / --is-inside-work-tree / diff / diff --numstat)
     """
+    from tools.webapi import git_diff as main_mod
+    from tools.webapi import _helpers as _h
+
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
 
-    import time as _t
+    real_run = main_mod._run_git_async
+    call_log: list[list[str]] = []
 
-    from tools import _helpers
-    real_run_cmd = _helpers.run_cmd
+    async def _recording_run(cmd_args, *args, **kwargs):
+        call_log.append(list(cmd_args))
+        return await real_run(cmd_args, *args, **kwargs)
 
-    def _slow_run_cmd(*args, **kwargs):
-        _t.sleep(0.1)  # each call takes 0.1s + real subprocess overhead
-        return real_run_cmd(*args, **kwargs)
+    monkeypatch.setattr(main_mod, "_run_git_async", _recording_run)
+    monkeypatch.setattr(_h, "_run_git_async", _recording_run)
 
-    from tools.webapi import git_diff as main_mod
-    monkeypatch.setattr(_helpers, "run_cmd", _slow_run_cmd)
-    monkeypatch.setattr(main_mod, "run_cmd", _slow_run_cmd, raising=False)
-
-    t0 = _t.time()
     await _gd.handle(plugin)
-    elapsed = _t.time() - t0
-    # Concurrent: ~0.4-0.5s. Serial: ~0.9-1.0s. Threshold 0.6s clearly distinguishes.
-    assert elapsed < 0.6, f"git calls appear serial (elapsed={elapsed:.2f}s)"
+
+    # 验证调用顺序:ETag 4 个 → probe → diff → numstat
+    assert len(call_log) == 7, (
+        f"Expected 7 git calls (4 ETag + probe + diff + numstat), got {len(call_log)}"
+    )
+
+    # ETag 4 个:rev-parse HEAD + diff-files + diff-index + ls-files
+    etag_cmds = [cmd[2:] for cmd in call_log[:4]]  # strip "git -C dir"
+    assert "rev-parse" in etag_cmds[0] and "HEAD" in etag_cmds[0], (
+        f"First ETag call should be rev-parse HEAD, got {etag_cmds[0]}"
+    )
+    assert "diff-files" in etag_cmds[1], (
+        f"Second ETag call should be diff-files, got {etag_cmds[1]}"
+    )
+    assert "diff-index" in etag_cmds[2] and "--cached" in etag_cmds[2], (
+        f"Third ETag call should be diff-index --cached, got {etag_cmds[2]}"
+    )
+    assert "ls-files" in etag_cmds[3] and "--others" in etag_cmds[3], (
+        f"Fourth ETag call should be ls-files --others, got {etag_cmds[3]}"
+    )
+
+    # 后续 3 个:probe + diff + numstat
+    assert "--is-inside-work-tree" in call_log[4], (
+        f"Fifth call should be probe, got {call_log[4]}"
+    )
+    assert "diff" in call_log[5] and "--numstat" not in call_log[5], (
+        f"Sixth call should be raw diff, got {call_log[5]}"
+    )
+    assert "diff" in call_log[6] and "--numstat" in call_log[6], (
+        f"Seventh call should be diff --numstat, got {call_log[6]}"
+    )
 
 
 # ── v3.4 (2026-06-21) P2 perf: git diff / numstat 串行 ──
@@ -988,13 +1017,16 @@ async def test_handle_git_diff_304_skips_git_diff_invocation(
 async def test_compute_diff_etag_caches_across_requests(
     plugin, tmp_path, monkeypatch
 ):
-    """P0 perf 修复:同 directory 在 TTL 内的多次请求共用缓存,只触发 1 次 rev-parse HEAD。
+    """P0 perf 修复:同 directory 在 TTL 内的多次请求共用缓存,只触发 1 次 ETag 计算。
 
+    v3.5 (2026-06-30): ETag 计算委托给 ``_compute_git_etag`` (在
+    ``tools/webapi/_helpers.py`` 里),所以 mock 目标也迁移到 ``_helpers._run_git_async``。
     旧实现每次都跑 ``git rev-parse HEAD``(10-20ms 进程启动)。
     新实现:同 directory 在 1.5s TTL 内复用 ETag 缓存。
     v3.4 (2026-06-21) P1 perf: P1-5 改用 _run_git_async,计数目标迁移。
     """
     from tools.webapi import git_diff as _m
+    from tools.webapi import _helpers as _h
 
     from astrbot.api import web
 
@@ -1002,11 +1034,12 @@ async def test_compute_diff_etag_caches_across_requests(
     _load_project(plugin, "test:umo", str(tmp_path))
 
     git_bin = plugin._git_binary()
-    real_run_git_async = _m._run_git_async
+    real_run_git_async = _h._run_git_async
     head_call_count = 0
 
     async def counting_run_git_async(cmd_args, *args, **kwargs):
         nonlocal head_call_count
+        # v3.5: ETag 计算委托给 _helpers,任何 rev-parse HEAD 都计入
         if (
             cmd_args
             and cmd_args[0] == git_bin
@@ -1017,7 +1050,9 @@ async def test_compute_diff_etag_caches_across_requests(
         return await real_run_git_async(cmd_args, *args, **kwargs)
 
     _m._DIFF_ETAG_CACHE.clear()
-    monkeypatch.setattr(_m, "_run_git_async", counting_run_git_async)
+    # v3.5: 必须 patch _helpers._run_git_async,因为 _compute_git_etag 在
+    # _helpers 模块命名空间里调它,不是 git_diff。
+    monkeypatch.setattr(_h, "_run_git_async", counting_run_git_async)
     monkeypatch.setattr(web, "request", make_web_request_mock({}))
 
     # 3 次连续请求:应该只触发 1 次 rev-parse HEAD
@@ -1040,8 +1075,10 @@ async def test_compute_diff_etag_invalidates_after_ttl(
 
     通过 ``monkeypatch.setattr`` 把 ``_DIFF_ETAG_TTL`` 设为 0 验证。
     v3.4 P1-5:计数目标改为 _run_git_async。
+    v3.5:计数目标迁移到 _helpers._run_git_async(ETag 计算委托)。
     """
     from tools.webapi import git_diff as _m
+    from tools.webapi import _helpers as _h
 
     from astrbot.api import web
 
@@ -1049,7 +1086,7 @@ async def test_compute_diff_etag_invalidates_after_ttl(
     _load_project(plugin, "test:umo", str(tmp_path))
 
     git_bin = plugin._git_binary()
-    real_run_git_async = _m._run_git_async
+    real_run_git_async = _h._run_git_async
     head_call_count = 0
 
     async def counting_run_git_async(cmd_args, *args, **kwargs):
@@ -1064,7 +1101,7 @@ async def test_compute_diff_etag_invalidates_after_ttl(
         return await real_run_git_async(cmd_args, *args, **kwargs)
 
     _m._DIFF_ETAG_CACHE.clear()
-    monkeypatch.setattr(_m, "_run_git_async", counting_run_git_async)
+    monkeypatch.setattr(_h, "_run_git_async", counting_run_git_async)
     monkeypatch.setattr(_m, "_DIFF_ETAG_TTL", 0.0)  # 强制每次都过期
     monkeypatch.setattr(web, "request", make_web_request_mock({}))
 
@@ -1085,8 +1122,10 @@ async def test_compute_diff_etag_per_directory_cache(
     """P0 perf 修复:不同 directory 各自独立缓存,互不污染。
 
     v3.4 P1-5:计数目标改为 _run_git_async。
+    v3.5:计数目标迁移到 _helpers._run_git_async(ETag 计算委托)。
     """
     from tools.webapi import git_diff as _m
+    from tools.webapi import _helpers as _h
 
     repo_a = tmp_path / "a"
     repo_b = tmp_path / "b"
@@ -1096,7 +1135,7 @@ async def test_compute_diff_etag_per_directory_cache(
     _init_git_repo(repo_b)
 
     git_bin = plugin._git_binary()
-    real_run_git_async = _m._run_git_async
+    real_run_git_async = _h._run_git_async
     head_call_count = 0
 
     async def counting_run_git_async(cmd_args, *args, **kwargs):
@@ -1111,7 +1150,7 @@ async def test_compute_diff_etag_per_directory_cache(
         return await real_run_git_async(cmd_args, *args, **kwargs)
 
     _m._DIFF_ETAG_CACHE.clear()
-    monkeypatch.setattr(_m, "_run_git_async", counting_run_git_async)
+    monkeypatch.setattr(_h, "_run_git_async", counting_run_git_async)
 
     # 第一次算 repo_a ETag(repo_b 的 stat 路径会先报 path 不存在但不影响计数)
     etag_a1 = await _m._compute_diff_etag(git_bin, str(repo_a))
@@ -1121,6 +1160,187 @@ async def test_compute_diff_etag_per_directory_cache(
     assert etag_a1 == etag_a2, "second repo_a should hit cache"
     assert head_call_count == 2, (
         f"3 calls on 2 dirs should trigger 2 rev-parse HEAD, got {head_call_count}"
+    )
+
+
+# ────────────────────────────────────────────────────────────────────
+# v3.5 (2026-06-30) 修复: ETag staleness 兜底
+# 背景: 旧 ETag 算法只用 worktree 根目录 mtime + .git/index mtime + HEAD SHA,
+#   当用户在工作树里编辑文件 (不 git add) 或新建未跟踪文件时:
+#     - worktree 根目录 mtime 不变
+#     - .git/index mtime 不变 (没 git add)
+#     - HEAD SHA 不变 (没 commit)
+#   → ETag 完全不变 → 带 If-None-Match 头持续 304 → dashboard 看到 stale diff。
+# 修复 (Plan A): 在 ETag 中加入 3 个 git 探测的输出哈希
+#     - git diff-files --name-only -z        (未暂存改动)
+#     - git diff-index --cached --name-only -z HEAD  (已暂存改动)
+#     - git ls-files --others --exclude-standard -z  (未跟踪文件)
+# 详细见 docs/superpowers/specs/2026-06-30-git-etag-staleness-fix.md
+# ────────────────────────────────────────────────────────────────────
+
+
+async def test_handle_git_diff_etag_changes_after_unstaged_edit(
+    plugin, tmp_path, monkeypatch
+):
+    """worktree 内文件被编辑 (不 git add) → ETag 必须变化。
+
+    旧实现: wt_mtime + idx_mtime + HEAD SHA 都不变 → ETag 不变 → 304 stale
+    新实现: 加入 ``git diff-files --name-only -z`` 探测 → 文件路径进入 ETag
+    """
+    from tools.webapi import git_diff as _m
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    _m._DIFF_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_DIFF_ETAG_TTL", 0.0)
+
+    # 1) 第一次: 无 diff, 拿 ETag
+    monkeypatch.setattr(web, "request", make_web_request_mock({}))
+    r1 = await _gd.handle(plugin)
+    etag_before = r1.headers.get("etag")
+    assert etag_before, "first response should have ETag"
+
+    # 2) 编辑 README.md (不 git add)
+    (tmp_path / "README.md").write_text("modified content", encoding="utf-8")
+
+    # 3) 第二次: 带旧 ETag 头, TTL=0 强制 cache miss
+    monkeypatch.setattr(
+        web,
+        "request",
+        make_web_request_mock(headers={"If-None-Match": etag_before}),
+    )
+    r2 = await _gd.handle(plugin)
+    assert r2.status_code == 200, (
+        f"After unstaged edit, expected 200 (new ETag), got {r2.status_code} "
+        f"— ETag still stale: {etag_before!r}"
+    )
+    etag_after = r2.headers.get("etag")
+    assert etag_after != etag_before, (
+        f"ETag must change after unstaged edit: "
+        f"before={etag_before!r}, after={etag_after!r}"
+    )
+
+
+async def test_handle_git_diff_etag_changes_after_git_add(
+    plugin, tmp_path, monkeypatch
+):
+    """git add 后 → ETag 必须变化 (即使没 commit)。"""
+    from tools.webapi import git_diff as _m
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    _m._DIFF_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_DIFF_ETAG_TTL", 0.0)
+
+    monkeypatch.setattr(web, "request", make_web_request_mock({}))
+    r1 = await _gd.handle(plugin)
+    etag_before = r1.headers.get("etag")
+
+    # git add 一个新文件 (不进 .git/index mtime 检查 → 改 idx_mtime)
+    (tmp_path / "new_staged.txt").write_text("hi", encoding="utf-8")
+    subprocess.run(["git", "add", "new_staged.txt"], cwd=tmp_path, check=True)
+
+    monkeypatch.setattr(
+        web,
+        "request",
+        make_web_request_mock(headers={"If-None-Match": etag_before}),
+    )
+    r2 = await _gd.handle(plugin)
+    assert r2.status_code == 200
+    etag_after = r2.headers.get("etag")
+    assert etag_after != etag_before, (
+        f"ETag must change after git add: "
+        f"before={etag_before!r}, after={etag_after!r}"
+    )
+
+
+async def test_handle_git_diff_etag_changes_after_untracked_file(
+    plugin, tmp_path, monkeypatch
+):
+    """新增未跟踪文件 → ETag 必须变化。
+
+    旧实现: worktree mtime 不变 (新增文件不影响根目录 mtime 在多数 FS)
+            idx_mtime 不变 (没 git add)
+            HEAD SHA 不变
+         → ETag 不变
+    新实现: ``git ls-files --others --exclude-standard -z`` 探测进入 ETag
+    """
+    from tools.webapi import git_diff as _m
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    _m._DIFF_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_DIFF_ETAG_TTL", 0.0)
+
+    monkeypatch.setattr(web, "request", make_web_request_mock({}))
+    r1 = await _gd.handle(plugin)
+    etag_before = r1.headers.get("etag")
+
+    # 新建未跟踪文件
+    (tmp_path / "brand_new.txt").write_text("untracked", encoding="utf-8")
+
+    monkeypatch.setattr(
+        web,
+        "request",
+        make_web_request_mock(headers={"If-None-Match": etag_before}),
+    )
+    r2 = await _gd.handle(plugin)
+    assert r2.status_code == 200
+    etag_after = r2.headers.get("etag")
+    assert etag_after != etag_before, (
+        f"ETag must change after untracked file added: "
+        f"before={etag_before!r}, after={etag_after!r}"
+    )
+
+
+async def test_handle_git_diff_stale_etag_no_longer_304(
+    plugin, tmp_path, monkeypatch
+):
+    """端到端: 修改文件 → 带旧 ETag 请求 → 必须 200 (不再是 304 stale)。
+
+    这是 dashboard 实际场景的回归测试: 用户编辑文件后, dashboard 带
+    上一次拿到的 ETag 来 polling, 必须收到 200 + 新 diff, 不能是 304。
+    """
+    from tools.webapi import git_diff as _m
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    _m._DIFF_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_DIFF_ETAG_TTL", 0.0)
+
+    # 1) 首次请求
+    monkeypatch.setattr(web, "request", make_web_request_mock({}))
+    r1 = await _gd.handle(plugin)
+    etag_before = r1.headers.get("etag")
+    assert r1.status_code == 200
+
+    # 2) 修改 README.md (不 git add)
+    (tmp_path / "README.md").write_text("updated", encoding="utf-8")
+
+    # 3) 带旧 ETag 请求 → 必须 200 + 新文件
+    monkeypatch.setattr(
+        web,
+        "request",
+        make_web_request_mock(headers={"If-None-Match": etag_before}),
+    )
+    r2 = await _gd.handle(plugin)
+    assert r2.status_code == 200, (
+        f"Stale ETag must not cause 304 after file change. "
+        f"Got {r2.status_code} — ETag staleness bug regressed!"
+    )
+    files_after = r2["data"]["files_changed"]
+    # 新 diff 应当包含 README.md
+    paths = {f["path"] for f in files_after}
+    assert "README.md" in paths, (
+        f"After edit, files_changed should include README.md, got {paths}"
     )
 
 

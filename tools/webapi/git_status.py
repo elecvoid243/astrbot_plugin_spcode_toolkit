@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from ._helpers import (
     _JSONResponseCompat,
+    _compute_git_etag,
     _git_endpoint_preflight,
     _make_envelope,
     _run_git_async,
@@ -173,50 +174,26 @@ def _parse_ahead_behind(rev_list_output: str) -> tuple[int, int]:
 
 
 async def _compute_status_etag(git_bin: str, directory: str) -> str:
-    """为 git-status 端点计算弱 ETag。
+    """为 git-status 端点计算弱 ETag(委托给共享 helper)。
 
-    组合三件信号(同 git-diff / git-log 策略):
-    - ``git rev-parse HEAD`` SHA(commit 变 → status 变)
-    - worktree 根目录 mtime(新增/删除文件变)
-    - ``.git/index`` mtime(``git add`` / ``git update-index`` 变)
+    v3.5 (2026-06-30): 委托给 ``_compute_git_etag`` 统一实现,加入 3 路
+    porcelain 探测解决 ETag staleness。详见
+    ``tools/webapi/_helpers.py:_compute_git_etag`` docstring。
 
-    与 git-diff / git-log 共用一个 1.5s TTL in-memory 缓存,key 为
-    directory 路径。理论可共用同一 OrderedDict,但为隔离性 + 避免
-    端点间相互污染 ETag(虽然目前 ETag 算法一致),仍维护独立缓存。
+    旧算法只用 HEAD SHA + wt_mtime + idx_mtime,用户在 worktree 内编辑
+    文件 (不 git add) 时 3 个信号都不变 → ETag 不变 → 304 stale。
+    新算法额外包含 3 路 git 探测的 SHA-1 哈希,文件级真实变化立刻体现。
+
+    1.5s TTL in-memory 缓存保留(LRU 64 容量),dashboard 5-10s polling
+    时 N 个请求共享 1 个 ETag 计算。
     """
-    from pathlib import Path
-
     now = _time.monotonic()
     cached = _STATUS_ETAG_CACHE.get(directory)
     if cached is not None and (now - cached[1]) < _STATUS_ETAG_TTL:
         _STATUS_ETAG_CACHE.move_to_end(directory)
         return cached[0]
 
-    head_sha = "no-head"
-    try:
-        head_result = await _run_git_async(
-            [git_bin, "-C", directory, "rev-parse", "HEAD"],
-            timeout=5.0,
-            encoding="utf-8",
-        )
-        if head_result.get("ok") and head_result.get("stdout"):
-            head_sha = head_result["stdout"]
-    except Exception:
-        pass
-
-    wt_mtime = 0
-    try:
-        wt_mtime = int(Path(directory).stat().st_mtime)
-    except OSError:
-        pass
-
-    idx_mtime = 0
-    try:
-        idx_mtime = int((Path(directory) / ".git" / "index").stat().st_mtime)
-    except OSError:
-        pass
-
-    etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}"'
+    etag = await _compute_git_etag(git_bin, directory)
 
     _STATUS_ETAG_CACHE[directory] = (etag, now)
     while len(_STATUS_ETAG_CACHE) > _STATUS_ETAG_CACHE_MAX:

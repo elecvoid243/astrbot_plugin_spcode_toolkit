@@ -6,6 +6,7 @@ Only imported by webapi/* handler modules. Do NOT import from main.py
 
 from __future__ import annotations
 import asyncio
+import hashlib
 import os
 import subprocess
 import sys
@@ -398,3 +399,108 @@ def _validate_repo_relative_file(
         return None, "path_unsafe"
 
     return target, None
+
+
+# ──────────────────────────────────────────────────────────
+# v3.5 (2026-06-30) ETag staleness 修复: 3 路 porcelain 探测
+# ──────────────────────────────────────────────────────────
+# 旧 ETag 算法只用 worktree 根目录 mtime + .git/index mtime + HEAD SHA,
+# 当用户在工作树里编辑文件 (不 git add) 或新建未跟踪文件时:
+#   - worktree 根目录 mtime 不变
+#   - .git/index mtime 不变 (没 git add)
+#   - HEAD SHA 不变 (没 commit)
+# → ETag 完全不变 → dashboard 持续 304 → 看到 stale 数据。
+# Plan A 修复: 在 ETag 中加入 3 路 git 探测,捕获所有可能改动。
+#   - git diff-files --name-only -z           未暂存改动 (worktree vs index)
+#   - git diff-index --cached --name-only -z HEAD  已暂存改动 (index vs HEAD)
+#   - git ls-files --others --exclude-standard -z  未跟踪文件
+# Spec: docs/superpowers/specs/2026-06-30-git-etag-staleness-fix.md
+
+
+async def _compute_porcelain_diffs(
+    git_bin: str,
+    directory: str,
+) -> tuple[str, str, str]:
+    """3 路 porcelain 探测,返回 (unstaged, staged, untracked) 文件名列表。
+
+    每个输出都是 ``-z`` 分隔的文件名列表(NUL 结尾)。失败时退化为空串,
+    调用方 hash 后仍然稳定。
+
+    性能: 3 个 git 子进程串行跑,各 5-15ms,总 ~20-40ms。
+    相比旧算法只跑 1 个 ``rev-parse HEAD``(~10ms),增加 ~20-30ms,
+    换来 ETag 真正的"文件级"精确性(不再 staleness)。
+
+    WHY 串行而非 ``asyncio.gather`` 并发: 3 个 git 进程互相竞争
+    work tree 读 I/O,串行走 page cache 反而更快更省 CPU,
+    与 git_diff.py v3.4 (2026-06-21) P2 perf 注释一致。
+    """
+    common_prefix = [git_bin, "-C", directory, "-c", "color.ui=never"]
+
+    # 1. 未暂存改动 (worktree vs index)
+    r1 = await _run_git_async(
+        common_prefix + ["diff-files", "--name-only", "-z"],
+        timeout=5.0,
+        encoding="utf-8",
+    )
+    unstaged = r1.get("stdout", "") if r1.get("ok") else ""
+
+    # 2. 已暂存改动 (index vs HEAD)
+    r2 = await _run_git_async(
+        common_prefix + ["diff-index", "--cached", "--name-only", "-z", "HEAD"],
+        timeout=5.0,
+        encoding="utf-8",
+    )
+    staged = r2.get("stdout", "") if r2.get("ok") else ""
+
+    # 3. 未跟踪文件
+    r3 = await _run_git_async(
+        common_prefix + ["ls-files", "--others", "--exclude-standard", "-z"],
+        timeout=5.0,
+        encoding="utf-8",
+    )
+    untracked = r3.get("stdout", "") if r3.get("ok") else ""
+
+    return unstaged, staged, untracked
+
+
+async def _compute_git_etag(git_bin: str, directory: str) -> str:
+    """统一 ETag 计算 (git-diff / git-status / git-log 共享)。
+
+    v3.5 (2026-06-30) 修复 ETag staleness: 在旧算法的 HEAD SHA + wt_mtime
+    + idx_mtime 基础上, 加入 3 路 porcelain 探测的 SHA-1 哈希。
+
+    组成: ``W/"<head_sha>-<wt_mtime>-<porcelain_sha>"``
+    - ``head_sha``: commit 变化时变
+    - ``wt_mtime``: 防御性保留,git 命令失败时仍能感知根目录时间变化
+    - ``porcelain_sha``: 文件级真实变化 (3 路探测合并哈希)
+
+    任意一项变化 → 整个 ETag 变化 → dashboard 收到 200 + 新数据。
+    """
+    # 1. HEAD SHA
+    head_sha = "no-head"
+    try:
+        head_result = await _run_git_async(
+            [git_bin, "-C", directory, "rev-parse", "HEAD"],
+            timeout=5.0,
+            encoding="utf-8",
+        )
+        if head_result.get("ok") and head_result.get("stdout"):
+            head_sha = head_result["stdout"].strip()
+    except Exception:
+        pass
+
+    # 2. worktree 根 mtime (defensive, git 命令全部失败时仍能感知)
+    wt_mtime = 0
+    try:
+        wt_mtime = int(Path(directory).stat().st_mtime)
+    except OSError:
+        pass
+
+    # 3. 3 路 porcelain 探测 → SHA-1 哈希 (核心 v3.5 修复)
+    unstaged, staged, untracked = await _compute_porcelain_diffs(
+        git_bin, directory
+    )
+    porcelain_src = f"{unstaged}\x00{staged}\x00{untracked}"
+    porcelain_sha = hashlib.sha1(porcelain_src.encode("utf-8")).hexdigest()[:16]
+
+    return f'W/"{head_sha}-{wt_mtime}-{porcelain_sha}"'

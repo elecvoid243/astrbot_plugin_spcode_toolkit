@@ -370,3 +370,130 @@ class TestETag:
         # 304 响应:status_code=304, headers 含 ETag
         assert second.status_code == 304
         assert second.headers["ETag"] == etag
+
+    # ──────────────────────────────────────────────────────────
+    # v3.5 (2026-06-30) ETag staleness 修复: 4 个回归测试
+    # 详细见 docs/superpowers/specs/2026-06-30-git-etag-staleness-fix.md
+    # ──────────────────────────────────────────────────────────
+
+    async def test_etag_changes_after_unstaged_edit(
+        self, monkeypatch, plugin, tmp_path: Path,
+    ) -> None:
+        """编辑 worktree 内文件 (不 git add) → ETag 必须变化。"""
+        from astrbot.api import web
+
+        _init_git_repo(tmp_path)
+        _load_project(plugin, "u:m", str(tmp_path))
+
+        _gs._STATUS_ETAG_CACHE.clear()
+        monkeypatch.setattr(_gs, "_STATUS_ETAG_TTL", 0.0)
+
+        monkeypatch.setattr(web, "request", make_web_request_mock())
+        r1 = await _gs.handle(plugin)
+        etag_before = r1.headers["ETag"]
+
+        (tmp_path / "README.md").write_text("modified", encoding="utf-8")
+
+        monkeypatch.setattr(
+            web, "request",
+            make_web_request_mock(headers={"If-None-Match": etag_before}),
+        )
+        r2 = await _gs.handle(plugin)
+        assert r2.status_code == 200, (
+            f"After unstaged edit, expected 200, got {r2.status_code} — "
+            f"ETag stale: {etag_before!r}"
+        )
+        assert r2.headers["ETag"] != etag_before
+
+    async def test_etag_changes_after_git_add(
+        self, monkeypatch, plugin, tmp_path: Path,
+    ) -> None:
+        """git add 后 → ETag 必须变化。"""
+        from astrbot.api import web
+
+        _init_git_repo(tmp_path)
+        _load_project(plugin, "u:m", str(tmp_path))
+
+        _gs._STATUS_ETAG_CACHE.clear()
+        monkeypatch.setattr(_gs, "_STATUS_ETAG_TTL", 0.0)
+
+        monkeypatch.setattr(web, "request", make_web_request_mock())
+        r1 = await _gs.handle(plugin)
+        etag_before = r1.headers["ETag"]
+
+        (tmp_path / "new.txt").write_text("hi", encoding="utf-8")
+        subprocess.run(["git", "add", "new.txt"], cwd=tmp_path, check=True)
+
+        monkeypatch.setattr(
+            web, "request",
+            make_web_request_mock(headers={"If-None-Match": etag_before}),
+        )
+        r2 = await _gs.handle(plugin)
+        assert r2.status_code == 200, (
+            f"After git add, expected 200, got {r2.status_code}"
+        )
+        assert r2.headers["ETag"] != etag_before
+
+    async def test_etag_changes_after_untracked_file(
+        self, monkeypatch, plugin, tmp_path: Path,
+    ) -> None:
+        """新增未跟踪文件 → ETag 必须变化。"""
+        from astrbot.api import web
+
+        _init_git_repo(tmp_path)
+        _load_project(plugin, "u:m", str(tmp_path))
+
+        _gs._STATUS_ETAG_CACHE.clear()
+        monkeypatch.setattr(_gs, "_STATUS_ETAG_TTL", 0.0)
+
+        monkeypatch.setattr(web, "request", make_web_request_mock())
+        r1 = await _gs.handle(plugin)
+        etag_before = r1.headers["ETag"]
+
+        (tmp_path / "untracked.txt").write_text("u", encoding="utf-8")
+
+        monkeypatch.setattr(
+            web, "request",
+            make_web_request_mock(headers={"If-None-Match": etag_before}),
+        )
+        r2 = await _gs.handle(plugin)
+        assert r2.status_code == 200, (
+            f"After untracked add, expected 200, got {r2.status_code}"
+        )
+        assert r2.headers["ETag"] != etag_before
+
+    async def test_stale_etag_no_longer_304(
+        self, monkeypatch, plugin, tmp_path: Path,
+    ) -> None:
+        """端到端: 编辑文件 → 带旧 ETag 请求 → 200 + 新文件列表 (不是 304)。"""
+        from astrbot.api import web
+
+        _init_git_repo(tmp_path)
+        _load_project(plugin, "u:m", str(tmp_path))
+
+        _gs._STATUS_ETAG_CACHE.clear()
+        monkeypatch.setattr(_gs, "_STATUS_ETAG_TTL", 0.0)
+
+        # 1) 首次
+        monkeypatch.setattr(web, "request", make_web_request_mock())
+        r1 = await _gs.handle(plugin)
+        etag_before = r1.headers["ETag"]
+        assert r1.status_code == 200
+
+        # 2) 编辑 + 新增
+        (tmp_path / "README.md").write_text("u", encoding="utf-8")
+        (tmp_path / "untracked.txt").write_text("u", encoding="utf-8")
+
+        # 3) 带旧 ETag → 必须 200 + 新文件
+        monkeypatch.setattr(
+            web, "request",
+            make_web_request_mock(headers={"If-None-Match": etag_before}),
+        )
+        r2 = await _gs.handle(plugin)
+        assert r2.status_code == 200, (
+            f"Stale ETag must not cause 304 after worktree change. "
+            f"Got {r2.status_code} — git-status ETag staleness regressed!"
+        )
+        paths = {f["path"] for f in r2["data"]["files"]}
+        assert "README.md" in paths, f"files missing README.md: {paths}"
+        assert "untracked.txt" in paths, f"files missing untracked.txt: {paths}"

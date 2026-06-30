@@ -45,6 +45,8 @@ from .tools._guidance_text import (
     PROJECT_CODEGRAPH_GUIDANCE,
     FILE_REMOVE_GUIDANCE_MARKER,
     FILE_REMOVE_GUIDANCE,
+    TODO_GUIDANCE_MARKER,
+    TODO_GUIDANCE,
 )
 # re-export FunctionTool 类供 tests/test_*.py 旧用法 (main_mod.TodoCreateTool 等)
 # v2.12 (PR-split-modify): 用 todo_add / todo_update / todo_delete 取代 todo_modify
@@ -463,6 +465,33 @@ class SPCodeToolkit(star.Star):
             return
         if inject_guidance(req, FILE_REMOVE_GUIDANCE, FILE_REMOVE_GUIDANCE_MARKER):
             logger.debug("[file_remove] 已向 system_prompt 注入优先使用指引")
+
+    @filter.on_llm_request()
+    async def _todo_inject_guidance(
+        self, event: AstrMessageEvent, req: ProviderRequest
+    ):
+        """任一 todo_* 工具启用时,把"及时更新 todo 列表"约束注入到 system_prompt 末尾。
+
+        仿照 _file_remove_inject_guidance 模式:
+        - 触发条件:任一 todo_* 工具在 self._tool_names 中
+        - 注入位置:req.system_prompt 末尾
+        - 防重复:由 inject_guidance 的 marker 机制保证
+
+        设计依据:docs/superpowers/specs/2026-06-30-todo-llm-inject-design.md
+        措辞仿照 OpenCode anthropic.txt "Task Management" 段 + todowrite.txt 模板。
+        """
+        _TODO_TOOL_NAMES = (
+            "todo_create",
+            "todo_query",
+            "todo_add",
+            "todo_update",
+            "todo_delete",
+            "todo_clear",
+        )
+        if not any(name in self._tool_names for name in _TODO_TOOL_NAMES):
+            return
+        if inject_guidance(req, TODO_GUIDANCE, TODO_GUIDANCE_MARKER):
+            logger.debug("[todo] 已向 system_prompt 注入及时更新约束")
 
     @filter.on_llm_request()
     async def _auth_guard(self, event, req: ProviderRequest):
