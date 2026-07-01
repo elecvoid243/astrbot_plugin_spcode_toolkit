@@ -347,6 +347,175 @@ async def test_log_shortstat_aligned_with_commits(monkeypatch, plugin, tmp_path:
         )
 
 
+# ──────────────────────────────────────────────────────────
+# Regression: ETag must include query filter dimensions (2026-07-01)
+#
+# Bug 背景:
+#   用户在前端 git log 页面搜索 author=elec (URL 多带 author 参数),
+#   然后点击"重置"按钮 (URL 不再带 author)。
+#   两次 URL 在 query string 维度上不同,但 git log 端点 ETag 算法
+#   只基于 ``(head_sha, wt_mtime, idx_mtime)``, **不包含** author /
+#   path / since / until / ref / n 等 query 参数。
+#   → 重置时,如果前端带着 author=elec 请求时的 ETag 来,后端判定
+#     ETag 相同 → 返回 304 空 body → 前端 UI 显示空(因为它没有
+#     缓存"不带 author 的版本",只缓存了"带 author 的版本")。
+#
+# 修复方向: ETag 必须把 query filter 维度纳入,这样 author 变化
+# 一定导致 ETag 变化 → 304 误判被消除。
+# ──────────────────────────────────────────────────────────
+
+
+async def test_log_etag_changes_when_author_filter_changes(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """author filter 变 → ETag 必须变(否则重置 filter 会拿到 304 空 body)。
+
+    设置 TTL=0 强制每次重算,清空 in-memory cache 避免跨测试污染。
+    """
+    from tools.webapi import git_log as _m
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path, n_commits=2)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    _m._LOG_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_LOG_ETAG_TTL", 0.0)
+
+    # 1) 初次: 不带 author
+    monkeypatch.setattr(web, "request", make_web_request_mock(query={}))
+    r1 = await _gl.handle(plugin)
+    etag_default = r1.headers.get("etag")
+    assert etag_default, f"first response missing ETag: {dict(r1.headers)}"
+
+    # 2) 带 author=elec 过滤
+    monkeypatch.setattr(
+        web, "request", make_web_request_mock(query={"author": "elec"})
+    )
+    r2 = await _gl.handle(plugin)
+    etag_author = r2.headers.get("etag")
+    assert etag_author
+
+    # 关键断言: ETag 必须不同
+    assert etag_author != etag_default, (
+        f"ETag must differ when author filter changes (304 staleness bug): "
+        f"default={etag_default!r}, author=elec={etag_author!r}"
+    )
+
+
+async def test_log_etag_changes_when_path_filter_changes(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """path filter 变 → ETag 必须变。"""
+    from tools.webapi import git_log as _m
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path, n_commits=3)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    _m._LOG_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_LOG_ETAG_TTL", 0.0)
+
+    monkeypatch.setattr(web, "request", make_web_request_mock(query={}))
+    r1 = await _gl.handle(plugin)
+    etag_default = r1.headers.get("etag")
+
+    monkeypatch.setattr(
+        web, "request", make_web_request_mock(query={"path": "file0.txt"})
+    )
+    r2 = await _gl.handle(plugin)
+    etag_path = r2.headers.get("etag")
+
+    assert etag_path != etag_default, (
+        f"ETag must differ when path filter changes: "
+        f"default={etag_default!r}, path=file0.txt={etag_path!r}"
+    )
+
+
+async def test_log_etag_changes_when_ref_filter_changes(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """ref 变 (HEAD → HEAD~2) → ETag 必须变。"""
+    from tools.webapi import git_log as _m
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path, n_commits=3)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    _m._LOG_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_LOG_ETAG_TTL", 0.0)
+
+    monkeypatch.setattr(
+        web, "request", make_web_request_mock(query={"ref": "HEAD"})
+    )
+    r1 = await _gl.handle(plugin)
+    etag_head = r1.headers.get("etag")
+
+    monkeypatch.setattr(
+        web, "request", make_web_request_mock(query={"ref": "HEAD~2"})
+    )
+    r2 = await _gl.handle(plugin)
+    etag_head2 = r2.headers.get("etag")
+
+    assert etag_head != etag_head2, (
+        f"ETag must differ when ref filter changes: "
+        f"HEAD={etag_head!r}, HEAD~2={etag_head2!r}"
+    )
+
+
+async def test_log_reset_author_filter_returns_200_not_304(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """端到端: 重置 author filter → 带 author=elec 的 ETag → 必须 200 + 完整历史。
+
+    这是用户报告的 bug 场景:
+      - 用户搜索 author=elec
+      - 点击"重置" (URL 不再带 author)
+      - 前端带着 author=elec 请求时的 ETag (或默认 URL 的 ETag,但默认
+        URL 还没被加载过,所以带 author 的 ETag)
+      - 后端必须返回 200 + 完整 commits,不能是 304 空
+    """
+    from tools.webapi import git_log as _m
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path, n_commits=2)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    _m._LOG_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_LOG_ETAG_TTL", 0.0)
+
+    # 1) 用户搜索 author=elec
+    monkeypatch.setattr(
+        web, "request", make_web_request_mock(query={"author": "elec"})
+    )
+    r1 = await _gl.handle(plugin)
+    etag_author = r1.headers.get("etag")
+    assert r1.status_code == 200
+    assert r1["data"]["count"] >= 0  # 任意数量,elec 仓库无此作者
+
+    # 2) 重置:URL 不带 author,带 author 请求时的 ETag
+    monkeypatch.setattr(
+        web,
+        "request",
+        make_web_request_mock(
+            query={},
+            headers={"If-None-Match": etag_author},
+        ),
+    )
+    r2 = await _gl.handle(plugin)
+
+    # 关键断言: 必须 200, 不能 304
+    assert r2.status_code == 200, (
+        f"Reset filter should return 200, got {r2.status_code} — "
+        f"ETag from author=elec request incorrectly matched default "
+        f"request (304 staleness bug)"
+    )
+    # 必须有完整历史
+    assert r2["data"]["count"] == 2, (
+        f"Reset filter should show full history (2 commits), "
+        f"got {r2['data']['count']}: {r2['data']['commits']}"
+    )
+
+
 async def test_log_shortstat_values_nonzero_for_simple_repo(
     monkeypatch,
     plugin,

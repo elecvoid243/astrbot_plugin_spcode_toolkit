@@ -299,12 +299,42 @@ def _parse_combined_log_output(raw: str) -> list[dict]:
 # ──────────────────────────────────────────────────────────
 
 
-async def _compute_log_etag(git_bin: str, directory: str) -> str:
-    """为 git-log 端点计算弱 ETag。"""
+async def _compute_log_etag(
+    git_bin: str,
+    directory: str,
+    *,
+    query_fingerprint: str = "",
+) -> str:
+    """为 git-log 端点计算弱 ETag。
+
+    v3.10 (2026-07-01) 修复 (Plan A): 引入 ``query_fingerprint`` 参数,
+    把 query string 维度 (ref / n / path / author / since / until) 的指纹
+    纳入 ETag。
+
+    Bug 背景: 旧算法 ETag 只基于 ``(head_sha, wt_mtime, idx_mtime)``,
+    不区分 query 参数。dashboard 场景:
+      1. 用户搜索 author=elec → 后端返回 ETag_A + 过滤结果
+      2. 用户点"重置" → URL 不再带 author → 前端可能带 ETag_A
+         (或根本没缓存 default ETag)
+      3. 后端 ETag_A == default ETag → 304 空 body → UI 显示空
+
+    修复: query_fingerprint 参与 cache key 与 ETag 字符串, author / path
+    / ref 等任意参数变化 → ETag 必变 → 304 误判被消除。
+
+    Args:
+        git_bin: ``git`` 可执行路径(由 caller 解析)
+        directory: 工作树根目录
+        query_fingerprint: 稳定的 query 字符串指纹 (由 caller 在 n/ref/path/
+            author/since/until 校验通过后构造),用 ``|`` 分隔保持可读。
+            为空串时行为与 v3.9 等价(无 query 维度的请求)。
+    """
+    cache_key = (
+        f"{directory}\x00{query_fingerprint}" if query_fingerprint else directory
+    )
     now = _time.monotonic()
-    cached = _LOG_ETAG_CACHE.get(directory)
+    cached = _LOG_ETAG_CACHE.get(cache_key)
     if cached is not None and (now - cached[1]) < _LOG_ETAG_TTL:
-        _LOG_ETAG_CACHE.move_to_end(directory)
+        _LOG_ETAG_CACHE.move_to_end(cache_key)
         return cached[0]
 
     head_sha = "no-head"
@@ -331,9 +361,14 @@ async def _compute_log_etag(git_bin: str, directory: str) -> str:
     except OSError:
         pass
 
-    etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}"'
+    # 拼 ETag: query_fingerprint 拼在 wt_mtime 之后(避免 head_sha / wt_mtime
+    # 之间被截断的可读性下降)
+    if query_fingerprint:
+        etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}-{query_fingerprint}"'
+    else:
+        etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}"'
 
-    _LOG_ETAG_CACHE[directory] = (etag, now)
+    _LOG_ETAG_CACHE[cache_key] = (etag, now)
     while len(_LOG_ETAG_CACHE) > _LOG_ETAG_CACHE_MAX:
         _LOG_ETAG_CACHE.popitem(last=False)
     return etag
@@ -450,8 +485,22 @@ async def handle(
                 worktree=directory,
             )
 
-    # ── 4. ETag 检查 ──
-    etag = await _compute_log_etag(plugin._git_binary(), directory)
+    # ── 4. ETag 检查 (v3.10 修复: query fingerprint 纳入 ETag) ──
+    # 把 query string 维度 (ref / n / path / author / since / until) 序列化
+    # 为 ``|`` 分隔指纹, 拼进 ETag 字符串与 cache key。author / path / ref
+    # 等任意一个变化 → ETag 必变 → 重置 filter 时不会 304 空 body。
+    # 用 ``|`` 而不是 ``&`` 是因为后者在 query 里是分隔符, 易混淆; ``|``
+    # 是 git porcelain 风格的稳定选择。
+    # WHY ``str(…)`` 显式包: type-checker 友好 + 防 None 漏处理(None
+    # 在 ``f"|{None}"`` 会变字符串 ``"None"``, 这里用 ``or ""`` 兜底)。
+    query_fingerprint = (
+        f"{ref or 'HEAD'}|{n}|{path or ''}|{author or ''}|{since or ''}|{until or ''}"
+    )
+    etag = await _compute_log_etag(
+        plugin._git_binary(),
+        directory,
+        query_fingerprint=query_fingerprint,
+    )
     cache_headers = _common_cache_headers(etag)
     if _get_if_none_match() == etag:
         return _make_304_response(cache_headers)
