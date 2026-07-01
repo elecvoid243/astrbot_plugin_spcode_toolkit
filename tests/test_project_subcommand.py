@@ -36,6 +36,7 @@ def _make_event(umo: str = "webchat:webchat!u!c1"):
     event.unified_msg_origin = umo
     return event
 
+
 def _set_loaded(umo: str, info: dict) -> None:
     """PR-7 (2026-06-23): wrapped setter for _loaded_projects 状态。"""
     from tools.project import state as _proj_state
@@ -262,14 +263,20 @@ def test_handle_get_project_status_returns_unloaded(plugin):
 
 
 def test_handle_get_project_status_filters_by_umo(plugin):
-    _set_loaded("webchat:webchat!u!c3", {
-        "directory": "/tmp/a",
-        "loaded_at": 1.0,
-    })
-    _set_loaded("webchat:webchat!u!c4", {
-        "directory": "/tmp/b",
-        "loaded_at": 2.0,
-    })
+    _set_loaded(
+        "webchat:webchat!u!c3",
+        {
+            "directory": "/tmp/a",
+            "loaded_at": 1.0,
+        },
+    )
+    _set_loaded(
+        "webchat:webchat!u!c4",
+        {
+            "directory": "/tmp/b",
+            "loaded_at": 2.0,
+        },
+    )
 
     async def runner():
         return await _project_status.handle(plugin)
@@ -285,10 +292,13 @@ def test_handle_get_project_status_filters_by_umo(plugin):
 def test_handle_get_project_status_returns_copy_not_reference(plugin):
     """The handler must return a shallow copy so callers cannot mutate
     internal state."""
-    _set_loaded("webchat:webchat!u!c5", {
-        "directory": "/tmp/c",
-        "loaded_at": 1.0,
-    })
+    _set_loaded(
+        "webchat:webchat!u!c5",
+        {
+            "directory": "/tmp/c",
+            "loaded_at": 1.0,
+        },
+    )
 
     async def runner():
         return await _project_status.handle(plugin)

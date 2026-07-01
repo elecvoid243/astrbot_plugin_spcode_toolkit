@@ -13,6 +13,7 @@
     bootstrap_mcp       <-> _bootstrap_codegraph_mcp  (main.py:844-885)
     shutdown_mcp        <-> terminate() 中 codegraph 关闭段  (main.py:919-938)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -105,8 +106,7 @@ async def bootstrap_mcp(plugin) -> None:
             timeout=180,  # 与 AstrBot DEFAULT_ENABLE_MCP_TIMEOUT_SECONDS 一致
         )
         logger.info(
-            f"codegraph MCP 已启动: {Path(cfg['command']).name} "
-            f"{' '.join(cfg['args'])}"
+            f"codegraph MCP 已启动: {Path(cfg['command']).name} {' '.join(cfg['args'])}"
         )
     except Exception as e:
         logger.warning(f"codegraph MCP 启动失败,spcode 其它工具不受影响: {e}")

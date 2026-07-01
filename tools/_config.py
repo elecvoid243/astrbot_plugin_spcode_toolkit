@@ -54,9 +54,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 # key = 工具名,value = {"count": int, "last": float}
 
 
-_stats: dict[str, dict[str, float]] = defaultdict(
-    lambda: {"count": 0, "last": 0.0}
-)
+_stats: dict[str, dict[str, float]] = defaultdict(lambda: {"count": 0, "last": 0.0})
 
 
 def record(name: str) -> None:

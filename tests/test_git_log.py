@@ -388,9 +388,7 @@ async def test_log_etag_changes_when_author_filter_changes(
     assert etag_default, f"first response missing ETag: {dict(r1.headers)}"
 
     # 2) 带 author=elec 过滤
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock(query={"author": "elec"})
-    )
+    monkeypatch.setattr(web, "request", make_web_request_mock(query={"author": "elec"}))
     r2 = await _gl.handle(plugin)
     etag_author = r2.headers.get("etag")
     assert etag_author
@@ -444,15 +442,11 @@ async def test_log_etag_changes_when_ref_filter_changes(
     _m._LOG_ETAG_CACHE.clear()
     monkeypatch.setattr(_m, "_LOG_ETAG_TTL", 0.0)
 
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock(query={"ref": "HEAD"})
-    )
+    monkeypatch.setattr(web, "request", make_web_request_mock(query={"ref": "HEAD"}))
     r1 = await _gl.handle(plugin)
     etag_head = r1.headers.get("etag")
 
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock(query={"ref": "HEAD~2"})
-    )
+    monkeypatch.setattr(web, "request", make_web_request_mock(query={"ref": "HEAD~2"}))
     r2 = await _gl.handle(plugin)
     etag_head2 = r2.headers.get("etag")
 
@@ -484,9 +478,7 @@ async def test_log_reset_author_filter_returns_200_not_304(
     monkeypatch.setattr(_m, "_LOG_ETAG_TTL", 0.0)
 
     # 1) 用户搜索 author=elec
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock(query={"author": "elec"})
-    )
+    monkeypatch.setattr(web, "request", make_web_request_mock(query={"author": "elec"}))
     r1 = await _gl.handle(plugin)
     etag_author = r1.headers.get("etag")
     assert r1.status_code == 200

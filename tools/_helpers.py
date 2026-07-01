@@ -35,10 +35,37 @@ from typing import Any
 #   - subprocess.CREATE_NO_WINDOW 只在 win32 平台上有定义
 #   - asyncio.create_subprocess_exec 同样支持 ``creationflags`` kwarg
 _NO_WINDOW_KWARGS: dict[str, int] = (
-    {"creationflags": subprocess.CREATE_NO_WINDOW}
-    if sys.platform == "win32"
-    else {}
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 )
+
+
+def _get_console_python() -> str:
+    """返回同环境的 CUI ``python.exe`` 绝对路径,用于启动 CLI 子进程(ruff / cpplint 等)。
+
+    WHY:
+        AstrBot 可能由 ``pythonw.exe``(GUI subsystem,无控制台)启动。
+        若 ``code_check`` / ``code_format`` 直接用 ``[sys.executable, "-m", "ruff", ...]``
+        spawn,Rust runtime 会主动调 ``AllocConsole()`` 弹出临时控制台窗口
+        来显示输出 — ``creationflags=CREATE_NO_WINDOW`` **无法阻止**这种
+        子进程主动行为,结果就是用户看到的"cmd 黑框一闪而过"。
+
+        修复:在 win32 上,显式选同目录的 ``python.exe``(CUI subsystem)作为
+        解释器启动 CLI 子进程。CUI 进程从一开始就连接 console,不需要也不
+        会主动 ``AllocConsole()``,黑框消失。
+
+    Returns:
+        str: CUI ``python.exe`` 绝对路径。
+              - win32 + 找到 ``python.exe``: 同目录下的 ``python.exe``
+              - 其他平台 / 找不到 ``python.exe``: 回退 ``sys.executable``
+                (POSIX 上无 pythonw 概念,无需切换;venv 极端情况兜底)
+    """
+    if sys.platform != "win32":
+        return sys.executable
+    # pythonw.exe 与 python.exe 通常在同一目录,仅末段差 w
+    candidate = os.path.join(os.path.dirname(sys.executable), "python.exe")
+    if os.path.isfile(candidate):
+        return candidate
+    return sys.executable  # 兜底:venv/embed 等可能没有独立 python.exe
 
 
 def run_cmd(

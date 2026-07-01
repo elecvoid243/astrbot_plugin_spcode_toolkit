@@ -3,6 +3,7 @@
 
 Spec: docs/superpowers/specs/2026-06-20-file-browser-endpoint-design.md
 """
+
 from __future__ import annotations
 import logging
 import os
@@ -76,6 +77,7 @@ def _get_if_none_match() -> str:
 def _make_304_response(headers: dict[str, str]) -> _JSONResponseCompat:
     """构造 304 Not Modified 响应(空 body + 缓存头)。"""
     return _JSONResponseCompat({}, status_code=304, headers=headers)
+
 
 def _build_error_response(path: str | Path, reason: str) -> dict:
     """构造错误响应(3 字段:type=null, path, reason)。
@@ -351,6 +353,7 @@ def _build_symlink_response(path: Path) -> dict:
         "target_exists": Path(target).exists(),
         "reason": None,
     }
+
 
 async def handle(
     plugin: "SPCodeToolkit",

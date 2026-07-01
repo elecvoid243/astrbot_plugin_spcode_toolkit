@@ -1,4 +1,5 @@
 """TodoQueryTool — 读当前 todo list(返回 list + stats + attention_items)。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

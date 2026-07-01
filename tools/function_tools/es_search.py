@@ -1,4 +1,5 @@
 """EsSearchTool — 文件名极速搜索 (Everything / fallback)。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

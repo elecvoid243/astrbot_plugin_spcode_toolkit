@@ -7,6 +7,7 @@
 历史:
     v2.7 由 main.py 第 152-173 行内部定义,本文件是 PR-1 提取的迁移目标。
 """
+
 from __future__ import annotations
 
 # /project load 后注入到 system_prompt 末尾的指引。

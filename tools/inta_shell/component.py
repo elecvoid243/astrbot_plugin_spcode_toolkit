@@ -634,7 +634,7 @@ class LocalInteractiveShellComponent:
                 )
                 if shell and actual_command.strip().lower().startswith("cmd"):
                     actual_command = f"chcp 65001 >nul && {actual_command}"
-#
+            #
             proc = subprocess.Popen(actual_command, **popen_kwargs)
 
             session_id = str(uuid.uuid4())[:8]

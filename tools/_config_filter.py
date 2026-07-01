@@ -59,7 +59,7 @@ _TOOL_GROUPS: dict[str, list[str]] = {
         "todo_clear",
     ],
     "file_compare": ["astrbot_file_compare"],
-    "file_remove": ["astrbot_file_remove"]
+    "file_remove": ["astrbot_file_remove"],
 }
 
 

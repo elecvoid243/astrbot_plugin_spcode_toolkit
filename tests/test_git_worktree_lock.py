@@ -286,9 +286,7 @@ async def test_lock_invalid_body():
         "directory": "/tmp",
         "loaded_at": 0.0,
     }
-    result = await lock_handle(
-        plugin, umo="test:umo", worktree=None, body="not a dict"
-    )
+    result = await lock_handle(plugin, umo="test:umo", worktree=None, body="not a dict")
     assert result["data"]["reason"] == "invalid_body"
 
 

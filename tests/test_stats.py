@@ -1,4 +1,5 @@
 """测试 tools/_stats.py 的 _stats dict + _record() 函数。"""
+
 import time
 from tools import _stats
 from tools._stats import _record, get_stats, reset
@@ -34,6 +35,7 @@ def test_record_handles_unknown_name():
 
 def test_record_swallows_exceptions(monkeypatch):
     """_record 内部 try/except 兜底,模拟 _stats 损坏时不抛异常。"""
+
     class BrokenStats:
         def __getitem__(self, key):
             raise RuntimeError("stats broken")
@@ -43,9 +45,7 @@ def test_record_swallows_exceptions(monkeypatch):
     try:
         _record("tool_c")
     except RuntimeError as e:
-        raise AssertionError(
-            f"_record 应吞掉异常,但抛出了: {e}"
-        )
+        raise AssertionError(f"_record 应吞掉异常,但抛出了: {e}")
 
 
 def test_get_stats_returns_shallow_copy():

@@ -36,17 +36,21 @@
 
 Author: elecvoid243, 2026-06-25
 """
+
 from __future__ import annotations
 
 import difflib
 import json
-import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-from ._helpers import _NO_WINDOW_KWARGS, detect_console_encoding, proposal_reply
+from ._helpers import (
+    _NO_WINDOW_KWARGS,
+    _get_console_python,
+    detect_console_encoding,
+    proposal_reply,
+)
 
 # ── 扩展名 → formatter 路由表 ─────────────────────────
 # 顺序敏感:.py 必须先于 ASTYLE_SUFFIXES 集合。
@@ -56,11 +60,21 @@ PY_SUFFIXES = {".py"}
 # 加上社区共识的 JS/TS 兼容(sucessful rendering but no language-specific rules)。
 ASTYLE_SUFFIXES: set[str] = {
     # C / C++
-    ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx", ".hh",
+    ".c",
+    ".cpp",
+    ".cc",
+    ".cxx",
+    ".h",
+    ".hpp",
+    ".hxx",
+    ".hh",
     # Java
     ".java",
     # JavaScript (astyle 兼容处理,无语言特定规则)
-    ".js", ".jsx", ".mjs", ".cjs",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
     # C#
     ".cs",
 }
@@ -68,8 +82,17 @@ ASTYLE_SUFFIXES: set[str] = {
 # astyle --style= 选项的合法值(对应 AStyle 3.6 文档)
 VALID_ASTYLE_STYLES: frozenset[str] = frozenset(
     {
-        "allman", "java", "kr", "linux", "google", "stroustrup",
-        "whitesmith", "horstmann", "ratliff", "vtk", "none",
+        "allman",
+        "java",
+        "kr",
+        "linux",
+        "google",
+        "stroustrup",
+        "whitesmith",
+        "horstmann",
+        "ratliff",
+        "vtk",
+        "none",
     }
 )
 
@@ -176,7 +199,10 @@ def format(
         result = _format_with_ruff(p, check=check, indent=indent)
     else:
         result = _format_with_astyle(
-            p, check=check, style=style, indent=indent,
+            p,
+            check=check,
+            style=style,
+            indent=indent,
         )
 
     # 统一附加 check / formatter_options 字段
@@ -203,58 +229,64 @@ def _supported_extensions() -> list[str]:
 
 
 # ── ruff 路径 ────────────────────────────────────────
-
-
-def _find_ruff() -> list[str]:
-    """查找 ruff 可执行路径:优先 PATH,备选 python -m ruff。
-
-    与 code_check._find_ruff 行为一致(同一项目复用同一工具)。
-    """
-    if shutil.which("ruff"):
-        return ["ruff"]
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "ruff", "--version"],
-            capture_output=True,
-            timeout=5,
-            check=True,
-            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
-            **_NO_WINDOW_KWARGS,
-        )
-        return [sys.executable, "-m", "ruff"]
-    except Exception:
-        return []
+#
+# 设计变更(v2.15,2026-07-01):不再查找 ruff 二进制路径,直接
+# ``[sys.executable, "-m", "ruff", ...]``。这样:
+#   1. 无需 ``shutil.which`` 走 PATHEXT 解析,彻底避免 .bat/.cmd wrapper 顶替
+#      (原因 A:pythonw 模式下弹 cmd 黑窗的根因之一)
+#   2. 无需 ``_find_ruff`` 路径检测函数
+#   3. ruff 必须以 pip 包形式安装(``pip install ruff``),这是项目
+#      requirements.txt 里已声明的依赖
+#
+# 仍保留 ``**_NO_WINDOW_KWARGS`` 双保险,防止 ruff 内部 helper 进程
+# 触发 cmd 黑窗(原因 B/E 的兜底)。
 
 
 def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
-    """Python: 调 ruff format。indent 仅作 metadata(ruff 用自身默认配置)。"""
-    ruff_cmd = _find_ruff()
-    if not ruff_cmd:
-        return proposal_reply(
-            False,
-            "ruff 未安装,无法格式化 Python 文件。请运行: pip install ruff",
-            error="ruff 未安装",
-            evidence={"python_file": str(p)},
-            options=[
-                "pip install ruff",
-                "切换到 formatter=astyle(不适用,仅 C/C++/Java/JS/TS/C#)",
-            ],
-        )
+    """Python: 直接调 ``python -m ruff format``。
 
+    设计要点:
+      - **不**查找 ruff 二进制路径。ruff 必须是 pip 包
+        (``pip install ruff``),通过 ``python -m ruff`` 走 Python 解释器,
+        避免 ``shutil.which`` 的 PATHEXT 风险(.bat 顶替 → cmd.exe 黑窗)。
+      - indent 仅作 metadata(ruff 用自身默认配置,不读我们的 indent 参数)。
+
+    Args:
+        p: 待格式化 .py 文件路径
+        check: True = dry-run,不写回
+        indent: 缩进空格数(本函数忽略,仅 ruff 内部风格用)
+
+    Returns:
+        标准 format() 返回 dict
+    """
     before_bytes = p.read_bytes()
     file_size_before = len(before_bytes)
 
     if check:
         # --check 不写回;--diff 输出 diff 文本(写到 stdout)
-        args = ruff_cmd + ["format", "--check", "--diff", str(p)]
+        # WHY _get_console_python() 而非 sys.executable: pythonw.exe 是 GUI
+        # subsystem,启动 ruff 后 Rust runtime 会主动 AllocConsole() 弹黑框,
+        # CREATE_NO_WINDOW 无法阻止子进程主动行为;切到 CUI python.exe 即可。
+        args = [
+            _get_console_python(),
+            "-m",
+            "ruff",
+            "format",
+            "--check",
+            "--diff",
+            str(p),
+        ]
     else:
         # 直接格式化(写回原文件)
-        args = ruff_cmd + ["format", str(p)]
+        args = [_get_console_python(), "-m", "ruff", "format", str(p)]
 
     try:
         r = subprocess.run(
-            args, capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
+            args,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_FORMAT_TIMEOUT,
             # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
             **_NO_WINDOW_KWARGS,
@@ -262,7 +294,17 @@ def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "ruff 超时"}
     except Exception as e:
-        return {"ok": False, "error": f"ruff 调用失败: {e}"}
+        # FileNotFoundError(ruff 未装)/其他 → 一律"未安装"提示
+        return proposal_reply(
+            False,
+            "ruff 未安装,无法格式化 Python 文件。请运行: pip install ruff",
+            error="ruff 未安装",
+            evidence={"python_file": str(p), "exception": str(e)},
+            options=[
+                "pip install ruff",
+                "切换到 formatter=astyle(不适用,仅 C/C++/Java/JS/TS/C#)",
+            ],
+        )
 
     # ── 解析结果 ──
     # ruff format 返回码语义:
@@ -275,15 +317,7 @@ def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
     if check:
         changed = r.returncode != 0
     else:
-        changed = (file_size_after != file_size_before)
-
-    result: dict = {
-        "ok": True,
-        "formatter": "ruff",
-        "changed": changed,
-        "file_size_before": file_size_before,
-        "file_size_after": file_size_after,
-    }
+        changed = file_size_after != file_size_before
 
     if r.returncode == 2:
         # 错误:读取 stderr 第一行作为错误描述
@@ -294,6 +328,14 @@ def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
             "error": f"ruff 格式化失败: {err_msg}",
             "evidence": {"stderr": (r.stderr or "")[:500]},
         }
+
+    result: dict = {
+        "ok": True,
+        "formatter": "ruff",
+        "changed": changed,
+        "file_size_before": file_size_before,
+        "file_size_after": file_size_after,
+    }
 
     if check and changed:
         # --check --diff 模式下,stdout 是 diff 文本
@@ -313,81 +355,114 @@ def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
 
 
 # ── astyle 路径 ──────────────────────────────────────
-
-
-def _find_astyle() -> list[str]:
-    """查找 AStyle 可执行路径:3 级 fallback。
-
-    顺序:
-      1. ASTYLE_PATH 环境变量
-      2. shutil.which("AStyle") / shutil.which("astyle")
-      3. (当前不实现平台特定常见路径;env + which 已覆盖 win/mac/linux)
-    """
-    env_path = os.environ.get("ASTYLE_PATH")
-    if env_path:
-        ep = Path(env_path)
-        if ep.exists():
-            return [str(ep)]
-    for name in ("AStyle.exe", "AStyle", "astyle"):
-        found = shutil.which(name)
-        if found and Path(found).exists():
-            return [found]
-    return []
+#
+# v2.15.1(2026-07-01)回滚:astyle 不是 Python 库(PyPI 包名为 astyle 但仅作为
+# wrapper 暴露 astyle.exe CLI,无可 import 的 astyle 模块),必须用命令行调用。
+# 路径查找:**从 sys.executable 推算**到 <python_dir>/Scripts/astyle.exe
+# (Windows) 或 <python_dir>/bin/astyle (Unix)。
+# WHY:pip install astyle 会把 astyle.exe 放到 python 环境的 Scripts/ 目录。
+# 用户评审意见"不要用 shutil.which,astyle 位置与 sys.executable 有关系"。
+#
+# 黑框防御链(与 ruff 路径相同):
+#   1. ``**_NO_WINDOW_KWARGS`` → 抑制父进程无 console 时 Windows 自动分配新控制台
+#   2. 显式 ``encoding="utf-8"`` + ``errors="replace"`` → 避免中文 Windows
+#      默认 cp936 解码 ruff JSON 失败
+#   3. astyle.exe 是 .exe 二进制,**不是** .bat / .cmd → cmd.exe 不会介入,
+#      CREATE_NO_WINDOW 即可彻底抑制
 
 
 def _format_with_astyle(
-    p: Path, *, check: bool, style: str, indent: int,
+    p: Path,
+    *,
+    check: bool,
+    style: str,
+    indent: int,
 ) -> dict:
-    """C/C++/Java/JS/TS/C#: 调 AStyle via stdin/stdout。
+    """C/C++/Java/JS/TS/C#: 调 astyle.exe (CLI,via subprocess.run)。
 
-    关键:我们**永远不**让 astyle 自己写回原文件。流程:
-      1. 读原文件 → stdin
-      2. astyle 写 stdout
-      3. compare → changed
-      4. check=False & changed=True → 写回原文件
-      5. check=True → 永远不写
+    设计要点:
+      - **不**走 Python 库 import。astyle 是 C++ 程序(AStyle 3.6.x),
+        路径**从 sys.executable 推算**到 <python_dir>/Scripts/astyle.exe
+        (Windows) 或 <python_dir>/bin/astyle (Unix)。这样:
+          - 不依赖 shutil.which 走 PATHEXT(可能匹配到 .bat/.cmd 触发
+            cmd.exe 黑框)
+          - 不需要 ASTYLE_PATH 环境变量
+          - 路径与 python 环境严格绑定,跨环境不会误调用
+      - 永远 stdin/stdout 模式:astyle 收 ``--stdin`` (隐式 via input=)
+        写 stdout,我们自己决定要不要写回原文件。
+      - astyle.exe 走 .exe 不走 .bat/.cmd → ``**_NO_WINDOW_KWARGS`` 可彻底
+        抑制 pythonw.exe 启动下的 cmd 黑框。
+
+    流程:
+      1. 推算 astyle.exe 路径
+      2. 读原文件 → 解码为 str
+      3. ``subprocess.run([astyle.exe, --style=X, --indent=spaces=N], input=before_text)``
+      4. compare → changed
+      5. check=False & changed=True → 写回原文件
+      6. check=True → 永远不写
+
+    Args:
+        p: 待格式化 C/C++/Java/JS/TS/C# 文件路径
+        check: True = dry-run,不写回
+        style: astyle 风格(allman / gnu / linux / google / ...)
+        indent: 缩进空格数
+
+    Returns:
+        标准 format() 返回 dict
     """
-    astyle_cmd = _find_astyle()
-    if not astyle_cmd:
+    # 1. 路径查找:从 sys.executable 推算 astyle.exe 位置
+    #    WHY:pip install astyle 会把 astyle.exe 放到 python 环境的 Scripts/
+    #    目录(<python_dir>/Scripts/astyle.exe on Windows;Scripts 在非 win32
+    #    不存在,所以 fallback 到 <python_dir>/bin/astyle)。
+    #    这样**不**依赖 shutil.which 走 PATHEXT(可能匹配到 .bat/.cmd 触发
+    #    cmd.exe 黑框),也不需要 ASTYLE_PATH 环境变量。
+    py_dir = Path(sys.executable).parent
+    if sys.platform == "win32":
+        astyle_path = py_dir / "Scripts" / "astyle.exe"
+    else:
+        astyle_path = py_dir / "bin" / "astyle"
+    if not astyle_path.exists():
         return proposal_reply(
             False,
-            "astyle 未安装,无法格式化 C/C++/Java/JS/TS/C# 文件。"
-            "请运行: pip install astyle(自动安装 AStyle.exe 到 Scripts/目录)",
+            f"astyle 未安装,无法格式化 C/C++/Java/JS/TS/C# 文件。"
+            f"预期位置 {astyle_path} 不存在。"
+            f"请运行: pip install astyle",
             error="astyle 未安装",
-            evidence={"file": str(p)},
+            evidence={"expected_path": str(astyle_path), "file": str(p)},
             options=[
-                "pip install astyle",
-                "设置环境变量 ASTYLE_PATH 指向 AStyle.exe",
+                "pip install astyle(会在 Scripts/ 下生成 astyle.exe)",
                 "切换到 formatter=ruff(不适用,仅 Python)",
             ],
         )
 
+    # 2. 读源文件 → 解码(优先 UTF-8,中文源码回退 detect_console_encoding)
     before_bytes = p.read_bytes()
     file_size_before = len(before_bytes)
-
-    # 解码源文件内容作为 astyle stdin 输入。优先 UTF-8(源代码首选),
-    # 中文 Windows 下回退到 GBK(cp936)。这样 astyle 收到的是字符串,
-    # 配合 ``text=True`` + ``encoding=detect_console_encoding()`` 正常处理 stdout。
     try:
         before_text = before_bytes.decode("utf-8")
     except UnicodeDecodeError:
         before_text = before_bytes.decode(detect_console_encoding(), errors="replace")
 
-    args = astyle_cmd + [
+    # 3. spawn astyle.exe + stdin/stdout 模式
+    args = [
+        str(astyle_path),  # subprocess.run 需 str 或 os.PathLike,这里显式转 str
         f"--style={style}",
         f"--indent=spaces={indent}",
     ]
-
     try:
         r = subprocess.run(
-            args, input=before_text, capture_output=True,
-            timeout=_FORMAT_TIMEOUT,
-            # WHY: astyle.exe 是 Windows C++ 程序,stdout/stderr 走系统 ANSI 代码页;
-            # 中文 Windows 是 cp936(GBK)。用 detect_console_encoding() 适配。
+            args,
+            input=before_text,
+            capture_output=True,
             text=True,
+            # WHY: astyle.exe 是 C++ 程序,stdout 走系统 ANSI 代码页(cn=cp936)。
+            # 配合 errors="replace" 容错,避免解码异常时 stdout 变 None。
             encoding=detect_console_encoding(),
             errors="replace",
-            # astyle.exe 是 Windows CUI 子程序;pythonw.exe 启动下抑制黑窗
+            timeout=_FORMAT_TIMEOUT,
+            # astyle.exe 是 CUI 子程序;pythonw.exe 启动下抑制黑窗。
+            # 双保险:.exe 路径(已通过 which 校验) → cmd.exe 不会介入 → 不会触发
+            # pythonw 主动 AllocConsole() 路径(原因 B)。
             **_NO_WINDOW_KWARGS,
         )
     except subprocess.TimeoutExpired:
@@ -395,7 +470,7 @@ def _format_with_astyle(
     except Exception as e:
         return {"ok": False, "error": f"astyle 调用失败: {e}"}
 
-    after_text = r.stdout
+    # 4. 解析结果
     if r.returncode not in (0, 1):
         # astyle 返回非 0/1 → 真错误
         return {
@@ -404,12 +479,11 @@ def _format_with_astyle(
             "evidence": {"stderr": (r.stderr or "")[:500]},
         }
 
-    # astyle 极少见 stderr-only 错误信息;但已从 stdout 拿到结果
+    after_text = r.stdout
     file_size_after = len(after_text.encode("utf-8"))
-    # 比较时规范化行尾:Windows 的 write_text 会把 \n → \r\n,
-    # 而 astyle stdin/stdout 保留 \n。直接 == 比较会把"行尾差异"误判为 changed。
-    # 用 splitlines() 行内比较,容错 \n / \r\n / \r。
-    changed = _content_changed(before_bytes.decode("utf-8", errors="replace"), after_text)
+
+    # 用 splitlines() 行内比较,容错 \n / \r\n / \r(Windows write_text 会 \n → \r\n)
+    changed = _content_changed(before_text, after_text)
 
     result: dict = {
         "ok": True,
@@ -423,7 +497,7 @@ def _format_with_astyle(
         # dry-run: 不写回
         if changed:
             diff_text = _make_unified_diff(
-                before_bytes.decode("utf-8", errors="replace"),
+                before_text,
                 after_text,
                 fromfile=str(p),
                 tofile=f"{p} (formatted)",
@@ -447,6 +521,7 @@ def _format_with_astyle(
             f"astyle {action} {p.name}({sign}{delta} 字节,"
             f" {file_size_before} → {file_size_after})"
         )
+
     return result
 
 
@@ -460,8 +535,10 @@ def _make_unified_diff(
     before_lines = before.splitlines(keepends=True)
     after_lines = after.splitlines(keepends=True)
     diff = difflib.unified_diff(
-        before_lines, after_lines,
-        fromfile=fromfile, tofile=tofile,
+        before_lines,
+        after_lines,
+        fromfile=fromfile,
+        tofile=tofile,
         n=3,
     )
     return "".join(diff)
@@ -502,8 +579,6 @@ __all__ = [
     "VALID_ASTYLE_STYLES",
     "_detect_formatter",
     "_supported_extensions",
-    "_find_ruff",
-    "_find_astyle",
     "_format_with_ruff",
     "_format_with_astyle",
 ]

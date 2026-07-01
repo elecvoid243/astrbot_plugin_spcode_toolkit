@@ -11,6 +11,7 @@
 - 子系统代码不应回写 main.py 实例属性 — 模块级更解耦
 - 与 tools.codegraph.state / tools.inta_shell.runtime 一致
 """
+
 from __future__ import annotations
 
 _loaded_projects: dict[str, dict] = {}

@@ -338,17 +338,40 @@ def test_code_file_extensions_contains_common_languages():
     """
     must_have = {
         # C / C++ 家族(老白名单的根基)
-        "c", "cpp", "h", "hpp", "cc", "cxx",
+        "c",
+        "cpp",
+        "h",
+        "hpp",
+        "cc",
+        "cxx",
         # 主流语言
-        "py", "js", "ts", "jsx", "tsx",
-        "java", "go", "rs", "kt", "kts",
-        "rb", "php", "swift", "cs",
+        "py",
+        "js",
+        "ts",
+        "jsx",
+        "tsx",
+        "java",
+        "go",
+        "rs",
+        "kt",
+        "kts",
+        "rb",
+        "php",
+        "swift",
+        "cs",
         # 脚本/Shell
-        "sh", "bash", "ps1",
+        "sh",
+        "bash",
+        "ps1",
         # 函数式
-        "hs", "ex", "exs", "erl",
+        "hs",
+        "ex",
+        "exs",
+        "erl",
         # HDL
-        "v", "sv", "vhdl",
+        "v",
+        "sv",
+        "vhdl",
     }
     missing = must_have - CODE_FILE_EXTENSIONS
     assert not missing, f"以下核心扩展名未包含在白名单中: {sorted(missing)}"
@@ -362,21 +385,54 @@ def test_code_file_extensions_excludes_pure_markup_and_config():
     """
     must_exclude = {
         # 标记
-        "html", "htm", "xml", "md", "rst", "tex",
+        "html",
+        "htm",
+        "xml",
+        "md",
+        "rst",
+        "tex",
         # 样式
-        "css", "scss", "less", "sass", "styl",
+        "css",
+        "scss",
+        "less",
+        "sass",
+        "styl",
         # 数据/配置
-        "json", "yaml", "yml", "toml", "ini", "cfg", "conf",
+        "json",
+        "yaml",
+        "yml",
+        "toml",
+        "ini",
+        "cfg",
+        "conf",
         # 模板(非代码)
-        "txt", "log",
+        "txt",
+        "log",
         # 图片/二进制
-        "png", "jpg", "gif", "ico", "svg",
+        "png",
+        "jpg",
+        "gif",
+        "ico",
+        "svg",
         # 字体
-        "ttf", "otf", "woff", "woff2",
+        "ttf",
+        "otf",
+        "woff",
+        "woff2",
         # 文档/二进制
-        "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+        "pdf",
+        "doc",
+        "docx",
+        "xls",
+        "xlsx",
+        "ppt",
+        "pptx",
         # 归档
-        "zip", "tar", "gz", "7z", "rar",
+        "zip",
+        "tar",
+        "gz",
+        "7z",
+        "rar",
     }
     leaked = must_exclude & CODE_FILE_EXTENSIONS
     assert not leaked, f"以下扩展名不应在白名单中: {sorted(leaked)}"
@@ -388,6 +444,7 @@ def test_code_file_extensions_is_frozenset():
     assert isinstance(CODE_FILE_EXTENSIONS, frozenset)
     # 不可变性验证(不应能 add)
     import pytest
+
     with pytest.raises(AttributeError):
         CODE_FILE_EXTENSIONS.add("newext")  # type: ignore[attr-defined]
 
@@ -429,7 +486,7 @@ def test_codetect_skip_dirs_consistent():
 
     must_have = {"node_modules", "__pycache__", "venv", ".git", ".venv"}
     missing = must_have - _SKIP_DIRS
-    assert not missing, f"_SKIP_DIRS 缺少核心垃圾目录: {sorted(missing)}" 
+    assert not missing, f"_SKIP_DIRS 缺少核心垃圾目录: {sorted(missing)}"
 
 
 def test_has_code_files_empty_directory(tmp_path):

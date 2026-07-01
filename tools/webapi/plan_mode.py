@@ -4,6 +4,7 @@
 注意:plan/build 切换是 per-session 严格的,
 endpoint 不会"回退到最近一个 plan session"以避免误继承。
 """
+
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
@@ -14,47 +15,47 @@ if TYPE_CHECKING:
 async def handle(
     plugin: "SPCodeToolkit",
 ) -> dict:
-        """Web API handler for ``GET /spcode/plan-mode``.
+    """Web API handler for ``GET /spcode/plan-mode``.
 
-        Query params:
-            umo (optional): the unified message origin to query. When
-                omitted the endpoint returns ``active=false`` (the
-                default build state) and the umo as ``None`` —
-                callers that don't know their umo should pass it
-                explicitly. Unlike ``/spcode/project-status`` we do
-                **not** fall back to "most recent plan-mode session"
-                because the plan/build switch is strictly per-session
-                and silently inheriting another session's mode would
-                be confusing.
+    Query params:
+        umo (optional): the unified message origin to query. When
+            omitted the endpoint returns ``active=false`` (the
+            default build state) and the umo as ``None`` —
+            callers that don't know their umo should pass it
+            explicitly. Unlike ``/spcode/project-status`` we do
+            **not** fall back to "most recent plan-mode session"
+            because the plan/build switch is strictly per-session
+            and silently inheriting another session's mode would
+            be confusing.
 
-        Returns:
-            A JSON envelope of the form::
+    Returns:
+        A JSON envelope of the form::
 
-                {
-                    "status": "ok",
-                    "data": {
-                        "active": bool,        # True == plan, False == build
-                        "umo": str | None,
-                        "all_active_count": int  # number of umos in plan mode
-                    }
+            {
+                "status": "ok",
+                "data": {
+                    "active": bool,        # True == plan, False == build
+                    "umo": str | None,
+                    "all_active_count": int  # number of umos in plan mode
                 }
-        """
-        # Late import to avoid circular issues with the plugin module.
-        from astrbot.api import web
+            }
+    """
+    # Late import to avoid circular issues with the plugin module.
+    from astrbot.api import web
 
-        umo: str | None = None
-        try:
-            umo = web.request.query.get("umo") or None
-        except Exception:
-            umo = None
+    umo: str | None = None
+    try:
+        umo = web.request.query.get("umo") or None
+    except Exception:
+        umo = None
 
-        return {
-            "status": "ok",
-            "data": {
-                # PR-3 (2026-06-23): 委托给 PlanModeController(webapi 端不再
-                # 直接访问 main.py 的 self._plan_mode dict)
-                "active": plugin._plan.is_active(umo),
-                "umo": umo,
-                "all_active_count": plugin._plan.count_active(),
-            },
-        }
+    return {
+        "status": "ok",
+        "data": {
+            # PR-3 (2026-06-23): 委托给 PlanModeController(webapi 端不再
+            # 直接访问 main.py 的 self._plan_mode dict)
+            "active": plugin._plan.is_active(umo),
+            "umo": umo,
+            "all_active_count": plugin._plan.count_active(),
+        },
+    }

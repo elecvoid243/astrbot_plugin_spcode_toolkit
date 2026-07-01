@@ -15,6 +15,7 @@
   - 有/无 upstream → upstream 字段切换(含 ahead/behind)
 - ETag 缓存(同 git-log 模式)
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -116,7 +117,10 @@ class TestPreflight:
 
 class TestHandlerEmptyRepo:
     async def test_empty_repo_returns_null_branch(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """空仓库(无 commits)→ branch=None, files=[]。"""
         subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
@@ -138,7 +142,10 @@ class TestHandlerEmptyRepo:
 
 class TestHandlerCleanRepo:
     async def test_clean_repo_returns_main_no_files(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """干净仓库 → branch=main, files=[], summary 全 0。"""
         _init_git_repo(tmp_path)
@@ -155,7 +162,10 @@ class TestHandlerCleanRepo:
 
 class TestHandlerDirtyRepo:
     async def test_unstaged_only(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """修改已跟踪文件(未 git add)→ scope=unstaged, summary.unstaged=1。"""
         _init_git_repo(tmp_path)
@@ -172,7 +182,10 @@ class TestHandlerDirtyRepo:
         assert f["scope"] == "unstaged"
 
     async def test_staged_only(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """git add 后无 worktree 改动 → scope=staged。"""
         _init_git_repo(tmp_path)
@@ -186,7 +199,10 @@ class TestHandlerDirtyRepo:
         assert result["data"]["files"][0]["scope"] == "staged"
 
     async def test_untracked_file(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """新增未被 git add 的文件 → scope=untracked。"""
         _init_git_repo(tmp_path)
@@ -199,7 +215,10 @@ class TestHandlerDirtyRepo:
         assert result["data"]["files"][0]["scope"] == "untracked"
 
     async def test_intent_to_add(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """``git add -N`` 意图标记 → scope=intent_to_add(计入 unstaged)。"""
         _init_git_repo(tmp_path)
@@ -213,7 +232,10 @@ class TestHandlerDirtyRepo:
         assert result["data"]["files"][0]["scope"] == "intent_to_add"
 
     async def test_mixed_changes(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """staged + unstaged + untracked 三种状态各一,summary 计数正确。"""
         _init_git_repo(tmp_path)
@@ -234,13 +256,19 @@ class TestHandlerDirtyRepo:
         assert s["total"] == 2
 
     async def test_detached_head(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """Detached HEAD(``git checkout SHA``)→ branch=None。"""
         _init_git_repo(tmp_path)
         sha = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=tmp_path,
-            capture_output=True, text=True, check=True,
+            ["git", "rev-parse", "HEAD"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         subprocess.run(["git", "checkout", "-q", sha], cwd=tmp_path, check=True)
         _load_project(plugin, "u:m", str(tmp_path))
@@ -258,12 +286,17 @@ class TestHandlerDirtyRepo:
 
 class TestUpstream:
     async def test_no_upstream(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """本地新分支(未推送)→ upstream=None。"""
         _init_git_repo(tmp_path)
         subprocess.run(
-            ["git", "checkout", "-q", "-b", "feature/x"], cwd=tmp_path, check=True,
+            ["git", "checkout", "-q", "-b", "feature/x"],
+            cwd=tmp_path,
+            check=True,
         )
         _load_project(plugin, "u:m", str(tmp_path))
 
@@ -272,7 +305,10 @@ class TestUpstream:
         assert result["data"]["upstream"] is None
 
     async def test_with_local_upstream(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """设置本地 upstream(``git branch --set-upstream-to``)→ upstream 字段填入。
 
@@ -280,7 +316,9 @@ class TestUpstream:
         """
         _init_git_repo(tmp_path)
         # 创建 develop 分支并切回 main
-        subprocess.run(["git", "checkout", "-q", "-b", "develop"], cwd=tmp_path, check=True)
+        subprocess.run(
+            ["git", "checkout", "-q", "-b", "develop"], cwd=tmp_path, check=True
+        )
         (tmp_path / "dev.txt").write_text("dev", encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
         subprocess.run(["git", "commit", "-m", "dev", "-q"], cwd=tmp_path, check=True)
@@ -288,7 +326,8 @@ class TestUpstream:
         # main 比 develop 落后 1 个 commit;把 develop 设为 main 的 upstream
         subprocess.run(
             ["git", "branch", "--set-upstream-to=develop", "main"],
-            cwd=tmp_path, check=True,
+            cwd=tmp_path,
+            check=True,
         )
         _load_project(plugin, "u:m", str(tmp_path))
 
@@ -300,16 +339,22 @@ class TestUpstream:
         assert result["data"]["upstream"]["ahead"] == 0
 
     async def test_ahead_of_upstream(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """ahead 计数:在 main 上提交,但 upstream 还指 develop(无新 commit)。"""
         _init_git_repo(tmp_path)
         # 创 develop 分支,内容与 main 一致(空 commit)
-        subprocess.run(["git", "checkout", "-q", "-b", "develop"], cwd=tmp_path, check=True)
+        subprocess.run(
+            ["git", "checkout", "-q", "-b", "develop"], cwd=tmp_path, check=True
+        )
         subprocess.run(["git", "checkout", "-q", "main"], cwd=tmp_path, check=True)
         subprocess.run(
             ["git", "branch", "--set-upstream-to=develop", "main"],
-            cwd=tmp_path, check=True,
+            cwd=tmp_path,
+            check=True,
         )
         # main 上加 1 个 commit
         (tmp_path / "extra.txt").write_text("x", encoding="utf-8")
@@ -331,7 +376,10 @@ class TestUpstream:
 
 class TestETag:
     async def test_returns_etag_header(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """首次调用返回 ETag 响应头。"""
         from astrbot.api import web
@@ -347,7 +395,10 @@ class TestETag:
         assert result["data"]["loaded"] is True
 
     async def test_304_on_matching_if_none_match(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """第二次带正确 If-None-Match → 304 Not Modified。"""
         from astrbot.api import web
@@ -377,7 +428,10 @@ class TestETag:
     # ──────────────────────────────────────────────────────────
 
     async def test_etag_changes_after_unstaged_edit(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """编辑 worktree 内文件 (不 git add) → ETag 必须变化。"""
         from astrbot.api import web
@@ -395,7 +449,8 @@ class TestETag:
         (tmp_path / "README.md").write_text("modified", encoding="utf-8")
 
         monkeypatch.setattr(
-            web, "request",
+            web,
+            "request",
             make_web_request_mock(headers={"If-None-Match": etag_before}),
         )
         r2 = await _gs.handle(plugin)
@@ -406,7 +461,10 @@ class TestETag:
         assert r2.headers["ETag"] != etag_before
 
     async def test_etag_changes_after_git_add(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """git add 后 → ETag 必须变化。"""
         from astrbot.api import web
@@ -425,7 +483,8 @@ class TestETag:
         subprocess.run(["git", "add", "new.txt"], cwd=tmp_path, check=True)
 
         monkeypatch.setattr(
-            web, "request",
+            web,
+            "request",
             make_web_request_mock(headers={"If-None-Match": etag_before}),
         )
         r2 = await _gs.handle(plugin)
@@ -435,7 +494,10 @@ class TestETag:
         assert r2.headers["ETag"] != etag_before
 
     async def test_etag_changes_after_untracked_file(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """新增未跟踪文件 → ETag 必须变化。"""
         from astrbot.api import web
@@ -453,7 +515,8 @@ class TestETag:
         (tmp_path / "untracked.txt").write_text("u", encoding="utf-8")
 
         monkeypatch.setattr(
-            web, "request",
+            web,
+            "request",
             make_web_request_mock(headers={"If-None-Match": etag_before}),
         )
         r2 = await _gs.handle(plugin)
@@ -463,7 +526,10 @@ class TestETag:
         assert r2.headers["ETag"] != etag_before
 
     async def test_stale_etag_no_longer_304(
-        self, monkeypatch, plugin, tmp_path: Path,
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
     ) -> None:
         """端到端: 编辑文件 → 带旧 ETag 请求 → 200 + 新文件列表 (不是 304)。"""
         from astrbot.api import web
@@ -486,7 +552,8 @@ class TestETag:
 
         # 3) 带旧 ETag → 必须 200 + 新文件
         monkeypatch.setattr(
-            web, "request",
+            web,
+            "request",
             make_web_request_mock(headers={"If-None-Match": etag_before}),
         )
         r2 = await _gs.handle(plugin)

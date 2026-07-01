@@ -1,4 +1,5 @@
 """tools.security.plan_mode 测试 — PlanModeController 状态 + 过滤 + reminder 注入。"""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock

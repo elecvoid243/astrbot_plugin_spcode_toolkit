@@ -14,6 +14,7 @@
 2. 子系统代码不应回写 main.py 实例属性 — 模块级更解耦
 3. 与 tools.inta_shell.runtime 一致(都走模块级单例)
 """
+
 from __future__ import annotations
 
 import asyncio

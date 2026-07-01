@@ -2,6 +2,7 @@
 
 Spec: docs/superpowers/specs/2026-06-26-git-worktree-management-design.md §4.2
 """
+
 import os
 import subprocess
 
@@ -205,19 +206,33 @@ def _make_test_repo_with_two_worktrees(tmp_path):
     primary = tmp_path / "primary"
     primary.mkdir()
     linked = tmp_path / "linked"
-    subprocess.run(["git", "init", "-b", "main", str(primary)],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(primary), "config", "user.email", "t@t.com"],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(primary), "config", "user.name", "T"],
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "-b", "main", str(primary)], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "config", "user.email", "t@t.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "config", "user.name", "T"],
+        check=True,
+        capture_output=True,
+    )
     (primary / "a.txt").write_text("a")
-    subprocess.run(["git", "-C", str(primary), "add", "a.txt"],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(primary), "commit", "-m", "init"],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(primary), "worktree", "add", str(linked), "-b", "feat"],
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(primary), "add", "a.txt"], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "commit", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "worktree", "add", str(linked), "-b", "feat"],
+        check=True,
+        capture_output=True,
+    )
     return primary, linked
 
 
@@ -266,20 +281,38 @@ def _make_primary_with_two_worktrees(tmp_path):
     primary = tmp_path / "primary"
     linked1 = tmp_path / "linked1"
     linked2 = tmp_path / "linked2"
-    subprocess.run(["git", "init", "-b", "main", str(primary)],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(primary), "config", "user.email", "t@t.com"],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(primary), "config", "user.name", "T"],
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "-b", "main", str(primary)], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "config", "user.email", "t@t.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "config", "user.name", "T"],
+        check=True,
+        capture_output=True,
+    )
     (primary / "a.txt").write_text("a")
-    subprocess.run(["git", "-C", str(primary), "add", "."], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(primary), "commit", "-m", "init"],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(primary), "worktree", "add", str(linked1), "-b", "f1"],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(primary), "worktree", "add", str(linked2), "-b", "f2"],
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(primary), "add", "."], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "commit", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "worktree", "add", str(linked1), "-b", "f1"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "worktree", "add", str(linked2), "-b", "f2"],
+        check=True,
+        capture_output=True,
+    )
     return primary
 
 
@@ -299,8 +332,11 @@ async def test_list_worktrees_safe_includes_locked_field(tmp_path):
     """list 输出包含 locked 字段(Task 1.1 扩展后)。"""
     primary = _make_primary_with_two_worktrees(tmp_path)
     # Lock first linked
-    subprocess.run(["git", "-C", str(primary), "worktree", "lock", str(tmp_path / "linked1")],
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(primary), "worktree", "lock", str(tmp_path / "linked1")],
+        check=True,
+        capture_output=True,
+    )
     result = await _list_worktrees_safe("git", str(primary))
     assert result[0]["locked"] is False
     assert result[1]["locked"] is True

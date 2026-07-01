@@ -2,6 +2,7 @@
 
 Extracted from file_restore.py in PR-1.
 """
+
 from __future__ import annotations
 import os
 import sys

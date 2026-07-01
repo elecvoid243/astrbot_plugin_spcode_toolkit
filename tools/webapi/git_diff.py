@@ -6,6 +6,7 @@ v3.4: ETag in-memory 缓存 + HTTP 缓存头(304 短路)
 v3.1: scope 参数(un-staged/staged/all)
 v3.3: 4-in-1 git call(优化性能)
 """
+
 from __future__ import annotations
 
 import logging
@@ -64,7 +65,6 @@ DEFAULT_SCOPE: str = "unstaged"  # 与 v1 行为严格兼容
 # ── file-browser 端点常量(v3.2) ──
 # 单一真相源,handler 与测试共享;详情见
 # docs/superpowers/specs/2026-06-20-file-browser-endpoint-design.md §5
-
 
 
 def _parse_diff_status_map(diff_output: str) -> dict[str, str]:
@@ -127,7 +127,6 @@ def _parse_diff_status_map(diff_output: str) -> dict[str, str]:
     return status_by_path
 
 
-
 def _parse_numstat_counts(numstat_output: str) -> dict[str, tuple[int, int]]:
     """从 ``git diff --numstat`` 解析 ``{path: (add, del)}`` 映射。
 
@@ -154,7 +153,6 @@ def _parse_numstat_counts(numstat_output: str) -> dict[str, tuple[int, int]]:
         delete = 0 if del_raw == "-" else int(del_raw)
         counts[path] = (add, delete)
     return counts
-
 
 
 def _build_stat_text(files_changed: list[dict]) -> str:
@@ -199,7 +197,6 @@ def _build_stat_text(files_changed: list[dict]) -> str:
     return "\n".join(lines) + "\n" + summary
 
 
-
 async def _compute_diff_etag(git_bin: str, directory: str) -> str:
     """为 git-diff 端点计算弱 ETag(委托给共享 helper)。
 
@@ -230,12 +227,6 @@ async def _compute_diff_etag(git_bin: str, directory: str) -> str:
     while len(_DIFF_ETAG_CACHE) > _DIFF_ETAG_CACHE_MAX:
         _DIFF_ETAG_CACHE.popitem(last=False)
     return etag
-
-
-
-
-
-
 
 
 def _make_git_diff_empty_envelope(
@@ -510,4 +501,3 @@ async def handle(
         status_code=200,
         headers=cache_headers,
     )
-

@@ -5,6 +5,7 @@
 让 5 个 IntaShell*Tool 类(已迁移到 tools/function_tools/) 也能引用,
 无需再依赖 main.py 的局部符号。
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

@@ -108,12 +108,16 @@ def _make_error_gen(error_msg: str = "❌ 模拟失败:原因"):
     用作测试夹具 — 模拟子方法返回错误但优雅退出的场景
     (即 _project_load_impl 期望"yield 错误 + return" 而不是抛异常)。
     """
+
     async def _gen(*args, **kwargs):
         yield error_msg
+
     return _gen
 
 
-def _patch_internal_methods(plugin, *, agentsmd_md_exists=False, custom_async_gens=None):
+def _patch_internal_methods(
+    plugin, *, agentsmd_md_exists=False, custom_async_gens=None
+):
     """把 plugin 的 5 个内部方法替换为 mock,返回可观察的 mock 实例。
 
     重要:这里要区分两类方法:
@@ -428,12 +432,10 @@ def test_project_load_aborts_on_agentsmd_init_error(tmp_path):
         f"应出现 abort 总结消息,实际: {msgs}"
     )
     # 5. 成功消息不出现
-    assert not any("项目已加载" in m for m in msgs), (
-        f"不应出现成功消息,实际: {msgs}"
-    )
+    assert not any("项目已加载" in m for m in msgs), f"不应出现成功消息,实际: {msgs}"
     # 6. 状态未登记
     assert "test:umo" not in _loaded_items(), (
-        '失败时 _loaded_projects 不应被填充,避免幽灵 load 阻塞后续 /project load'
+        "失败时 _loaded_projects 不应被填充,避免幽灵 load 阻塞后续 /project load"
     )
 
 
@@ -476,9 +478,7 @@ def test_project_load_aborts_on_codegraph_init_error(tmp_path):
     mocks = _patch_internal_methods(
         plugin,
         custom_async_gens={
-            "codegraph_init": _make_error_gen(
-                "❌ 模拟:codegraph CLI 找不到"
-            ),
+            "codegraph_init": _make_error_gen("❌ 模拟:codegraph CLI 找不到"),
         },
     )
     event = _make_event(umo="test:umo")
@@ -612,10 +612,13 @@ def test_project_unload_no_project_loaded():
 def test_project_unload_with_default_project_set():
     """codegraph_project 已配置 → 调 agentsmd_unload + codegraph_set 回默认。"""
     plugin = _make_plugin(codegraph_project="/default/proj")
-    _set_loaded("test:umo", {
-        "directory": "/loaded/proj",
-        "loaded_at": 12345.0,
-    })
+    _set_loaded(
+        "test:umo",
+        {
+            "directory": "/loaded/proj",
+            "loaded_at": 12345.0,
+        },
+    )
     mocks = _patch_internal_methods(plugin)
     event = _make_event(umo="test:umo")
 
@@ -645,10 +648,13 @@ def test_project_unload_without_default_project():
 
     _cg_state.set_active_project_path("/old/loaded/proj")
     plugin = _make_plugin(codegraph_project="")
-    _set_loaded("test:umo", {
-        "directory": "/loaded/proj",
-        "loaded_at": 12345.0,
-    })
+    _set_loaded(
+        "test:umo",
+        {
+            "directory": "/loaded/proj",
+            "loaded_at": 12345.0,
+        },
+    )
     mocks = _patch_internal_methods(plugin)
     event = _make_event(umo="test:umo")
 
@@ -669,10 +675,13 @@ def test_project_unload_without_default_project():
 def test_project_unload_clears_state():
     """卸载后 _loaded_projects[umo] 必须被删除(防"幽灵 load")。"""
     plugin = _make_plugin(codegraph_project="/default")
-    _set_loaded("test:umo", {
-        "directory": "/x",
-        "loaded_at": 0.0,
-    })
+    _set_loaded(
+        "test:umo",
+        {
+            "directory": "/x",
+            "loaded_at": 0.0,
+        },
+    )
     _patch_internal_methods(plugin)
     event = _make_event(umo="test:umo")
     _collect_async_gen(plugin.project_unload(event))

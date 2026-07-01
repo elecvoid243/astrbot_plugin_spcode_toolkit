@@ -1,4 +1,5 @@
 """FileRemoveTool — 沙箱化文件/目录删除(带回收站 + 黑名单)。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

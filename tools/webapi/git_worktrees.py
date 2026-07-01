@@ -3,6 +3,7 @@
 
 Spec: docs/superpowers/specs/2026-06-18-git-worktree-switcher-design.md §2.2
 """
+
 from __future__ import annotations
 
 import logging
@@ -175,9 +176,7 @@ async def handle(
         )
 
     elapsed = _elapsed()
-    logger.debug(
-        f"[git-worktrees] listed {len(worktrees)} worktrees in {elapsed}ms"
-    )
+    logger.debug(f"[git-worktrees] listed {len(worktrees)} worktrees in {elapsed}ms")
     return {
         "status": "ok",
         "data": {
@@ -190,4 +189,3 @@ async def handle(
             "elapsed_ms": elapsed,
         },
     }
-

@@ -4,6 +4,7 @@
 Spec: docs/superpowers/specs/2026-06-22-file-restore-endpoint-design.md
 v3.6: scope 自动检测(基于 git status X/Y 列)。
 """
+
 from __future__ import annotations
 
 import logging

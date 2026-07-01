@@ -1,4 +1,5 @@
 """IntaShellListTool — 列出所有活跃的 inta_shell 会话。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

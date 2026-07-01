@@ -21,6 +21,7 @@ separately in ``test_git_log.py``.
 
 Spec: docs/superpowers/specs/2026-06-23-git-stage-untage-commit-log-design.md §5
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -53,7 +54,9 @@ def _git_log_count(repo: Path) -> int:
     """Raw ``git rev-list --count HEAD`` — verify history length."""
     r = subprocess.run(
         ["git", "-C", str(repo), "rev-list", "--count", "HEAD"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return int(r.stdout.strip())
 
@@ -62,7 +65,9 @@ def _git_last_message(repo: Path) -> str:
     """Raw ``git log -1 --format=%B`` — verify last commit message."""
     r = subprocess.run(
         ["git", "-C", str(repo), "log", "-1", "--format=%B"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return r.stdout.rstrip("\r\n")
 
@@ -94,7 +99,9 @@ async def test_full_git_workflow_loop(plugin, tmp_path: Path):
 
     # 1. Stage specific files
     stage_result = await _gs.handle(
-        plugin, umo="u:m", body={"files": ["feature.py", "test.py"]},
+        plugin,
+        umo="u:m",
+        body={"files": ["feature.py", "test.py"]},
     )
     assert stage_result["data"]["staged"] is True
     assert stage_result["data"]["staged_count"] == 2
@@ -129,7 +136,9 @@ async def test_full_git_workflow_loop(plugin, tmp_path: Path):
     #    since it was never committed, and reset HEAD brings it back out of index)
     status_result = subprocess.run(
         ["git", "-C", str(tmp_path), "status", "--porcelain"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     # untracked files show with "??" prefix
     assert "?? extra.py" in status_result.stdout

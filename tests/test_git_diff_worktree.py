@@ -27,7 +27,9 @@ pytestmark = pytest.mark.asyncio
 
 # Match the sys.path pattern used by sibling test files.
 _PROJECT_PARENT = Path(__file__).resolve().parent.parent.parent  # F:\github
-_PROJECT_DIR = Path(__file__).resolve().parent.parent  # F:\github\astrbot_plugin_spcode_toolkit
+_PROJECT_DIR = (
+    Path(__file__).resolve().parent.parent
+)  # F:\github\astrbot_plugin_spcode_toolkit
 if str(_PROJECT_PARENT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_PARENT))
 if str(_PROJECT_DIR) not in sys.path:
@@ -43,6 +45,7 @@ SPCodeToolkit = _main_mod.SPCodeToolkit
 # ────────────────────────────────────────────────────────────────────
 # Fixtures & helpers (mirror test_git_diff.py)
 # ────────────────────────────────────────────────────────────────────
+
 
 def _make_plugin() -> Any:
     plugin = SPCodeToolkit.__new__(SPCodeToolkit)
@@ -96,6 +99,7 @@ def _load_project(plugin: Any, umo: str, directory: str) -> None:
 def _mock_query(monkeypatch, **values):
     """Mock astrbot.api.web.request.query with provided key/value pairs."""
     from astrbot.api import web
+
     mock = MagicMock()
     mock.get = lambda key, default=None: values.get(key, default)
     monkeypatch.setattr(web, "request", MagicMock(query=mock))
@@ -104,6 +108,7 @@ def _mock_query(monkeypatch, **values):
 # ────────────────────────────────────────────────────────────────────
 # Tests
 # ────────────────────────────────────────────────────────────────────
+
 
 async def test_worktree_param_returns_diff_for_linked_worktree(
     plugin, tmp_path, monkeypatch
@@ -163,6 +168,7 @@ async def test_worktree_param_empty_uses_primary(plugin, tmp_path, monkeypatch):
 
 # ─── Spec §2.2: empty / whitespace → use primary (backward compat) ───
 
+
 async def test_worktree_whitespace_only_uses_primary(plugin, tmp_path, monkeypatch):
     """Whitespace-only worktree → treated as missing (spec §2.2)."""
     _init_git_repo(tmp_path)
@@ -179,6 +185,7 @@ async def test_worktree_whitespace_only_uses_primary(plugin, tmp_path, monkeypat
 
 # ─── Defense step 2: path traversal ──────────────────────────────────
 
+
 async def test_worktree_path_traversal_rejected(plugin, tmp_path, monkeypatch):
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
@@ -192,6 +199,7 @@ async def test_worktree_path_traversal_rejected(plugin, tmp_path, monkeypatch):
 
 # ─── Defense step 3: relative path rejected ──────────────────────────
 
+
 async def test_worktree_relative_path_rejected(plugin, tmp_path, monkeypatch):
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
@@ -204,6 +212,7 @@ async def test_worktree_relative_path_rejected(plugin, tmp_path, monkeypatch):
 
 
 # ─── Defense step 4: hidden directory rejected ───────────────────────
+
 
 async def test_worktree_hidden_dir_rejected(plugin, tmp_path, monkeypatch):
     _init_git_repo(tmp_path)
@@ -220,9 +229,8 @@ async def test_worktree_hidden_dir_rejected(plugin, tmp_path, monkeypatch):
 
 # ─── Defense step 5: symlink to outside rejected ─────────────────────
 
-async def test_worktree_symlink_to_outside_repo_rejected(
-    plugin, tmp_path, monkeypatch
-):
+
+async def test_worktree_symlink_to_outside_repo_rejected(plugin, tmp_path, monkeypatch):
     """Symlink that resolves to a different repo's directory must be rejected."""
     # Create main repo
     _init_git_repo(tmp_path)
@@ -247,6 +255,7 @@ async def test_worktree_symlink_to_outside_repo_rejected(
 
 # ─── Defense step 6: cross-repo (different git-common-dir) ───────────
 
+
 async def test_worktree_different_repo_rejected(plugin, tmp_path, monkeypatch):
     """A real path that belongs to a DIFFERENT repo must be rejected.
 
@@ -270,6 +279,7 @@ async def test_worktree_different_repo_rejected(plugin, tmp_path, monkeypatch):
 
 # ─── Edge case: non-existent path ────────────────────────────────────
 
+
 async def test_worktree_nonexistent_path_rejected(plugin, tmp_path, monkeypatch):
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
@@ -287,6 +297,7 @@ async def test_worktree_nonexistent_path_rejected(plugin, tmp_path, monkeypatch)
 
 # ─── Regression: .worktrees/ subdirectory layout (git's official convention) ─
 
+
 async def test_worktree_param_accepts_dotworktrees_subdir(
     plugin, tmp_path, monkeypatch
 ):
@@ -301,8 +312,14 @@ async def test_worktree_param_accepts_dotworktrees_subdir(
     wt_path = tmp_path / ".worktrees" / "feature-x"
     subprocess.run(
         [
-            "git", "-C", str(tmp_path), "worktree", "add",
-            str(wt_path), "-b", "feature-x",
+            "git",
+            "-C",
+            str(tmp_path),
+            "worktree",
+            "add",
+            str(wt_path),
+            "-b",
+            "feature-x",
         ],
         check=True,
     )
@@ -322,9 +339,7 @@ async def test_worktree_param_accepts_dotworktrees_subdir(
     assert "feat.txt" in paths
 
 
-async def test_worktree_param_still_rejects_dotgit(
-    plugin, tmp_path, monkeypatch
-):
+async def test_worktree_param_still_rejects_dotgit(plugin, tmp_path, monkeypatch):
     """Step 4 must still defend against direct .git access.
 
     This test guards against an over-correction that would also delete

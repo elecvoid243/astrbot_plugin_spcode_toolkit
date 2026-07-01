@@ -3,6 +3,7 @@
 PR-4 of git workflow endpoints design.
 Spec: docs/superpowers/specs/2026-06-23-git-stage-untage-commit-log-design.md §C
 """
+
 from __future__ import annotations
 import subprocess
 import time
@@ -36,7 +37,9 @@ def _load_project(plugin: Any, umo: str, directory: str) -> None:
     _proj_state.put(umo, {"directory": directory, "loaded_at": time.time()})
 
 
-def _unstage(plugin, body: dict[str, Any], *, umo: str | None = None, worktree: str | None = None):
+def _unstage(
+    plugin, body: dict[str, Any], *, umo: str | None = None, worktree: str | None = None
+):
     return _gu.handle(
         plugin,
         body=body,
@@ -58,8 +61,11 @@ async def test_unstage_specific_files(plugin, tmp_path: Path):
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     # 确认已暂存
     status = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=tmp_path,
-        capture_output=True, text=True, check=True,
+        ["git", "status", "--porcelain"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert "A  a.py" in status.stdout
     assert "A  b.py" in status.stdout
@@ -74,13 +80,19 @@ async def test_unstage_specific_files(plugin, tmp_path: Path):
     # 验证 git 实际取消暂存(文件从 staged → untracked,因为 a.py 原本是
     # 新文件未提交过,reset 后 git 认为它从未进入 index)
     status = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=tmp_path,
-        capture_output=True, text=True, check=True,
+        ["git", "status", "--porcelain"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     # 验证: 不再 staged,且 diff --cached 为空
     cached = subprocess.run(
-        ["git", "diff", "--cached", "--name-only"], cwd=tmp_path,
-        capture_output=True, text=True, check=True,
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert "a.py" not in cached.stdout
     assert "b.py" not in cached.stdout
@@ -100,8 +112,11 @@ async def test_unstage_all(plugin, tmp_path: Path):
 
     # 验证: 全部不再 staged
     cached = subprocess.run(
-        ["git", "diff", "--cached", "--name-only"], cwd=tmp_path,
-        capture_output=True, text=True, check=True,
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert "x.py" not in cached.stdout
     assert "y.py" not in cached.stdout

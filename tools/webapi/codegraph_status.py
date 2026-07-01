@@ -1,4 +1,5 @@
 """GET /spcode/codegraph-status — 获取 codegraph MCP 运行状态。"""
+
 from __future__ import annotations
 from typing import TYPE_CHECKING
 

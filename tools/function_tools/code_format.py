@@ -14,6 +14,7 @@ v2.14.1 (2026-06-25) 简化 LLM 暴露面:
 
 Author: elecvoid243, 2026-06-25
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -74,7 +75,10 @@ class CodeFormatTool(FunctionTool):
 
         # LLM 不再传 formatter/style/indent,全部从实例属性读
         return await record_and_run(
-            self.name, code_format.format, filepath, "auto",
+            self.name,
+            code_format.format,
+            filepath,
+            "auto",
             check=check,
             style=self.default_style,
             indent=self.default_indent,

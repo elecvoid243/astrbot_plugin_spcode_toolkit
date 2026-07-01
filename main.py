@@ -48,6 +48,7 @@ from .tools._guidance_text import (
     TODO_GUIDANCE_MARKER,
     TODO_GUIDANCE,
 )
+
 # re-export FunctionTool 类供 tests/test_*.py 旧用法 (main_mod.TodoCreateTool 等)
 # v2.12 (PR-split-modify): 用 todo_add / todo_update / todo_delete 取代 todo_modify
 from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
@@ -162,13 +163,9 @@ class SPCodeToolkit(star.Star):
             # 拍平为顶层的 default_style / default_indent,与其他 flat key 风格一致。
             # 缺失时用 dataclass 默认("allman" / 4)。)
             elif isinstance(t, CodeFormatTool):
-                t.default_style = str(
-                    _config.get("default_style") or "allman"
-                )
+                t.default_style = str(_config.get("default_style") or "allman")
                 try:
-                    t.default_indent = int(
-                        _config.get("default_indent") or 4
-                    )
+                    t.default_indent = int(_config.get("default_indent") or 4)
                 except (TypeError, ValueError):
                     t.default_indent = 4
 

@@ -16,8 +16,11 @@ import pytest
 # Match the sys.path pattern used by test_git_diff.py so we can import
 # from tools._helpers in the package layout.
 import sys
+
 _PROJECT_PARENT = Path(__file__).resolve().parent.parent.parent  # F:\github
-_PROJECT_DIR = Path(__file__).resolve().parent.parent  # F:\github\astrbot_plugin_spcode_toolkit
+_PROJECT_DIR = (
+    Path(__file__).resolve().parent.parent
+)  # F:\github\astrbot_plugin_spcode_toolkit
 if str(_PROJECT_PARENT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_PARENT))
 if str(_PROJECT_DIR) not in sys.path:
@@ -49,6 +52,7 @@ def two_repos():
 
 # ─── _resolve_git_common_dir tests (Task 1.1) ───────────────────────────
 
+
 def test_resolve_returns_absolute_path(two_repos):
     a, _ = two_repos
     result = _resolve_git_common_dir("git", str(a))
@@ -58,7 +62,9 @@ def test_resolve_returns_absolute_path(two_repos):
 def test_resolve_different_repos_differ(two_repos):
     """CRITICAL: prevents cross-repo bypass (spec §2.3)."""
     a, b = two_repos
-    assert _resolve_git_common_dir("git", str(a)) != _resolve_git_common_dir("git", str(b))
+    assert _resolve_git_common_dir("git", str(a)) != _resolve_git_common_dir(
+        "git", str(b)
+    )
 
 
 def test_resolve_same_repo_two_worktrees_match():
@@ -86,6 +92,7 @@ def test_resolve_case_insensitive_on_windows(two_repos):
 
 
 # ─── _parse_git_worktree_porcelain tests (Task 1.2) ─────────────────────
+
 
 def test_parse_single_main_worktree():
     text = "worktree /r/main\nHEAD abc1234\nbranch refs/heads/main\n"

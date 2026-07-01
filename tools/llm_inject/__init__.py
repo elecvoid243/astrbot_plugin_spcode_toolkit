@@ -8,6 +8,7 @@ PR-4 (2026-06-23) 提取:
 指引)有相同的 5 行模式:marker 检查 → 追加到 system_prompt。本模块把这套
 样板集中到一处,2 个 hook 各自变成"条件检查 + 1 行调用"。
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

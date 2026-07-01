@@ -1,4 +1,5 @@
 """FileDiffTool — 结构化文件差异比较(统一 diff + 计数)。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

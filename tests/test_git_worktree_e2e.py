@@ -100,16 +100,12 @@ async def test_e2e_add_lock_unlock_remove_cycle(tmp_path):
     assert r["data"]["lock_reason"] == "integration test"
 
     # ── UNLOCK ──
-    r = await unlock_handle(
-        plugin, umo=umo, worktree=None, body={"path": str(linked)}
-    )
+    r = await unlock_handle(plugin, umo=umo, worktree=None, body={"path": str(linked)})
     assert r["data"]["reason"] is None, r["data"]["stderr"]
     assert r["data"]["locked"] is False
 
     # ── REMOVE ──
-    r = await remove_handle(
-        plugin, umo=umo, worktree=None, body={"path": str(linked)}
-    )
+    r = await remove_handle(plugin, umo=umo, worktree=None, body={"path": str(linked)})
     assert r["data"]["reason"] is None, r["data"]["stderr"]
     assert _norm(r["data"]["removed_path"]) == _norm(str(linked))
 
@@ -145,9 +141,7 @@ async def test_e2e_remove_locked_worktree_rejected(tmp_path):
     )
 
     # REMOVE without force → worktree_locked
-    r = await remove_handle(
-        plugin, umo=umo, worktree=None, body={"path": str(linked)}
-    )
+    r = await remove_handle(plugin, umo=umo, worktree=None, body={"path": str(linked)})
     assert r["data"]["reason"] == "worktree_locked"
 
     # REMOVE with force=true → STILL worktree_locked (force 不绕过 locked 闸)
@@ -174,9 +168,7 @@ async def test_e2e_remove_main_always_rejected(tmp_path):
     plugin, umo = _make_plugin(str(primary))
 
     # Without force
-    r = await remove_handle(
-        plugin, umo=umo, worktree=None, body={"path": str(primary)}
-    )
+    r = await remove_handle(plugin, umo=umo, worktree=None, body={"path": str(primary)})
     assert r["data"]["reason"] == "cannot_remove_main"
 
     # With force=true → STILL cannot_remove_main

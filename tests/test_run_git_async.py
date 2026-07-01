@@ -5,6 +5,7 @@ v3.4 (2026-06-21) P1 perf:替换 ``run_sync(run_cmd, ...)`` 为
 本测试验证新 helper 的**行为兼容性** — 与 ``run_cmd`` 返回 dict 格式一致,
 覆盖成功 / 失败 / timeout / 命令不存在四种路径。
 """
+
 from __future__ import annotations
 
 import asyncio

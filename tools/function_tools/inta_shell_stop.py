@@ -1,4 +1,5 @@
 """IntaShellStopTool — 终止 inta_shell 会话(发 Ctrl+C + 超时 kill)。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

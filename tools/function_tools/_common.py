@@ -1,13 +1,12 @@
 """function_tools 内部共享 helper — 统一 run_sync + record + err_json 模式。"""
+
 from __future__ import annotations
 
 from .._helpers import err_json, run_sync, unwrap
 from .._stats import _record
 
 
-async def record_and_run(
-    name: str, fn, *args, err_prefix: str = "", **kwargs
-):
+async def record_and_run(name: str, fn, *args, err_prefix: str = "", **kwargs):
     """统一模板: _record → run_sync → unwrap,异常时 err_json 包装。
 
     适用于 code_check / es_search / file_remove / file_compare 这 4 个

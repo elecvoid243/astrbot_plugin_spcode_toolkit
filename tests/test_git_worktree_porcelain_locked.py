@@ -5,16 +5,13 @@ existing strict-dict test in tests/test_helpers_git.py::test_parse_single_main_w
 
 Spec: docs/superpowers/specs/2026-06-26-git-worktree-management-design.md §4.1
 """
+
 from tools._helpers import _parse_git_worktree_porcelain
 
 
 def test_parse_unlocked_worktree():
     """普通 worktree 没有 locked 行 → locked=False, locked_reason=None。"""
-    text = (
-        "worktree /path/to/main\n"
-        "HEAD abc123\n"
-        "branch refs/heads/main\n"
-    )
+    text = "worktree /path/to/main\nHEAD abc123\nbranch refs/heads/main\n"
     result = _parse_git_worktree_porcelain(text)
     assert len(result) == 1
     assert result[0]["locked"] is False
@@ -25,12 +22,7 @@ def test_parse_unlocked_worktree():
 
 def test_parse_locked_worktree_no_reason():
     """仅有 `locked` 行 → locked=True, locked_reason=None。"""
-    text = (
-        "worktree /path/to/feature\n"
-        "HEAD def456\n"
-        "branch refs/heads/feature\n"
-        "locked\n"
-    )
+    text = "worktree /path/to/feature\nHEAD def456\nbranch refs/heads/feature\nlocked\n"
     result = _parse_git_worktree_porcelain(text)
     assert len(result) == 1
     assert result[0]["locked"] is True
@@ -104,11 +96,7 @@ def test_parse_multiple_worktrees_mixed_lock_state():
 
 def test_parse_main_worktree_locked_defaults_false():
     """main worktree 默认 locked=False(除非有 locked 行)。"""
-    text = (
-        "worktree /path/to/main\n"
-        "HEAD abc\n"
-        "branch refs/heads/main\n"
-    )
+    text = "worktree /path/to/main\nHEAD abc\nbranch refs/heads/main\n"
     result = _parse_git_worktree_porcelain(text)
     assert result[0]["is_main"] is True
     assert result[0]["locked"] is False

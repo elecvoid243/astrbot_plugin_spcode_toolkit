@@ -19,6 +19,7 @@ git 状态查询命令(串行执行,page cache 命中):
 
 Author: elecvoid243 @ 2026-06-24
 """
+
 from __future__ import annotations
 
 import logging
@@ -140,12 +141,14 @@ def _parse_porcelain_v1(porcelain: str) -> list[dict]:
         if not path:
             continue
         scope = _classify_file_scope(x_status, y_status)
-        files.append({
-            "path": path,
-            "x_status": x_status,
-            "y_status": y_status,
-            "scope": scope,
-        })
+        files.append(
+            {
+                "path": path,
+                "x_status": x_status,
+                "y_status": y_status,
+                "scope": scope,
+            }
+        )
         if len(files) >= MAX_FILES:
             break
     return files
@@ -230,7 +233,9 @@ async def handle(
 
     # ── 1. preflight(5 步) ──
     err, ctx = await _git_endpoint_preflight(
-        plugin, umo=umo, worktree_param=worktree,
+        plugin,
+        umo=umo,
+        worktree_param=worktree,
     )
     if err is not None:
         err["data"]["elapsed_ms"] = _elapsed()
@@ -263,10 +268,13 @@ async def handle(
         else:
             reason = ReasonCode.GIT_ERROR
         return _make_envelope(
-            success=False, reason=reason,
+            success=False,
+            reason=reason,
             elapsed_ms=_elapsed(),
-            loaded=False, directory=directory,
-            umo=effective_umo, worktree=directory,
+            loaded=False,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             stderr=stderr,
         )
 
@@ -298,8 +306,8 @@ async def handle(
     behind = 0
     if upstream_branch:
         rev_list_result = await _run_git_async(
-            git_prefix + ["rev-list", "--left-right", "--count",
-                          f"HEAD...{upstream_branch}"],
+            git_prefix
+            + ["rev-list", "--left-right", "--count", f"HEAD...{upstream_branch}"],
             encoding="utf-8",
         )
         if rev_list_result["ok"]:
@@ -341,9 +349,12 @@ async def handle(
 
     return _JSONResponseCompat(
         _make_envelope(
-            success=True, elapsed_ms=_elapsed(),
-            loaded=True, directory=directory,
-            umo=effective_umo, worktree=directory,
+            success=True,
+            elapsed_ms=_elapsed(),
+            loaded=True,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             branch=branch,
             upstream=upstream_data,
             files=files,

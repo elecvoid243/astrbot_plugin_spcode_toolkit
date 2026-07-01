@@ -7,6 +7,7 @@ notes 三态语义(与 v2.6 保持一致,行为不变):
 - notes=""          → 清空 notes
 - notes="xxx"       → 覆盖 notes
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

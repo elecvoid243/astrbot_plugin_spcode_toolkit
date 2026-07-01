@@ -29,7 +29,9 @@ pytestmark = pytest.mark.asyncio
 # 同时让 `from tools import _helpers` 和 `import main` 这种绝对导入也能工作
 # (与 tests/test_project_subcommand.py 相同的 sys.path 设置)。
 _PROJECT_PARENT = Path(__file__).resolve().parent.parent.parent  # F:\github
-_PROJECT_DIR = Path(__file__).resolve().parent.parent  # F:\github\astrbot_plugin_spcode_toolkit
+_PROJECT_DIR = (
+    Path(__file__).resolve().parent.parent
+)  # F:\github\astrbot_plugin_spcode_toolkit
 if str(_PROJECT_PARENT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_PARENT))
 if str(_PROJECT_DIR) not in sys.path:
@@ -101,6 +103,7 @@ def _make_event(umo: str = "test:umo") -> MagicMock:
 
 # --- T1: clean state ---------------------------------------------------
 
+
 async def test_handle_git_diff_returns_clean_when_no_changes(plugin, tmp_path):
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
@@ -114,6 +117,7 @@ async def test_handle_git_diff_returns_clean_when_no_changes(plugin, tmp_path):
 
 
 # --- T2-T6: status detection (M / A / D / R + truncation) -------------
+
 
 async def test_handle_git_diff_returns_modified_file(plugin, tmp_path):
     _init_git_repo(tmp_path)
@@ -178,6 +182,7 @@ async def test_handle_git_diff_truncates_large_output(plugin, tmp_path):
 
 # --- T7-T11: gating (no project, umo mismatch, fallback, feature flag) -
 
+
 async def test_handle_git_diff_no_project_loaded(plugin):
     _proj_state.reset()
     result = await _gd.handle(plugin)
@@ -232,6 +237,7 @@ async def test_handle_git_diff_feature_disabled_codegraph(plugin):
 
 # --- T12-T14: environment errors (directory / git) -------------------
 
+
 async def test_handle_git_diff_directory_missing(plugin):
     _proj_state.put(
         "test:umo",
@@ -280,6 +286,7 @@ async def test_handle_git_diff_git_unavailable(plugin, tmp_path, monkeypatch):
 
 # --- T15-T18: envelope shape + umo echo + max_bytes constant ---------
 
+
 async def test_handle_git_diff_response_envelope_shape(plugin, tmp_path):
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
@@ -287,13 +294,24 @@ async def test_handle_git_diff_response_envelope_shape(plugin, tmp_path):
     assert result["status"] == "ok"
     data = result["data"]
     expected_keys = {
-        "loaded", "directory", "umo", "diff", "stat", "files_changed",
-        "truncated", "truncated_at_bytes", "max_bytes", "elapsed_ms", "reason",
+        "loaded",
+        "directory",
+        "umo",
+        "diff",
+        "stat",
+        "files_changed",
+        "truncated",
+        "truncated_at_bytes",
+        "max_bytes",
+        "elapsed_ms",
+        "reason",
     }
     assert expected_keys.issubset(data.keys())
 
 
-async def test_handle_git_diff_umo_query_param_hits_loaded_umo(plugin, tmp_path, monkeypatch):
+async def test_handle_git_diff_umo_query_param_hits_loaded_umo(
+    plugin, tmp_path, monkeypatch
+):
     _init_git_repo(tmp_path)
     _load_project(plugin, "target:umo", str(tmp_path))
 
@@ -302,9 +320,8 @@ async def test_handle_git_diff_umo_query_param_hits_loaded_umo(plugin, tmp_path,
     # 但新增的 ?scope= 校验会把它误判为非法 scope 并提前返回。这里用
     # make_web_request_mock 让 umo / worktree / scope 三个 key 各自查表。
     from astrbot.api import web
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock({"umo": "target:umo"})
-    )
+
+    monkeypatch.setattr(web, "request", make_web_request_mock({"umo": "target:umo"}))
 
     result = await _gd.handle(plugin)
     assert result["data"]["umo"] == "target:umo"
@@ -446,7 +463,9 @@ async def test_handle_git_diff_diff_runs_before_numstat(plugin, tmp_path, monkey
     )
 
 
-async def test_handle_git_diff_skips_numstat_on_raw_failure(plugin, tmp_path, monkeypatch):
+async def test_handle_git_diff_skips_numstat_on_raw_failure(
+    plugin, tmp_path, monkeypatch
+):
     """P2 perf 修复:raw diff 失败时不跑 numstat(节省 1 个 git 调用)。
 
     旧实现 ``asyncio.gather(diff, numstat)`` 两路并发 — raw 失败时 numstat
@@ -466,7 +485,12 @@ async def test_handle_git_diff_skips_numstat_on_raw_failure(plugin, tmp_path, mo
         call_log.append(cmd)
         # 只让 raw diff 返回 ok=False;其他调用走真实实现
         if "diff" in cmd and "--numstat" not in cmd:
-            return {"ok": False, "stdout": "", "stderr": "simulated failure", "elapsed_ms": 0}
+            return {
+                "ok": False,
+                "stdout": "",
+                "stderr": "simulated failure",
+                "elapsed_ms": 0,
+            }
         return await real_run(*args, **kwargs)
 
     monkeypatch.setattr(main_mod, "_run_git_async", _fake_run)
@@ -487,6 +511,7 @@ async def test_handle_git_diff_skips_numstat_on_raw_failure(plugin, tmp_path, mo
 
 
 # --- T19: git_path config --------------------------------------------
+
 
 async def test_handle_git_diff_uses_configured_git_path(plugin, tmp_path):
     plugin._config["git_path"] = "C:/some/other/git.exe"
@@ -510,6 +535,7 @@ async def test_git_path_schema_field_exists():
     """
     import json
     from pathlib import Path as _P
+
     schema_path = _P(__file__).resolve().parent.parent / "_conf_schema.json"
     with open(schema_path, encoding="utf-8") as f:
         schema = json.load(f)
@@ -526,9 +552,11 @@ async def test_git_path_schema_field_exists():
 # v3.1 scope 参数(在 v1 之上扩展,默认行为不变)
 # ────────────────────────────────────────────────────────────────────
 
+
 async def test_handle_git_diff_default_scope_is_unstaged(plugin, tmp_path, monkeypatch):
     """不传 ?scope= 时,行为与 v1 完全一致(走 git diff,无参数)。"""
     from astrbot.api import web
+
     _init_git_repo(tmp_path)
     (tmp_path / "README.md").write_text("modified", encoding="utf-8")
     _load_project(plugin, "test:umo", str(tmp_path))
@@ -541,18 +569,19 @@ async def test_handle_git_diff_default_scope_is_unstaged(plugin, tmp_path, monke
     assert "README.md" in data["diff"]  # unstaged 改动出现在 diff 中
 
 
-async def test_handle_git_diff_scope_staged_returns_staged_diff(plugin, tmp_path, monkeypatch):
+async def test_handle_git_diff_scope_staged_returns_staged_diff(
+    plugin, tmp_path, monkeypatch
+):
     """?scope=staged → 走 git diff --cached,只显示已暂存内容。"""
     from astrbot.api import web
+
     _init_git_repo(tmp_path)
     (tmp_path / "README.md").write_text("staged change", encoding="utf-8")
     subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
     # 之后在已 staged 之上再做 unstaged 修改
     (tmp_path / "README.md").write_text("staged + extra edit", encoding="utf-8")
     _load_project(plugin, "test:umo", str(tmp_path))
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock({"scope": "staged"})
-    )
+    monkeypatch.setattr(web, "request", make_web_request_mock({"scope": "staged"}))
 
     result = await _gd.handle(plugin)
     data = result["data"]
@@ -562,9 +591,12 @@ async def test_handle_git_diff_scope_staged_returns_staged_diff(plugin, tmp_path
     assert "staged change" in data["diff"]
 
 
-async def test_handle_git_diff_scope_all_returns_combined_diff(plugin, tmp_path, monkeypatch):
+async def test_handle_git_diff_scope_all_returns_combined_diff(
+    plugin, tmp_path, monkeypatch
+):
     """?scope=all → 走 git diff HEAD,显示 working tree vs HEAD。"""
     from astrbot.api import web
+
     _init_git_repo(tmp_path)
     (tmp_path / "README.md").write_text("init\n", encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
@@ -574,9 +606,7 @@ async def test_handle_git_diff_scope_all_returns_combined_diff(plugin, tmp_path,
     # 再做 unstaged 改动
     (tmp_path / "README.md").write_text("modified+unstaged\n", encoding="utf-8")
     _load_project(plugin, "test:umo", str(tmp_path))
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock({"scope": "all"})
-    )
+    monkeypatch.setattr(web, "request", make_web_request_mock({"scope": "all"}))
 
     result = await _gd.handle(plugin)
     data = result["data"]
@@ -591,13 +621,12 @@ async def test_handle_git_diff_scope_staged_empty_when_no_staged_changes(
 ):
     """仅 unstaged 改动时,?scope=staged 返回空 diff。"""
     from astrbot.api import web
+
     _init_git_repo(tmp_path)
     (tmp_path / "README.md").write_text("only unstaged", encoding="utf-8")
     # 注意:不调用 git add
     _load_project(plugin, "test:umo", str(tmp_path))
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock({"scope": "staged"})
-    )
+    monkeypatch.setattr(web, "request", make_web_request_mock({"scope": "staged"}))
 
     result = await _gd.handle(plugin)
     data = result["data"]
@@ -612,13 +641,12 @@ async def test_handle_git_diff_scope_all_with_only_staged_changes(
 ):
     """仅 staged 改动时,?scope=all 返回与 ?scope=staged 相同 diff。"""
     from astrbot.api import web
+
     _init_git_repo(tmp_path)
     (tmp_path / "README.md").write_text("only staged", encoding="utf-8")
     subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
     _load_project(plugin, "test:umo", str(tmp_path))
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock({"scope": "all"})
-    )
+    monkeypatch.setattr(web, "request", make_web_request_mock({"scope": "all"}))
 
     result = await _gd.handle(plugin)
     data = result["data"]
@@ -632,13 +660,12 @@ async def test_handle_git_diff_scope_all_with_only_unstaged_changes(
 ):
     """仅 unstaged 改动时,?scope=all 返回与 ?scope=unstaged 相同 diff。"""
     from astrbot.api import web
+
     _init_git_repo(tmp_path)
     (tmp_path / "README.md").write_text("only unstaged", encoding="utf-8")
     # 不 git add
     _load_project(plugin, "test:umo", str(tmp_path))
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock({"scope": "all"})
-    )
+    monkeypatch.setattr(web, "request", make_web_request_mock({"scope": "all"}))
 
     result = await _gd.handle(plugin)
     data = result["data"]
@@ -667,9 +694,7 @@ async def test_handle_git_diff_scope_invalid_value_returns_invalid_scope(
 
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock({"scope": "foo"})
-    )
+    monkeypatch.setattr(web, "request", make_web_request_mock({"scope": "foo"}))
 
     result = await _gd.handle(plugin)
     data = result["data"]
@@ -682,13 +707,12 @@ async def test_handle_git_diff_scope_invalid_value_returns_invalid_scope(
 async def test_handle_git_diff_scope_case_insensitive(plugin, tmp_path, monkeypatch):
     """?scope=STAGED 大写等价于 ?scope=staged。"""
     from astrbot.api import web
+
     _init_git_repo(tmp_path)
     (tmp_path / "README.md").write_text("staged", encoding="utf-8")
     subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
     _load_project(plugin, "test:umo", str(tmp_path))
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock({"scope": "STAGED"})
-    )
+    monkeypatch.setattr(web, "request", make_web_request_mock({"scope": "STAGED"}))
 
     result = await _gd.handle(plugin)
     data = result["data"]
@@ -860,9 +884,7 @@ def test_build_stat_text_multiple_files():
 # ── 集成: handler 现在只跑 2 个 git 调用(从 4 减半) ──
 
 
-async def test_handle_git_diff_runs_two_git_invocations(
-    plugin, tmp_path, monkeypatch
-):
+async def test_handle_git_diff_runs_two_git_invocations(plugin, tmp_path, monkeypatch):
     """v3.3 重构后,handler 一次请求应只跑 2 个 git diff 调用(从 4 减半)。
 
     v3.4 (2026-06-21) P1 perf: P1-5 把 run_sync(run_cmd, ...) 换成 _run_git_async,
@@ -905,11 +927,10 @@ async def test_handle_git_diff_runs_two_git_invocations(
 # 验证 304 命中 / ETag 变化 / 缓存跳过 git 调用 / 响应头格式。
 
 
-async def test_handle_git_diff_returns_etag_on_success(
-    plugin, tmp_path, monkeypatch
-):
+async def test_handle_git_diff_returns_etag_on_success(plugin, tmp_path, monkeypatch):
     """成功响应必须带 ETag / Cache-Control / Vary 三个头。"""
     from astrbot.api import web
+
     _init_git_repo(tmp_path)
     (tmp_path / "README.md").write_text("modified", encoding="utf-8")
     _load_project(plugin, "test:umo", str(tmp_path))
@@ -931,6 +952,7 @@ async def test_handle_git_diff_returns_304_on_matching_etag(
 ):
     """第二次带 If-None-Match 命中 → 304 + 空 body + ETag 头。"""
     from astrbot.api import web
+
     _init_git_repo(tmp_path)
     (tmp_path / "README.md").write_text("modified", encoding="utf-8")
     _load_project(plugin, "test:umo", str(tmp_path))
@@ -951,6 +973,7 @@ async def test_handle_git_diff_returns_304_on_matching_etag(
     assert r2.headers.get("etag") == etag
     # 304 body 必须为空
     import json
+
     body = json.loads(r2.body) if r2.body else {}
     assert body == {}, f"304 body should be empty, got {body!r}"
 
@@ -1014,9 +1037,7 @@ async def test_handle_git_diff_304_skips_git_diff_invocation(
 # ── v3.4 (2026-06-21) P0 perf: _compute_diff_etag in-memory 缓存 ──
 
 
-async def test_compute_diff_etag_caches_across_requests(
-    plugin, tmp_path, monkeypatch
-):
+async def test_compute_diff_etag_caches_across_requests(plugin, tmp_path, monkeypatch):
     """P0 perf 修复:同 directory 在 TTL 内的多次请求共用缓存,只触发 1 次 ETag 计算。
 
     v3.5 (2026-06-30): ETag 计算委托给 ``_compute_git_etag`` (在
@@ -1068,9 +1089,7 @@ async def test_compute_diff_etag_caches_across_requests(
     )
 
 
-async def test_compute_diff_etag_invalidates_after_ttl(
-    plugin, tmp_path, monkeypatch
-):
+async def test_compute_diff_etag_invalidates_after_ttl(plugin, tmp_path, monkeypatch):
     """P0 perf 修复:TTL 过期后重新触发 rev-parse HEAD。
 
     通过 ``monkeypatch.setattr`` 把 ``_DIFF_ETAG_TTL`` 设为 0 验证。
@@ -1116,9 +1135,7 @@ async def test_compute_diff_etag_invalidates_after_ttl(
     )
 
 
-async def test_compute_diff_etag_per_directory_cache(
-    plugin, tmp_path, monkeypatch
-):
+async def test_compute_diff_etag_per_directory_cache(plugin, tmp_path, monkeypatch):
     """P0 perf 修复:不同 directory 各自独立缓存,互不污染。
 
     v3.4 P1-5:计数目标改为 _run_git_async。
@@ -1253,8 +1270,7 @@ async def test_handle_git_diff_etag_changes_after_git_add(
     assert r2.status_code == 200
     etag_after = r2.headers.get("etag")
     assert etag_after != etag_before, (
-        f"ETag must change after git add: "
-        f"before={etag_before!r}, after={etag_after!r}"
+        f"ETag must change after git add: before={etag_before!r}, after={etag_after!r}"
     )
 
 
@@ -1299,9 +1315,7 @@ async def test_handle_git_diff_etag_changes_after_untracked_file(
     )
 
 
-async def test_handle_git_diff_stale_etag_no_longer_304(
-    plugin, tmp_path, monkeypatch
-):
+async def test_handle_git_diff_stale_etag_no_longer_304(plugin, tmp_path, monkeypatch):
     """端到端: 修改文件 → 带旧 ETag 请求 → 必须 200 (不再是 304 stale)。
 
     这是 dashboard 实际场景的回归测试: 用户编辑文件后, dashboard 带
@@ -1344,9 +1358,7 @@ async def test_handle_git_diff_stale_etag_no_longer_304(
     )
 
 
-async def test_handle_git_diff_etag_changes_after_commit(
-    plugin, tmp_path, monkeypatch
-):
+async def test_handle_git_diff_etag_changes_after_commit(plugin, tmp_path, monkeypatch):
     """commit 后 ETag 变,带旧 ETag 的请求会拿到 200 + 新 ETag。
 
     v3.4 (2026-06-21) P0 perf: 加了 1.5s TTL 缓存后,为了在这个测试里稳定
@@ -1357,6 +1369,7 @@ async def test_handle_git_diff_etag_changes_after_commit(
     from tools.webapi import git_diff as _m
 
     from astrbot.api import web
+
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
 
@@ -1386,11 +1399,10 @@ async def test_handle_git_diff_etag_changes_after_commit(
     )
 
 
-async def test_handle_git_diff_no_etag_on_error_envelope(
-    plugin, monkeypatch
-):
+async def test_handle_git_diff_no_etag_on_error_envelope(plugin, monkeypatch):
     """错误响应(no_project_loaded / feature_disabled 等)不带 ETag。"""
     from astrbot.api import web
+
     # 无项目
     _proj_state.reset()
     monkeypatch.setattr(web, "request", make_web_request_mock({}))
@@ -1406,12 +1418,11 @@ async def test_handle_git_diff_scope_empty_string_defaults_to_unstaged(
 ):
     """?scope= 空字符串视同缺省 → scope=unstaged(避免误报 invalid_scope)。"""
     from astrbot.api import web
+
     _init_git_repo(tmp_path)
     (tmp_path / "README.md").write_text("unstaged", encoding="utf-8")
     _load_project(plugin, "test:umo", str(tmp_path))
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock({"scope": ""})
-    )
+    monkeypatch.setattr(web, "request", make_web_request_mock({"scope": ""}))
 
     result = await _gd.handle(plugin)
     data = result["data"]
@@ -1424,6 +1435,7 @@ async def test_handle_git_diff_scope_field_echoed_in_success_response(
 ):
     """成功响应里 data.scope 等于客户端请求的合法值(精确回显)。"""
     from astrbot.api import web
+
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
     for requested, echoed in [
@@ -1431,9 +1443,7 @@ async def test_handle_git_diff_scope_field_echoed_in_success_response(
         ("staged", "staged"),
         ("all", "all"),
     ]:
-        monkeypatch.setattr(
-            web, "request", make_web_request_mock({"scope": requested})
-        )
+        monkeypatch.setattr(web, "request", make_web_request_mock({"scope": requested}))
         result = await _gd.handle(plugin)
         assert result["data"]["scope"] == echoed, (
             f"scope={requested!r} should echo as {echoed!r}"
@@ -1445,11 +1455,10 @@ async def test_handle_git_diff_scope_invalid_response_omits_scope_field(
 ):
     """错误响应(invalid_scope)里不包含 scope 字段(空 envelope schema 严格不变)。"""
     from astrbot.api import web
+
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock({"scope": "bogus"})
-    )
+    monkeypatch.setattr(web, "request", make_web_request_mock({"scope": "bogus"}))
 
     result = await _gd.handle(plugin)
     data = result["data"]
@@ -1465,11 +1474,10 @@ async def test_handle_git_diff_scope_invalid_takes_precedence_over_feature_flag(
 ):
     """feature flag 关闭 + ?scope=foo → 仍返回 invalid_scope(Q1-OOR 校验顺序)。"""
     from astrbot.api import web
+
     plugin._config["agentsmd_enabled"] = False
     try:
-        monkeypatch.setattr(
-            web, "request", make_web_request_mock({"scope": "foo"})
-        )
+        monkeypatch.setattr(web, "request", make_web_request_mock({"scope": "foo"}))
         result = await _gd.handle(plugin)
         assert result["data"]["reason"] == "invalid_scope"
     finally:
@@ -1489,13 +1497,12 @@ async def test_handle_git_diff_scope_staged_with_real_add(
     看到该文件作为 'A'(new file with N additions)。
     """
     from astrbot.api import web
+
     _init_git_repo(tmp_path)
     (tmp_path / "new.py").write_text("print('hi')\n", encoding="utf-8")
     subprocess.run(["git", "add", "new.py"], cwd=tmp_path, check=True)
     _load_project(plugin, "test:umo", str(tmp_path))
-    monkeypatch.setattr(
-        web, "request", make_web_request_mock({"scope": "staged"})
-    )
+    monkeypatch.setattr(web, "request", make_web_request_mock({"scope": "staged"}))
 
     result = await _gd.handle(plugin)
     data = result["data"]
@@ -1523,7 +1530,8 @@ async def test_handle_git_diff_scope_combines_with_worktree_param(
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
     monkeypatch.setattr(
-        web, "request",
+        web,
+        "request",
         make_web_request_mock({"scope": "all", "worktree": "../escape"}),
     )
     result = await _gd.handle(plugin)

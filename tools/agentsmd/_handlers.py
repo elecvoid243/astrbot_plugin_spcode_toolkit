@@ -82,8 +82,7 @@ class AgentsmdHandlers:
 
         if not target.exists():
             yield event.plain_result(
-                f"❌ 目录 `{directory}` 不存在。\n"
-                "请先创建该目录,或确认路径是否正确。"
+                f"❌ 目录 `{directory}` 不存在。\n请先创建该目录,或确认路径是否正确。"
             )
             return
         if not target.is_dir():
@@ -147,8 +146,7 @@ class AgentsmdHandlers:
 
         if not target.exists():
             yield event.plain_result(
-                f"❌ 目录 `{directory}` 不存在。\n"
-                "请先创建该目录,或确认路径是否正确。"
+                f"❌ 目录 `{directory}` 不存在。\n请先创建该目录,或确认路径是否正确。"
             )
             return
         if not target.is_dir():
@@ -208,9 +206,7 @@ class AgentsmdHandlers:
         state = self._state.pop(umo)
         if state is None:
             return event.plain_result("ℹ️ 当前会话未加载任何 AGENTS.md。")
-        return event.plain_result(
-            f"✅ 已卸载 AGENTS.md 注入。\n原文件: `{state.path}`"
-        )
+        return event.plain_result(f"✅ 已卸载 AGENTS.md 注入。\n原文件: `{state.path}`")
 
     # ── /agentsmd update ───────────────────────────
 
@@ -264,8 +260,7 @@ class AgentsmdHandlers:
                 session_id=umo,
                 contexts=[],
                 system_prompt=(
-                    "你是一名资深软件工程师,"
-                    "擅长为多种语言的项目编写规范文档。"
+                    "你是一名资深软件工程师,擅长为多种语言的项目编写规范文档。"
                 ),
             )
         except Exception as e:
@@ -327,8 +322,7 @@ class AgentsmdHandlers:
                     )
             else:
                 logger.warning(
-                    f"[agentsmd] AGENTS.md 文件不存在,使用缓存内容: "
-                    f"{agents_md_path}"
+                    f"[agentsmd] AGENTS.md 文件不存在,使用缓存内容: {agents_md_path}"
                 )
         except Exception as e:
             logger.error(f"[agentsmd] 读取 AGENTS.md 失败,使用缓存: {e}")
@@ -343,9 +337,9 @@ class AgentsmdHandlers:
         # v2.8: 注入项目目录路径(在 AGENTS.md 内容之前)
         directory = state.directory
         if req.system_prompt is None or req.system_prompt == "":
-            req.system_prompt = build_injection(
-                content, directory=directory
-            ).lstrip("\n")
+            req.system_prompt = build_injection(content, directory=directory).lstrip(
+                "\n"
+            )
         else:
             req.system_prompt = req.system_prompt + build_injection(
                 content, directory=directory

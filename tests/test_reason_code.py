@@ -3,6 +3,7 @@
 PR-1 of the git workflow endpoints design.
 Spec: docs/superpowers/specs/2026-06-23-git-stage-untage-commit-log-design.md §3,§4
 """
+
 from tools.webapi._helpers import ReasonCode, _make_envelope
 
 
@@ -43,8 +44,11 @@ def test_reason_code_has_path_scope_codes():
 def test_make_envelope_success_shape():
     """success=True 时 data 含 reason=None / stderr='',其它字段透传。"""
     env = _make_envelope(
-        success=True, elapsed_ms=42,
-        staged=True, files=["a.py"], staged_count=1,
+        success=True,
+        elapsed_ms=42,
+        staged=True,
+        files=["a.py"],
+        staged_count=1,
     )
     assert env == {
         "status": "ok",
@@ -62,8 +66,10 @@ def test_make_envelope_success_shape():
 def test_make_envelope_failure_shape():
     """success=False 时 data 含 reason + (可选)stderr。"""
     env = _make_envelope(
-        success=False, reason="invalid_body",
-        elapsed_ms=5, staged=False,
+        success=False,
+        reason="invalid_body",
+        elapsed_ms=5,
+        staged=False,
     )
     assert env["status"] == "ok"
     assert env["data"]["staged"] is False
@@ -75,8 +81,10 @@ def test_make_envelope_failure_shape():
 def test_make_envelope_failure_with_stderr():
     """failure 路径可传 stderr(写端点 hook 失败用)。"""
     env = _make_envelope(
-        success=False, reason="pre_commit_hook_failed",
-        stderr="pre-commit hook failed", elapsed_ms=100,
+        success=False,
+        reason="pre_commit_hook_failed",
+        stderr="pre-commit hook failed",
+        elapsed_ms=100,
     )
     assert env["data"]["stderr"] == "pre-commit hook failed"
 
@@ -84,8 +92,11 @@ def test_make_envelope_failure_with_stderr():
 def test_make_envelope_extra_kwargs_pass_through():
     """data 字段 = 透传 kwargs(写端点必传 directory/umo/worktree)。"""
     env = _make_envelope(
-        success=True, elapsed_ms=10,
-        directory="/repo", umo="u:m", worktree="/repo",
+        success=True,
+        elapsed_ms=10,
+        directory="/repo",
+        umo="u:m",
+        worktree="/repo",
     )
     data = env["data"]
     assert data["directory"] == "/repo"
@@ -102,6 +113,7 @@ def test_make_envelope_extra_kwargs_pass_through():
 def test_worktree_mgmt_reason_codes_defined():
     """v2.14.0 + 11 new ReasonCode constants for worktree-mgmt endpoints."""
     from tools.webapi._helpers import ReasonCode
+
     # ADD-specific
     assert ReasonCode.INVALID_BRANCH == "invalid_branch"
     assert ReasonCode.PATH_EXISTS_NONEMPTY == "path_exists_nonempty"

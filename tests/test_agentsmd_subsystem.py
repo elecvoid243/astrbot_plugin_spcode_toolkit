@@ -110,7 +110,9 @@ def test_subsystem_construction():
     """subsystem 创建时 state 空,handlers 已就绪。"""
     fake_plugin = MagicMock()
     fake_plugin._config = {}
-    sub = AgentsmdSubsystem(plugin=fake_plugin, is_path_safe=lambda *args, **kwargs: (True, ""))
+    sub = AgentsmdSubsystem(
+        plugin=fake_plugin, is_path_safe=lambda *args, **kwargs: (True, "")
+    )
     assert len(sub.state) == 0
     assert sub._handlers is not None
     assert isinstance(sub._handlers, AgentsmdHandlers)
@@ -119,14 +121,18 @@ def test_subsystem_construction():
 def test_subsystem_state_property_returns_manager():
     fake_plugin = MagicMock()
     fake_plugin._config = {}
-    sub = AgentsmdSubsystem(plugin=fake_plugin, is_path_safe=lambda *args, **kwargs: (True, ""))
+    sub = AgentsmdSubsystem(
+        plugin=fake_plugin, is_path_safe=lambda *args, **kwargs: (True, "")
+    )
     assert sub.state is sub._state  # same instance
 
 
 def test_subsystem_clear_empties_state():
     fake_plugin = MagicMock()
     fake_plugin._config = {}
-    sub = AgentsmdSubsystem(plugin=fake_plugin, is_path_safe=lambda *args, **kwargs: (True, ""))
+    sub = AgentsmdSubsystem(
+        plugin=fake_plugin, is_path_safe=lambda *args, **kwargs: (True, "")
+    )
     sub.state.set("a", AgentsState("p", "d", "c", 1.0))
     assert len(sub.state) == 1
     sub.clear()
@@ -147,7 +153,11 @@ def test_unload_when_no_state_returns_info():
     fake_plugin = MagicMock()
     fake_plugin._config = {}
     mgr = AgentsStateManager()
-    h = AgentsmdHandlers(state=mgr, plugin_getter=lambda: fake_plugin, is_path_safe=lambda *args, **kwargs: (True, ""))
+    h = AgentsmdHandlers(
+        state=mgr,
+        plugin_getter=lambda: fake_plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
     ev = _make_event()
     result = h.unload(ev)
     assert "未加载任何 AGENTS.md" in result
@@ -157,9 +167,17 @@ def test_unload_removes_state_and_returns_path():
     fake_plugin = MagicMock()
     fake_plugin._config = {}
     mgr = AgentsStateManager()
-    h = AgentsmdHandlers(state=mgr, plugin_getter=lambda: fake_plugin, is_path_safe=lambda *args, **kwargs: (True, ""))
-    mgr.set("umo-1", AgentsState(path="/tmp/x/AGENTS.md", directory="/tmp/x",
-                                  last_content="x", mtime=1.0))
+    h = AgentsmdHandlers(
+        state=mgr,
+        plugin_getter=lambda: fake_plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
+    mgr.set(
+        "umo-1",
+        AgentsState(
+            path="/tmp/x/AGENTS.md", directory="/tmp/x", last_content="x", mtime=1.0
+        ),
+    )
     ev = _make_event()
     result = h.unload(ev)
     assert "已卸载" in result
@@ -180,7 +198,11 @@ async def test_on_llm_request_no_state_returns():
     fake_plugin = MagicMock()
     fake_plugin._config = {"agentsmd_enabled": True}
     mgr = AgentsStateManager()
-    h = AgentsmdHandlers(state=mgr, plugin_getter=lambda: fake_plugin, is_path_safe=lambda *args, **kwargs: (True, ""))
+    h = AgentsmdHandlers(
+        state=mgr,
+        plugin_getter=lambda: fake_plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
     ev = _make_event("umo-1")
     req = _make_req("orig")
     await h.on_llm_request(ev, req)
@@ -193,7 +215,11 @@ async def test_on_llm_request_disabled_returns():
     fake_plugin._config = {"agentsmd_enabled": False}
     mgr = AgentsStateManager()
     mgr.set("umo-1", AgentsState(path="p", directory="d", last_content="C", mtime=1.0))
-    h = AgentsmdHandlers(state=mgr, plugin_getter=lambda: fake_plugin, is_path_safe=lambda *args, **kwargs: (True, ""))
+    h = AgentsmdHandlers(
+        state=mgr,
+        plugin_getter=lambda: fake_plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
     ev = _make_event("umo-1")
     req = _make_req("orig")
     await h.on_llm_request(ev, req)
@@ -204,8 +230,15 @@ async def test_on_llm_request_injects_marker():
     fake_plugin = MagicMock()
     fake_plugin._config = {"agentsmd_enabled": True}
     mgr = AgentsStateManager()
-    mgr.set("umo-1", AgentsState(path="p", directory="d", last_content="AGENTS_BODY", mtime=1.0))
-    h = AgentsmdHandlers(state=mgr, plugin_getter=lambda: fake_plugin, is_path_safe=lambda *args, **kwargs: (True, ""))
+    mgr.set(
+        "umo-1",
+        AgentsState(path="p", directory="d", last_content="AGENTS_BODY", mtime=1.0),
+    )
+    h = AgentsmdHandlers(
+        state=mgr,
+        plugin_getter=lambda: fake_plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
     ev = _make_event("umo-1")
     req = _make_req("original system")
     await h.on_llm_request(ev, req)
@@ -219,8 +252,14 @@ async def test_on_llm_request_idempotent_with_marker():
     fake_plugin = MagicMock()
     fake_plugin._config = {"agentsmd_enabled": True}
     mgr = AgentsStateManager()
-    mgr.set("umo-1", AgentsState(path="p", directory="d", last_content="BODY", mtime=1.0))
-    h = AgentsmdHandlers(state=mgr, plugin_getter=lambda: fake_plugin, is_path_safe=lambda *args, **kwargs: (True, ""))
+    mgr.set(
+        "umo-1", AgentsState(path="p", directory="d", last_content="BODY", mtime=1.0)
+    )
+    h = AgentsmdHandlers(
+        state=mgr,
+        plugin_getter=lambda: fake_plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
     ev = _make_event("umo-1")
     req = _make_req(f"already contains {INJECTION_MARKER}")
     await h.on_llm_request(ev, req)
@@ -232,8 +271,15 @@ async def test_on_llm_request_empty_sp_handled():
     fake_plugin = MagicMock()
     fake_plugin._config = {"agentsmd_enabled": True}
     mgr = AgentsStateManager()
-    mgr.set("umo-1", AgentsState(path="p", directory="/proj", last_content="BODY", mtime=1.0))
-    h = AgentsmdHandlers(state=mgr, plugin_getter=lambda: fake_plugin, is_path_safe=lambda *args, **kwargs: (True, ""))
+    mgr.set(
+        "umo-1",
+        AgentsState(path="p", directory="/proj", last_content="BODY", mtime=1.0),
+    )
+    h = AgentsmdHandlers(
+        state=mgr,
+        plugin_getter=lambda: fake_plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
     ev = _make_event("umo-1")
     req = _make_req(None)
     await h.on_llm_request(ev, req)
@@ -258,7 +304,11 @@ async def test_on_llm_request_refreshes_on_mtime_change(tmp_path: Path):
             mtime=agents_md.stat().st_mtime - 10,  # 故意过期
         ),
     )
-    h = AgentsmdHandlers(state=mgr, plugin_getter=lambda: fake_plugin, is_path_safe=lambda *args, **kwargs: (True, ""))
+    h = AgentsmdHandlers(
+        state=mgr,
+        plugin_getter=lambda: fake_plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
     ev = _make_event("umo-1")
     req = _make_req("")
     # 修改文件
@@ -379,7 +429,11 @@ async def test_update_no_state_yields_error():
     fake_plugin = MagicMock()
     fake_plugin._config = {}
     mgr = AgentsStateManager()
-    h = AgentsmdHandlers(state=mgr, plugin_getter=lambda: fake_plugin, is_path_safe=lambda *args, **kwargs: (True, ""))
+    h = AgentsmdHandlers(
+        state=mgr,
+        plugin_getter=lambda: fake_plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
     ev = _make_event("umo-1")
     msgs = []
     async for msg in h.update(ev):
@@ -404,7 +458,11 @@ async def test_update_no_provider_yields_error(tmp_path: Path):
             mtime=agents_md_file.stat().st_mtime,
         ),
     )
-    h = AgentsmdHandlers(state=mgr, plugin_getter=lambda: fake_plugin, is_path_safe=lambda *args, **kwargs: (True, ""))
+    h = AgentsmdHandlers(
+        state=mgr,
+        plugin_getter=lambda: fake_plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
     ev = _make_event("umo-1")
     msgs = []
     async for msg in h.update(ev):
@@ -420,13 +478,25 @@ def test_package_exposes_all_expected_symbols():
     import tools.agentsmd as pkg
 
     expected = {
-        "CODE_FILE_EXTENSIONS", "DEFAULT_AGENTS_MD", "DEFAULT_INIT_TEMPLATE",
-        "DEFAULT_INJECTION_HEADER", "INJECTION_MARKER", "KEY_PROJECT_FILES",
-        "PROJECT_PATH_PREFIX_TEMPLATE", "_SKIP_DIRS",
-        "build_injection", "generate_agents_md_via_llm", "has_code_files",
-        "resolve_init_template", "scan_project_context", "strip_code_fence",
+        "CODE_FILE_EXTENSIONS",
+        "DEFAULT_AGENTS_MD",
+        "DEFAULT_INIT_TEMPLATE",
+        "DEFAULT_INJECTION_HEADER",
+        "INJECTION_MARKER",
+        "KEY_PROJECT_FILES",
+        "PROJECT_PATH_PREFIX_TEMPLATE",
+        "_SKIP_DIRS",
+        "build_injection",
+        "generate_agents_md_via_llm",
+        "has_code_files",
+        "resolve_init_template",
+        "scan_project_context",
+        "strip_code_fence",
         "strip_surrounding_quotes",
-        "AgentsmdSubsystem", "AgentsmdHandlers", "AgentsState", "AgentsStateManager",
+        "AgentsmdSubsystem",
+        "AgentsmdHandlers",
+        "AgentsState",
+        "AgentsStateManager",
     }
     for name in expected:
         assert hasattr(pkg, name), f"tools.agentsmd missing symbol: {name}"

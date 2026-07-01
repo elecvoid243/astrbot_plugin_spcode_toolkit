@@ -4,6 +4,7 @@ Handler 从 main.py 搬出,行为不变。
 
 v2.14.0 扩展:返回数据应附加 ``locked`` / ``locked_reason`` 字段(纯增量)。
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -51,18 +52,33 @@ def locked_worktree_repo(tmp_path):
     """Create a primary repo with one linked worktree (未 lock,用于后续 lock)。"""
     primary = tmp_path / "primary"
     linked = tmp_path / "linked"
-    subprocess.run(["git", "init", "-b", "main", str(primary)],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(primary), "config", "user.email", "t@t.com"],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(primary), "config", "user.name", "T"],
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "-b", "main", str(primary)], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "config", "user.email", "t@t.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "config", "user.name", "T"],
+        check=True,
+        capture_output=True,
+    )
     (primary / "a.txt").write_text("a")
-    subprocess.run(["git", "-C", str(primary), "add", "."], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(primary), "commit", "-m", "init"],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(primary), "worktree", "add", str(linked), "-b", "feat"],
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(primary), "add", "."], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "commit", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(primary), "worktree", "add", str(linked), "-b", "feat"],
+        check=True,
+        capture_output=True,
+    )
     return primary, linked
 
 
@@ -78,14 +94,18 @@ def _make_plugin_mock(directory):
 async def test_git_worktrees_response_includes_locked_field(locked_worktree_repo):
     """GET 端点返回数据应附加 locked 字段(pure additive)。"""
     primary, linked = locked_worktree_repo
-    subprocess.run(["git", "-C", str(primary), "worktree", "lock", str(linked)],
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(primary), "worktree", "lock", str(linked)],
+        check=True,
+        capture_output=True,
+    )
     plugin = _make_plugin_mock(str(primary))
     # Put project into state for handler fallback path
     _proj_state.reset()
     _proj_state.put("test-umo:1", {"directory": str(primary), "loaded_at": 100.0})
     # 使用项目标准的 run_cmd(参考现有 test_git_worktrees.py 用法)
     from unittest.mock import patch
+
     with patch("tools.webapi.git_worktrees.run_cmd") as mock_run:
         # 模拟 git worktree list --porcelain 输出(2 个 worktree,linked 已 lock)
         mock_run.return_value = {
@@ -121,13 +141,24 @@ async def test_git_worktrees_response_includes_locked_reason(locked_worktree_rep
     """Locked with --reason → locked_reason 字段传递。"""
     primary, linked = locked_worktree_repo
     subprocess.run(
-        ["git", "-C", str(primary), "worktree", "lock", "--reason", "test reason", str(linked)],
-        check=True, capture_output=True,
+        [
+            "git",
+            "-C",
+            str(primary),
+            "worktree",
+            "lock",
+            "--reason",
+            "test reason",
+            str(linked),
+        ],
+        check=True,
+        capture_output=True,
     )
     plugin = _make_plugin_mock(str(primary))
     _proj_state.reset()
     _proj_state.put("test-umo:2", {"directory": str(primary), "loaded_at": 100.0})
     from unittest.mock import patch
+
     with patch("tools.webapi.git_worktrees.run_cmd") as mock_run:
         mock_run.return_value = {
             "ok": True,
@@ -162,14 +193,11 @@ async def test_git_worktrees_unlocked_default_false(locked_worktree_repo):
     _proj_state.reset()
     _proj_state.put("test-umo:3", {"directory": str(primary), "loaded_at": 100.0})
     from unittest.mock import patch
+
     with patch("tools.webapi.git_worktrees.run_cmd") as mock_run:
         mock_run.return_value = {
             "ok": True,
-            "stdout": (
-                f"worktree {primary}\n"
-                "HEAD abc1234\n"
-                "branch refs/heads/main\n"
-            ),
+            "stdout": (f"worktree {primary}\nHEAD abc1234\nbranch refs/heads/main\n"),
             "stderr": "",
             "code": 0,
         }

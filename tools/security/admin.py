@@ -1,4 +1,5 @@
 """auth helpers — L1 管理员校验(全局 AstrBot 管理员 + 用户配置额外 ID)。"""
+
 from __future__ import annotations
 
 

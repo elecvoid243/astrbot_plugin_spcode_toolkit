@@ -51,50 +51,101 @@ _SKIP_DIRS: frozenset[str] = frozenset(
 #   本表采用"出现任一即算代码"的语义,无需消歧。
 # - 大小写不敏感(has_code_files 内部 .lower() 后查表)。
 
-CODE_FILE_EXTENSIONS: frozenset[str] = frozenset({
-    # C / C++ / Objective-C / Arduino
-    "c", "h",
-    "cpp", "cc", "cxx", "c++",
-    "hpp", "hh", "hxx", "h++",
-    "m", "mm",
-    "ino",
-    # JVM 系
-    "java", "kt", "kts",
-    "scala", "sc",
-    "groovy",
-    # .NET 系
-    "cs", "csx",
-    "fs", "fsi", "fsx",
-    "vb",
-    # Web: JavaScript / TypeScript / 主流前端框架
-    "js", "mjs", "cjs", "jsx",
-    "ts", "tsx", "mts", "cts",
-    "vue", "svelte",
-    # 后端 / 系统级语言
-    "go", "rs",
-    "php", "rb",
-    "swift", "dart",
-    # 脚本语言
-    "py", "pyx", "pyi",
-    "lua", "pl", "pm", "tcl",
-    "r", "jl",
-    # Shell 系
-    "sh", "bash", "zsh", "fish",
-    "ps1", "psm1",
-    "bat", "cmd",
-    # 函数式语言
-    "hs", "lhs",
-    "ml", "mli",
-    "clj", "cljs", "cljc",
-    "scm", "lisp", "lsp",
-    "elm",
-    "ex", "exs",
-    "erl", "hrl",
-    # 系统级 / 小众
-    "zig", "nim", "d", "cr",
-    # 硬件描述语言(HDL)
-    "v", "sv", "svh", "vhdl",
-})
+CODE_FILE_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        # C / C++ / Objective-C / Arduino
+        "c",
+        "h",
+        "cpp",
+        "cc",
+        "cxx",
+        "c++",
+        "hpp",
+        "hh",
+        "hxx",
+        "h++",
+        "m",
+        "mm",
+        "ino",
+        # JVM 系
+        "java",
+        "kt",
+        "kts",
+        "scala",
+        "sc",
+        "groovy",
+        # .NET 系
+        "cs",
+        "csx",
+        "fs",
+        "fsi",
+        "fsx",
+        "vb",
+        # Web: JavaScript / TypeScript / 主流前端框架
+        "js",
+        "mjs",
+        "cjs",
+        "jsx",
+        "ts",
+        "tsx",
+        "mts",
+        "cts",
+        "vue",
+        "svelte",
+        # 后端 / 系统级语言
+        "go",
+        "rs",
+        "php",
+        "rb",
+        "swift",
+        "dart",
+        # 脚本语言
+        "py",
+        "pyx",
+        "pyi",
+        "lua",
+        "pl",
+        "pm",
+        "tcl",
+        "r",
+        "jl",
+        # Shell 系
+        "sh",
+        "bash",
+        "zsh",
+        "fish",
+        "ps1",
+        "psm1",
+        "bat",
+        "cmd",
+        # 函数式语言
+        "hs",
+        "lhs",
+        "ml",
+        "mli",
+        "clj",
+        "cljs",
+        "cljc",
+        "scm",
+        "lisp",
+        "lsp",
+        "elm",
+        "ex",
+        "exs",
+        "erl",
+        "hrl",
+        # 系统级 / 小众
+        "zig",
+        "nim",
+        "d",
+        "cr",
+        # 硬件描述语言(HDL)
+        "v",
+        "sv",
+        "svh",
+        "vhdl",
+    }
+)
 
 
 def has_code_files(dir_path: Path) -> bool:
@@ -116,9 +167,7 @@ def has_code_files(dir_path: Path) -> bool:
         # os.walk 对不存在的路径会 yield 一次 root=ghost(取决于 Python 版本),
         # 对文件路径会抛 NotADirectoryError。这里 try 包裹统一兜底。
         for root, dirs, files in os.walk(dir_path):
-            dirs[:] = [
-                d for d in dirs if not d.startswith(".") and d not in _SKIP_DIRS
-            ]
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _SKIP_DIRS]
             for filename in files:
                 if "." not in filename:
                     continue

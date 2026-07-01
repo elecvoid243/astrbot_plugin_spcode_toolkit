@@ -8,6 +8,7 @@ PR-5 of git workflow endpoints design.
 映射为 ReasonCode(``hook_rejected`` / ``identity_not_set`` / ``nothing_to_commit``
 / ``git_error``)。
 """
+
 from __future__ import annotations
 import logging
 import os
@@ -25,8 +26,12 @@ from ._helpers import (
 # git commit 作者/提交者身份的环境变量。
 # 如果调用者(测试或集成方)有显式传入 GIT_AUTHOR_*,我们透传给 git 子进程。
 _GIT_AUTHOR_ENV_KEYS = (
-    "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
-    "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_AUTHOR_DATE",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+    "GIT_COMMITTER_DATE",
 )
 
 
@@ -42,6 +47,7 @@ def _build_git_env() -> dict[str, str] | None:
         if k in os.environ:
             env_subset[k] = os.environ[k]
     return env_subset or None
+
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
@@ -61,8 +67,17 @@ def _parse_staged_files(stdout: str) -> list[str]:
 async def _get_staged_files(git_bin: str, directory: str) -> list[str]:
     """读取当前 staged 文件列表(用于响应 payload)。"""
     result = await _run_git_async(
-        [git_bin, "-C", directory, "-c", "color.ui=never",
-         "diff", "--cached", "--name-only", "--diff-filter=AMRD"],
+        [
+            git_bin,
+            "-C",
+            directory,
+            "-c",
+            "color.ui=never",
+            "diff",
+            "--cached",
+            "--name-only",
+            "--diff-filter=AMRD",
+        ],
         encoding="utf-8",
     )
     if not result["ok"]:
@@ -82,33 +97,42 @@ def _classify_commit_error(stderr: str, returncode: int) -> str:
     """
     s = stderr.lower()
     # 1. Hook 拒绝 — 关键词覆盖 git 输出的常见变体
-    if any(kw in s for kw in (
-        "pre-commit hook",
-        "commit-msg hook",
-        "hook declined",
-        "hook script",
-        "hook failed",
-        "rejected by hook",
-    )):
+    if any(
+        kw in s
+        for kw in (
+            "pre-commit hook",
+            "commit-msg hook",
+            "hook declined",
+            "hook script",
+            "hook failed",
+            "rejected by hook",
+        )
+    ):
         return ReasonCode.HOOK_REJECTED
 
     # 2. Identity 未设置(commit author 无法决定)
-    if any(kw in s for kw in (
-        "please tell me who you are",
-        "author identity unknown",
-        "please set your name and email",
-        "'git config user.email'",
-        "empty ident name",
-        "empty ident",
-    )):
+    if any(
+        kw in s
+        for kw in (
+            "please tell me who you are",
+            "author identity unknown",
+            "please set your name and email",
+            "'git config user.email'",
+            "empty ident name",
+            "empty ident",
+        )
+    ):
         return ReasonCode.IDENTITY_NOT_SET
 
     # 3. Nothing to commit
-    if any(kw in s for kw in (
-        "nothing to commit",
-        "no changes added to commit",
-        "your branch is up to date",
-    )):
+    if any(
+        kw in s
+        for kw in (
+            "nothing to commit",
+            "no changes added to commit",
+            "your branch is up to date",
+        )
+    ):
         return ReasonCode.NOTHING_TO_COMMIT
 
     return ReasonCode.GIT_ERROR
@@ -136,35 +160,52 @@ async def handle(
     # ── 1. body 校验 ──
     if not isinstance(body, dict):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_BODY,
+            success=False,
+            reason=ReasonCode.INVALID_BODY,
             elapsed_ms=_elapsed(),
-            committed=False, sha="", files=[],
-            committed_count=0, staged_count=0,
-            umo=umo, worktree=worktree,
+            committed=False,
+            sha="",
+            files=[],
+            committed_count=0,
+            staged_count=0,
+            umo=umo,
+            worktree=worktree,
         )
 
     message = body.get("message")
     # ── 2. message 校验 ──
     if not isinstance(message, str):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_MESSAGE,
+            success=False,
+            reason=ReasonCode.INVALID_MESSAGE,
             elapsed_ms=_elapsed(),
-            committed=False, sha="", files=[],
-            committed_count=0, staged_count=0,
-            umo=umo, worktree=worktree,
+            committed=False,
+            sha="",
+            files=[],
+            committed_count=0,
+            staged_count=0,
+            umo=umo,
+            worktree=worktree,
         )
     if len(message) == 0 or len(message) > MAX_MESSAGE_LENGTH:
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_MESSAGE,
+            success=False,
+            reason=ReasonCode.INVALID_MESSAGE,
             elapsed_ms=_elapsed(),
-            committed=False, sha="", files=[],
-            committed_count=0, staged_count=0,
-            umo=umo, worktree=worktree,
+            committed=False,
+            sha="",
+            files=[],
+            committed_count=0,
+            staged_count=0,
+            umo=umo,
+            worktree=worktree,
         )
 
     # ── 3. preflight ──
     err, ctx = await _git_endpoint_preflight(
-        plugin, umo=umo, worktree_param=worktree,
+        plugin,
+        umo=umo,
+        worktree_param=worktree,
     )
     if err is not None:
         err["data"]["elapsed_ms"] = _elapsed()
@@ -183,11 +224,16 @@ async def handle(
     if not pre_staged:
         # 0 个 staged → nothing_to_commit(早返回,避免触发 hook)
         return _make_envelope(
-            success=False, reason=ReasonCode.NOTHING_TO_COMMIT,
+            success=False,
+            reason=ReasonCode.NOTHING_TO_COMMIT,
             elapsed_ms=_elapsed(),
-            committed=False, sha="", files=[],
-            committed_count=0, staged_count=0,
-            directory=directory, umo=effective_umo,
+            committed=False,
+            sha="",
+            files=[],
+            committed_count=0,
+            staged_count=0,
+            directory=directory,
+            umo=effective_umo,
             worktree=directory,
         )
 
@@ -196,25 +242,38 @@ async def handle(
     # **不**带 ``--no-verify``:我们要把 hook 失败的 stderr 抓回来,
     # 由 ``_classify_commit_error`` 分类为 ``hook_rejected``。
     args = [
-        git_bin, "-C", directory, "-c", "color.ui=never",
+        git_bin,
+        "-C",
+        directory,
+        "-c",
+        "color.ui=never",
         "commit",
-        "-F", "-",  # 从 stdin 读取 message
+        "-F",
+        "-",  # 从 stdin 读取 message
     ]
 
     git_env = _build_git_env()
     result = await _run_git_async(
-        args, encoding="utf-8", input_text=message, env=git_env,
+        args,
+        encoding="utf-8",
+        input_text=message,
+        env=git_env,
     )
 
     if not result["ok"]:
         stderr = result.get("stderr", "") or result.get("error", "")
         reason = _classify_commit_error(stderr, result.get("returncode", -1))
         return _make_envelope(
-            success=False, reason=reason,
+            success=False,
+            reason=reason,
             elapsed_ms=_elapsed(),
-            committed=False, sha="", files=pre_staged,
-            committed_count=0, staged_count=len(pre_staged),
-            directory=directory, umo=effective_umo,
+            committed=False,
+            sha="",
+            files=pre_staged,
+            committed_count=0,
+            staged_count=len(pre_staged),
+            directory=directory,
+            umo=effective_umo,
             worktree=directory,
             stderr=stderr[:COMMIT_TRUNCATE_BYTES],
         )
@@ -235,12 +294,15 @@ async def handle(
 
     return _JSONResponseCompat(
         _make_envelope(
-            success=True, elapsed_ms=_elapsed(),
-            committed=True, sha=sha,
+            success=True,
+            elapsed_ms=_elapsed(),
+            committed=True,
+            sha=sha,
             files=pre_staged,
             committed_count=len(pre_staged),
             staged_count=len(post_staged),
-            directory=directory, umo=effective_umo,
+            directory=directory,
+            umo=effective_umo,
             worktree=directory,
         ),
         status_code=200,

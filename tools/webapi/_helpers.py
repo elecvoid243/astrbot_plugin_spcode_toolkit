@@ -19,9 +19,7 @@ from astrbot.api.web import JSONResponse  # _JSONResponseCompat 父类
 # WHY: 见 tools/_helpers.py 中同名常量的定义;此处与 tools/_helpers.py
 # 平行复刻,因为项目约定 webapi 层不依赖 tools._helpers。
 _NO_WINDOW_KWARGS: dict[str, int] = (
-    {"creationflags": subprocess.CREATE_NO_WINDOW}
-    if sys.platform == "win32"
-    else {}
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 )
 
 
@@ -497,9 +495,7 @@ async def _compute_git_etag(git_bin: str, directory: str) -> str:
         pass
 
     # 3. 3 路 porcelain 探测 → SHA-1 哈希 (核心 v3.5 修复)
-    unstaged, staged, untracked = await _compute_porcelain_diffs(
-        git_bin, directory
-    )
+    unstaged, staged, untracked = await _compute_porcelain_diffs(git_bin, directory)
     porcelain_src = f"{unstaged}\x00{staged}\x00{untracked}"
     porcelain_sha = hashlib.sha1(porcelain_src.encode("utf-8")).hexdigest()[:16]
 

@@ -23,10 +23,14 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
-from ._helpers import _NO_WINDOW_KWARGS, detect_console_encoding, proposal_reply
+from ._helpers import (
+    _NO_WINDOW_KWARGS,
+    _get_console_python,
+    detect_console_encoding,
+    proposal_reply,
+)
 
 # 扩展名 → linter 映射
 _PY_SUFFIXES = {".py"}
@@ -295,14 +299,14 @@ def _find_ruff() -> list:
         return ["ruff"]
     try:
         subprocess.run(
-            [sys.executable, "-m", "ruff", "--version"],
+            [_get_console_python(), "-m", "ruff", "--version"],
             capture_output=True,
             timeout=5,
             check=True,
             # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
             **_NO_WINDOW_KWARGS,
         )
-        return [sys.executable, "-m", "ruff"]
+        return [_get_console_python(), "-m", "ruff"]
     except Exception:
         return []
 
@@ -322,6 +326,10 @@ def _run_ruff(p: Path) -> dict:
             ruff_cmd + ["check", "--output-format", "json", str(p)],
             capture_output=True,
             text=True,
+            # ruff 输出 UTF-8 JSON;显式 encoding 防止中文 Windows 下默认 cp936
+            # 触发 UnicodeDecodeError(stdout 变 None);与 cpplint 路径保持一致。
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
             **_NO_WINDOW_KWARGS,
@@ -356,14 +364,14 @@ def _find_cpplint() -> list:
         return ["cpplint"]
     try:
         subprocess.run(
-            [sys.executable, "-m", "cpplint", "--version"],
+            [_get_console_python(), "-m", "cpplint", "--version"],
             capture_output=True,
             timeout=5,
             check=True,
             # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
             **_NO_WINDOW_KWARGS,
         )
-        return [sys.executable, "-m", "cpplint"]
+        return [_get_console_python(), "-m", "cpplint"]
     except Exception:
         return []
 

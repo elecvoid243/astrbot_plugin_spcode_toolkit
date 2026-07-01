@@ -4,6 +4,7 @@ Separate from :mod:`tests.test_git_status` to avoid the asyncio mark
 warning for sync test methods — mirrors the
 ``test_git_log_parsers`` ↔ ``test_git_log`` split.
 """
+
 from __future__ import annotations
 
 from tools.webapi import git_status as _gs
@@ -88,11 +89,11 @@ class TestParsePorcelainV1:
 
     def test_mixed(self) -> None:
         raw = (
-            " M src/main.py\n"          # unstaged
-            "M  src/lib.py\n"           # staged
-            "?? new.txt\n"              # untracked
-            " A intent.py\n"            # intent-to-add
-            "UU conflict.txt\n"         # conflict
+            " M src/main.py\n"  # unstaged
+            "M  src/lib.py\n"  # staged
+            "?? new.txt\n"  # untracked
+            " A intent.py\n"  # intent-to-add
+            "UU conflict.txt\n"  # conflict
         )
         files = _gs._parse_porcelain_v1(raw)
         assert len(files) == 5

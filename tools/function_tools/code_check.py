@@ -1,4 +1,5 @@
 """CodeCheckTool — Python/C/C++ 语法+风格合并检查。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -7,6 +7,7 @@
 历史:
     v2.x 之前直接定义在 main.py(第 93-101 行),PR-1 (2026-06-23) 提取。
 """
+
 from __future__ import annotations
 
 import time

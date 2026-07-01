@@ -1,4 +1,5 @@
 """测试 tools/_guidance_text.py 导出 4 个常量(2 marker + 2 guidance 文本)。"""
+
 from tools._guidance_text import (
     PROJECT_GUIDANCE_MARKER,
     PROJECT_CODEGRAPH_GUIDANCE,

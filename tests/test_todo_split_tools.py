@@ -136,7 +136,9 @@ def test_todo_add_tool_schema_no_mode():
     assert "item_ids" not in props
     assert "status" not in props
     assert "notes" not in props
-    assert "required" not in tool.parameters or tool.parameters.get("required") == ["items"]
+    assert "required" not in tool.parameters or tool.parameters.get("required") == [
+        "items"
+    ]
     # required 字段必须恰好是 ["items"]
     assert tool.parameters["required"] == ["items"]
 
@@ -204,9 +206,7 @@ def test_todo_update_tool_clears_notes_with_empty_string(tmp_data_dir, mock_cont
 
     tool = TodoUpdateTool()
     with patch.object(todo_list, "extract_umo", _make_call_with_umo(umo)):
-        result = json.loads(
-            asyncio_run(tool.call(mock_context, item_ids=1, notes=""))
-        )
+        result = json.loads(asyncio_run(tool.call(mock_context, item_ids=1, notes="")))
 
     assert result["ok"] is True
     q = store.query(umo)
@@ -297,9 +297,7 @@ def test_todo_delete_tool_removes_items(tmp_data_dir, mock_context):
 
     tool = TodoDeleteTool()
     with patch.object(todo_list, "extract_umo", _make_call_with_umo(umo)):
-        result = json.loads(
-            asyncio_run(tool.call(mock_context, item_ids=[1, 3]))
-        )
+        result = json.loads(asyncio_run(tool.call(mock_context, item_ids=[1, 3])))
 
     assert result["ok"] is True
     data = result["data"]
@@ -342,9 +340,7 @@ def test_todo_delete_tool_rolls_back_on_missing_id(tmp_data_dir, mock_context):
 
     tool = TodoDeleteTool()
     with patch.object(todo_list, "extract_umo", _make_call_with_umo(umo)):
-        result = json.loads(
-            asyncio_run(tool.call(mock_context, item_ids=[1, 999]))
-        )
+        result = json.loads(asyncio_run(tool.call(mock_context, item_ids=[1, 999])))
 
     assert result["ok"] is False
     # 落盘数据未变(query 不受 unwrap 包装,直接是 store 原始返回)

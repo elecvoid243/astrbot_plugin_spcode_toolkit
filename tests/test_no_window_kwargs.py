@@ -10,8 +10,10 @@ WHY:
 
 Author: elecvoid243, 2026-06-29
 """
+
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 
@@ -145,9 +147,7 @@ async def test_helper_expands_into_create_subprocess_exec(monkeypatch):
 
     from tools.webapi._helpers import _NO_WINDOW_KWARGS
 
-    await asyncio.create_subprocess_exec(
-        "git", "--version", **_NO_WINDOW_KWARGS
-    )
+    await asyncio.create_subprocess_exec("git", "--version", **_NO_WINDOW_KWARGS)
 
     assert len(captured) == 1
     kwargs = captured[0]
@@ -193,6 +193,7 @@ def test_run_cmd_internally_passes_no_window(monkeypatch):
     captured: list[dict] = []
 
     import subprocess as _sp
+
     real_run = _sp.run
 
     def fake_run(*args, **kwargs):
@@ -211,9 +212,7 @@ def test_run_cmd_internally_passes_no_window(monkeypatch):
     from tools._helpers import run_cmd
 
     # 触发 run_cmd 真实一次
-    proc = run_cmd(
-        [sys.executable, "-c", "print('hello from run_cmd')"], timeout=5
-    )
+    proc = run_cmd([sys.executable, "-c", "print('hello from run_cmd')"], timeout=5)
 
     assert proc["ok"], f"run_cmd 真实调用应成功,实际={proc}"
     assert len(captured) >= 1, "fake_run 未被调用"
@@ -254,7 +253,19 @@ def test_no_production_subprocess_call_without_no_window():
     spawn_calls = []  # list of (file, lineno, text)
     for py in ROOT.rglob("*.py"):
         # 排除 tests / data / docs / 缓存
-        if any(part in py.parts for part in {"tests", "data", "docs", ".git", "__pycache__", ".codegraph", ".pytest_cache", ".ruff_cache"}):
+        if any(
+            part in py.parts
+            for part in {
+                "tests",
+                "data",
+                "docs",
+                ".git",
+                "__pycache__",
+                ".codegraph",
+                ".pytest_cache",
+                ".ruff_cache",
+            }
+        ):
             continue
         try:
             tree = ast.parse(py.read_text(encoding="utf-8"))
@@ -277,10 +288,15 @@ def test_no_production_subprocess_call_without_no_window():
                 qualified_parts.reverse()
                 qualified = ".".join(qualified_parts)
             if qualified not in {
-                "subprocess.run", "subprocess.Popen", "subprocess.check_call",
-                "subprocess.check_output", "subprocess.call",
-                "asyncio.create_subprocess_exec", "asyncio.create_subprocess_shell",
-                "os.system", "os.popen",
+                "subprocess.run",
+                "subprocess.Popen",
+                "subprocess.check_call",
+                "subprocess.check_output",
+                "subprocess.call",
+                "asyncio.create_subprocess_exec",
+                "asyncio.create_subprocess_shell",
+                "os.system",
+                "os.popen",
             }:
                 continue
 
@@ -294,28 +310,172 @@ def test_no_production_subprocess_call_without_no_window():
             # 小写不敏感:匹配 _NO_WINDOW_KWARGS / _no_window
             # 也匹配显式写死的 creationflags=(CREATE_NO_WINDOW ...)(
             # inta_shell/component.py 不在此 wrapper 列表,显式条件单独处理)
-            has_no_window = (
-                "no_window" in window_text.lower()
-                or ("creationflags" in window_text and "CREATE_NO_WINDOW" in window_text)
+            has_no_window = "no_window" in window_text.lower() or (
+                "creationflags" in window_text and "CREATE_NO_WINDOW" in window_text
             )
             in_wrapper = py.resolve() in WRAPPER_FILES
 
-            spawn_calls.append((
-                py, node.lineno, qualified, has_no_window, in_wrapper
-            ))
+            spawn_calls.append((py, node.lineno, qualified, has_no_window, in_wrapper))
 
     # 找出违规:既不在 wrapper 内、附近 12 行也无 _NO_WINDOW_KWARGS
     violations = [
-        (f, ln, qual) for (f, ln, qual, has_no, in_wrap) in spawn_calls
+        (f, ln, qual)
+        for (f, ln, qual, has_no, in_wrap) in spawn_calls
         if not (has_no or in_wrap)
     ]
     if violations:
-        msg_lines = [
-            "发现了未加 CREATE_NO_WINDOW 的 production subprocess 调用:"
-        ]
+        msg_lines = ["发现了未加 CREATE_NO_WINDOW 的 production subprocess 调用:"]
         for f, ln, qual in violations:
             msg_lines.append(f"  {f}:{ln}  {qual}(...)")
         msg_lines.append("")
         msg_lines.append("修复:加 `**_NO_WINDOW_KWARGS,` (import 自 tools._helpers)")
         msg_lines.append("或迁到 run_cmd() 中央 wrapper。")
         pytest.fail("\n".join(msg_lines))
+
+
+# ── 守护测试:禁止 [sys.executable, ...] 形式 spawn ──────────────────
+#
+# WHY:
+#   ``sys.executable`` 在 AstrBot 由 ``pythonw.exe`` 启动时也是 pythonw.exe(GUI
+#   subsystem)。若用它启动 ruff / cpplint 这类 CLI 子进程,Rust runtime 会主动
+#   调 ``AllocConsole()`` 弹出临时控制台窗口 — 即使父进程显式传了
+#   ``creationflags=CREATE_NO_WINDOW`` 也无法阻止子进程的主动行为(原因 B)。
+#
+#   修复方案:spawn CLI 工具时必须用 ``_get_console_python()``(tools._helpers),
+#   在 win32 上返回同目录的 ``python.exe``(CUI subsystem),从根本上消除
+#   AllocConsole 触发条件。
+#
+#   本测试把这条规则固化下来:任何 production spawn 调用的 args 列表首项
+#   若直接是 ``sys.executable`` 节点,test 立即 fail。
+
+
+def _is_sys_executable_expr(node: object) -> bool:
+    """AST helper: 判断一个表达式节点是否等于 ``sys.executable``(不含子类)。"""
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "executable"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "sys"
+    )
+
+
+def test_no_sys_executable_in_production_subprocess_calls():
+    """扫描 tools/ + main.py,禁止 spawn 调用的 args 首项是 ``sys.executable``。
+
+    WHY: 详见本文件上一节注释。``creationflags=CREATE_NO_WINDOW`` 解决的是
+    父进程无 console 时 Windows 自动分配新 console 的问题(原因 A);而
+    ``pythonw.exe`` 启动的子进程主动 ``AllocConsole()`` 弹框(原因 B)需要
+    用 CUI 解释器才能根治。
+    """
+    import ast
+    from pathlib import Path
+
+    ROOT = Path(".")
+    SKIP_PARTS = {
+        "tests",
+        "data",
+        "docs",
+        ".git",
+        "__pycache__",
+        ".codegraph",
+        ".pytest_cache",
+        ".ruff_cache",
+    }
+    SPAWN_NAMES = {
+        "subprocess.run",
+        "subprocess.Popen",
+        "subprocess.check_call",
+        "subprocess.check_output",
+        "subprocess.call",
+        "asyncio.create_subprocess_exec",
+        "asyncio.create_subprocess_shell",
+    }
+
+    violations: list[tuple[Path, int, str]] = []  # (file, lineno, qualified)
+
+    for py in ROOT.rglob("*.py"):
+        if any(part in py.parts for part in SKIP_PARTS):
+            continue
+        try:
+            tree = ast.parse(py.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute):
+                continue
+            # 拼出 "subprocess.run" / "asyncio.create_subprocess_exec" 这类限定名
+            parts: list[str] = []
+            cur: ast.expr = func
+            while isinstance(cur, ast.Attribute):
+                parts.append(cur.attr)
+                cur = cur.value
+            if isinstance(cur, ast.Name):
+                parts.append(cur.id)
+            parts.reverse()
+            qualified = ".".join(parts)
+            if qualified not in SPAWN_NAMES:
+                continue
+
+            # spawn 调用的 args 首项(第一位置参数)必须是 list,且首元素是
+            # ``sys.executable`` 才算违规
+            if not node.args:
+                continue
+            first_arg = node.args[0]
+            if not isinstance(first_arg, ast.List):
+                # 非 list literal 的 spawn(e.g. args 是变量)不在本测试管辖
+                # 范围 — 由人工 review 覆盖
+                continue
+            if not first_arg.elts:
+                continue
+            if _is_sys_executable_expr(first_arg.elts[0]):
+                violations.append((py, node.lineno, qualified))
+
+    if violations:
+        msg_lines = [
+            "发现 production spawn 调用首项是 sys.executable ",
+            "(AstrBot pythonw.exe 启动下会触发 Rust runtime AllocConsole 弹黑框):",
+        ]
+        for f, ln, qual in violations:
+            rel = f.relative_to(ROOT) if f.is_absolute() else f
+            msg_lines.append(f"  {rel}:{ln}  {qual}([sys.executable, ...])")
+        msg_lines.append("")
+        msg_lines.append(
+            "修复:把首项替换为 _get_console_python() (import 自 tools._helpers)。"
+        )
+        msg_lines.append(
+            "  例如: [_get_console_python(), '-m', 'ruff', 'format', str(p)]"
+        )
+        pytest.fail("\n".join(msg_lines))
+
+
+def test_get_console_python_prefers_cui_on_windows():
+    """单元测试 _get_console_python() 的行为契约。
+
+    WHY: 这是黑框修复的"链头"函数,必须被至少一个测试锁住,防止后续
+    重构破坏 win32 上的关键行为。
+    """
+    import os
+    from tools._helpers import _get_console_python
+
+    if sys.platform == "win32":
+        result = _get_console_python()
+        assert isinstance(result, str) and result, (
+            "_get_console_python() 必须返回非空字符串"
+        )
+        basename = os.path.basename(result).lower()
+        assert basename == "python.exe", (
+            f"win32 上 _get_console_python() 必须返回 python.exe (CUI),实际={result!r}"
+        )
+        # 同环境同目录
+        assert os.path.dirname(result) == os.path.dirname(sys.executable), (
+            f"_get_console_python() 返回路径应与 sys.executable 同目录,"
+            f"实际 dirname(result)={os.path.dirname(result)!r} vs "
+            f"dirname(sys.executable)={os.path.dirname(sys.executable)!r}"
+        )
+    else:
+        # POSIX 上 sys.executable 通常已是 CUI,函数应原样回退
+        assert _get_console_python() == sys.executable

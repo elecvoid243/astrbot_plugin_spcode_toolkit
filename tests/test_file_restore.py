@@ -2,6 +2,7 @@
 
 Handler 从 main.py 搬出,行为不变。
 """
+
 from __future__ import annotations
 
 import pytest
@@ -41,6 +42,7 @@ def test_make_file_restore_success_envelope_has_restored_true():
 def test_validate_restore_file_rejects_absolute_path():
     """绝对路径被 _validate_restore_file 拒绝。"""
     from pathlib import Path
+
     target, err = file_restore._validate_restore_file("/etc/passwd", Path("/tmp"))
     assert target is None
     assert err == "path_unsafe"
@@ -49,6 +51,7 @@ def test_validate_restore_file_rejects_absolute_path():
 def test_validate_restore_file_rejects_parent_traversal():
     """.. 段被拒绝。"""
     from pathlib import Path
+
     target, err = file_restore._validate_restore_file("../escape.py", Path("/tmp/repo"))
     assert target is None
     assert err == "path_unsafe"
@@ -57,6 +60,7 @@ def test_validate_restore_file_rejects_parent_traversal():
 def test_validate_restore_file_rejects_dot_git():
     """含 .git 段的路径被拒绝。"""
     from pathlib import Path
+
     target, err = file_restore._validate_restore_file(".git/config", Path("/tmp/repo"))
     assert target is None
     assert err == "path_unsafe"

@@ -100,9 +100,7 @@ async def test_unlock_basic(tmp_path):
     )
     # After unlock, the linked worktree section should not contain 'locked'
     sections = out.stdout.split("\n\n")
-    linked_section = next(
-        s for s in sections if _norm(linked.as_posix()) in _norm(s)
-    )
+    linked_section = next(s for s in sections if _norm(linked.as_posix()) in _norm(s))
     assert "locked" not in linked_section
 
 
@@ -268,14 +266,10 @@ async def test_unlock_idempotent(tmp_path):
 
     plugin, umo = _make_plugin_mock_with_loaded_project(str(primary))
     # First unlock: success
-    r1 = await unlock_handle(
-        plugin, umo=umo, worktree=None, body={"path": str(linked)}
-    )
+    r1 = await unlock_handle(plugin, umo=umo, worktree=None, body={"path": str(linked)})
     assert r1["data"]["reason"] is None
     # Second unlock: not_locked
-    r2 = await unlock_handle(
-        plugin, umo=umo, worktree=None, body={"path": str(linked)}
-    )
+    r2 = await unlock_handle(plugin, umo=umo, worktree=None, body={"path": str(linked)})
     assert r2["data"]["reason"] == "not_locked"
 
 

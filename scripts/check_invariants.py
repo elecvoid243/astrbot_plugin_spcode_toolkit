@@ -10,6 +10,7 @@
     INV-4: 5 个子包都已创建(agentsmd / codegraph / project / security / llm_inject)
     INV-5: 2 个辅助模块都已创建(_stats / _guidance_text)
 """
+
 from __future__ import annotations
 
 import re
@@ -50,7 +51,9 @@ def check_no_tool_class_in_main() -> bool:
     matches = pattern.findall(text)
     ok = len(matches) == 0
     status = "✓" if ok else "✗"
-    print(f"{status} INV-2: main.py has {len(matches)} FunctionTool subclasses (target 0)")
+    print(
+        f"{status} INV-2: main.py has {len(matches)} FunctionTool subclasses (target 0)"
+    )
     if matches:
         print(f"    {matches[:3]}")
     return ok

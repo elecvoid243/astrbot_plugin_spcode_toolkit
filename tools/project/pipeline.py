@@ -7,6 +7,7 @@
   任何 "❌" 开头的消息视为失败,失败时 yield 总结 + 抛 ProjectLoadAbort
 - 调用方: ProjectManager.load_impl 用 ``try/except ProjectLoadAbort`` 接住
 """
+
 from __future__ import annotations
 
 from typing import AsyncIterator

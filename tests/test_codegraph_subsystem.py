@@ -66,6 +66,7 @@ class TestStateModule:
         assert lock_a is lock_a2
         # asyncio.Lock 是 asyncio.Lock 类型
         import asyncio as _aio
+
         assert isinstance(lock_a, _aio.Lock)
 
     def test_reset_clears_task_and_locks(self) -> None:
@@ -146,11 +147,13 @@ class TestShutdownMcp:
 
         async def _never_terminate() -> None:
             import asyncio as _aio
+
             await _aio.sleep(3600)
 
         task = __import__("asyncio").create_task(_pending_coro())
         # 让 task 跑起来
         import asyncio as _aio
+
         await _aio.sleep(0)
         cg_state.set_task(task)
         plugin = MagicMock()

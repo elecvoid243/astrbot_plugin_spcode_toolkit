@@ -63,9 +63,7 @@ def test_full_lifecycle_v2_6(tmp_path: Path):
 
     # 7. modify(update) — notes=None 保留旧值
     # 先设置一个 notes
-    store.modify(
-        umo, mode="update", item_ids=3, status="in_progress", notes="阻塞中"
-    )
+    store.modify(umo, mode="update", item_ids=3, status="in_progress", notes="阻塞中")
     # 然后只改 status,notes 不传(None = 保留)
     r7 = store.modify(umo, mode="update", item_ids=3, status="pending")
     assert r7["ok"] is True

@@ -8,6 +8,7 @@ item_ids 接受:
 
 清空整个 list 请用 todo_clear(独立工具),本工具不接受 0 作为 ID。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -64,9 +65,7 @@ class TodoDeleteTool(_TodoToolBase):
         # v2.12 (PR-split-modify): item_ids=0 是历史 todo_modify(mode='delete', item_ids=0)
         # 清空整个 list 的旧约定。v2.12 起该语义已迁移到 todo_clear,本工具拒绝 0
         # 并显式 proposal 引导 LLM 切到 todo_clear,避免 LLM 用 0 调用拿到含糊错误。
-        if item_ids == 0 or (
-            isinstance(item_ids, list) and 0 in item_ids
-        ):
+        if item_ids == 0 or (isinstance(item_ids, list) and 0 in item_ids):
             return self._err(
                 "todo_delete 不接受 item_ids=0;0 代表清空整个 list",
                 proposal="改用 todo_clear() 清空整个列表,或传入正整数 id 删除具体条目",

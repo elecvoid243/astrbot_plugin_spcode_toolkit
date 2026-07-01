@@ -3,6 +3,7 @@
 PR-5 of git workflow endpoints design.
 Spec: docs/superpowers/specs/2026-06-23-git-stage-untage-commit-log-design.md §E
 """
+
 from __future__ import annotations
 import subprocess
 import time
@@ -77,8 +78,11 @@ async def test_commit_with_staged_changes(plugin, tmp_path: Path):
 
     # 验证 git 实际有 commit
     log = subprocess.run(
-        ["git", "log", "--oneline", "-1"], cwd=tmp_path,
-        capture_output=True, text=True, check=True,
+        ["git", "log", "--oneline", "-1"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert "feat: add a.py" in log.stdout
 
@@ -243,8 +247,11 @@ async def test_commit_message_with_newlines_preserved(plugin, tmp_path: Path):
 
     # 验证 message 完整保留
     log = subprocess.run(
-        ["git", "log", "-1", "--format=%B"], cwd=tmp_path,
-        capture_output=True, text=True, check=True,
+        ["git", "log", "-1", "--format=%B"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert "Body line 1" in log.stdout
     assert "Body line 2" in log.stdout

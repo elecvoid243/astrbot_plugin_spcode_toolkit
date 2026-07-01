@@ -1,4 +1,5 @@
 """IntaShellReadTool — 读取活跃 inta_shell 会话的输出(阻塞等待新数据)。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -61,7 +62,10 @@ class IntaShellReadTool(FunctionTool):
             # WHY: tools.inta_shell.tools.read() 内部已通过 _ok/_deny
             # 返回 JSON 字符串。直接透传,绕过 unwrap() 的 dict 类型校验。
             return await _inta_shell_tools.read(
-                _inta_runtime.component, session_id, timeout=timeout, max_chars=max_chars
+                _inta_runtime.component,
+                session_id,
+                timeout=timeout,
+                max_chars=max_chars,
             )
         except Exception as e:
             return err_json(f"inta_shell_read 失败: {e}")

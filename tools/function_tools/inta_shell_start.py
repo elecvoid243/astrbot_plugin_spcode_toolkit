@@ -1,4 +1,5 @@
 """IntaShellStartTool — 启动长生命周期交互式 shell 会话。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

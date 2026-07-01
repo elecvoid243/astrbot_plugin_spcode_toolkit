@@ -221,7 +221,9 @@ def test_code_check_cppcheck_uses_detected_encoding():
         import subprocess as _sp
 
         # 模拟 cppcheck 输出的 GBK 中文（"Mismatching allocation" 用中文写）
-        gb_bytes = "src/foo.cpp:6:12: 错误: 不匹配的分配与释放 [mismatch]\n".encode("gbk")
+        gb_bytes = "src/foo.cpp:6:12: 错误: 不匹配的分配与释放 [mismatch]\n".encode(
+            "gbk"
+        )
         return _sp.CompletedProcess(
             args=args[0] if args else [],
             returncode=0,
@@ -230,7 +232,9 @@ def test_code_check_cppcheck_uses_detected_encoding():
         )
 
     with patch.object(code_check.subprocess, "run", side_effect=fake_run):
-        with patch.object(code_check, "_find_cppcheck", return_value=["fake-cppcheck.exe"]):
+        with patch.object(
+            code_check, "_find_cppcheck", return_value=["fake-cppcheck.exe"]
+        ):
             result = code_check._run_cppcheck(fake_file)
 
     assert captured.get("encoding") is not None, "_run_cppcheck 必须传 encoding"

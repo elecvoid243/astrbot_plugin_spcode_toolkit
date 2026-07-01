@@ -1,4 +1,5 @@
 """IntaShellSendTool — 向活跃的 inta_shell 会话发送输入。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

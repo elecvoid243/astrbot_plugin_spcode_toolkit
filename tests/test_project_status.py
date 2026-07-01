@@ -3,6 +3,7 @@
 Handler 直接从 main.py 搬出,行为不变。
 测试不依赖 main.py 内部 _loaded_projects 状态,只验证 handler 可被调用并返回 dict。
 """
+
 from __future__ import annotations
 from unittest.mock import MagicMock
 

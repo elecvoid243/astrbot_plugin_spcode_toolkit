@@ -9,6 +9,7 @@ PR-2 (2026-06-23) 从 main.py 提取。设计原则:
 
 设计依据: `docs/superpowers/specs/2026-06-22-main-py-refactor-design.md`
 """
+
 from __future__ import annotations
 
 # 共享 helper(内部,导出供 tests 调试用)

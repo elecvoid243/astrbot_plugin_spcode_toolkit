@@ -11,6 +11,7 @@
     init/uninit  <-> _codegraph_init_or_uninit  (main.py:1015-1165)
     set_project  <-> _codegraph_set_project      (main.py:941-1013)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -160,8 +161,8 @@ class CodegraphManager:
         # 2. 找 codegraph CLI 启动器
         # 优先用用户配置的 install_dir;若未配置(单次命令场景),fallback 到 auto-detect
         install_dir = (
-            (self._plugin._config.get("codegraph_install_dir") or "").strip() or None
-        )
+            self._plugin._config.get("codegraph_install_dir") or ""
+        ).strip() or None
         mcp_cfg = detect_codegraph_launcher(install_dir=install_dir)
         cli_launcher = build_cli_launcher(mcp_cfg)
         if not cli_launcher:

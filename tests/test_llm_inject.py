@@ -1,4 +1,5 @@
 """tools.llm_inject.inject_guidance 测试。"""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
