@@ -45,6 +45,7 @@ from . import (
     codegraph_status,  # v2.14.x (2026-06-28)
     file_browser,
     file_restore,
+    file_search,  # v2.15.0 (2026-07-02)
     git_commit,
     git_diff,
     git_log,
@@ -132,6 +133,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "读取文件内容或列出单层目录",
     ),
     (
+        "/spcode/file-search",  # v2.15.0 (2026-07-02)
+        ["POST"],
+        file_search.handle,
+        "在已加载项目(指定 worktree)内按内容搜索文件",
+    ),
+    (
         "/spcode/file-restore",
         ["POST"],
         file_restore.handle,
@@ -179,6 +186,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_get_git_log": git_log.handle,
     "handle_get_git_show": git_show.handle,  # v3.8 (2026-06-25)
     "handle_get_file_browser": file_browser.handle,
+    "handle_post_file_search": file_search.handle,  # v2.15.0 (2026-07-02)
     "handle_post_file_restore": file_restore.handle,
     "handle_post_git_stage": git_stage.handle,
     "handle_post_git_unstage": git_unstage.handle,
@@ -296,6 +304,7 @@ __all__ = [
     "codegraph_status",  # v2.14.x (2026-06-28)
     "file_browser",
     "file_restore",
+    "file_search",  # v2.15.0 (2026-07-02)
     "git_diff",
     "git_log",
     "git_show",

@@ -220,5 +220,19 @@
         "default": ""
       }
     }
+  },
+  "search": {
+    "description": "search — /spcode/file-search 端点配置",
+    "hint": "ripgrep 优先;缺失时端点自动回退到纯 Python 搜索(慢)。",
+    "type": "object",
+    "items": {
+      "rg_path": {
+        "description": "ripgrep 路径",
+        "hint": "留空时自动从 PATH 查找 'rg'。Windows: winget install BurntSushi.ripgrep,或 scoop install ripgrep,或 choco install ripgrep。",
+        "type": "string",
+        "default": "rg",
+        "placeholder": "rg"
+      }
+    }
   }
 }
