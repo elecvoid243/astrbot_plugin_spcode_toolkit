@@ -244,3 +244,128 @@ async def test_worktree_invalid(mock_plugin_with_rg):
     )
     data = result["data"] if hasattr(result, "get") else result["data"]
     assert data["reason"] == ReasonCode.WORKTREE_INVALID
+
+
+# ── Tests: Python fallback path ────────────────────────────────
+
+
+@pytest.fixture
+def mock_plugin_no_rg(mock_plugin_with_rg) -> MagicMock:
+    """Same as mock_plugin_with_rg but with _rg_available=False."""
+    mock_plugin_with_rg._rg_available = False
+    return mock_plugin_with_rg
+
+
+@pytest.mark.asyncio
+async def test_fallback_basic(mock_plugin_no_rg, write_files):
+    """When rg unavailable, Python fallback still returns matches."""
+    result = await file_search.handle(
+        mock_plugin_no_rg,
+        umo="test:umo",
+        body={"pattern": "validate_user"},
+    )
+    data = result["data"] if hasattr(result, "get") else result["data"]
+    assert data["reason"] is None
+    assert data["backend"] == "python"
+    assert data["result_count"] >= 2
+    assert any(r["path"] == "auth.py" for r in data["results"])
+
+
+@pytest.mark.asyncio
+async def test_fallback_skips_node_modules(mock_plugin_no_rg, tmp_path):
+    """Fallback skips node_modules / .git / __pycache__ dirs."""
+    (tmp_path / "src.py").write_text("token")
+    (tmp_path / "node_modules").mkdir(exist_ok=True)
+    (tmp_path / "node_modules" / "x.js").write_text("token")
+    # .git already exists (test fixture inits a real repo); add a token file
+    (tmp_path / ".git" / "x").write_text("token")
+    (tmp_path / "__pycache__").mkdir(exist_ok=True)
+    (tmp_path / "__pycache__" / "x.pyc").write_text("token")
+
+    result = await file_search.handle(
+        mock_plugin_no_rg,
+        umo="test:umo",
+        body={"pattern": "token"},
+    )
+    data = result["data"] if hasattr(result, "get") else result["data"]
+    paths = [r["path"] for r in data["results"]]
+    # src.py matches; node_modules/.git/__pycache__ do NOT
+    assert any("src.py" in p for p in paths)
+    assert not any("node_modules" in p for p in paths)
+    assert not any(p.startswith(".git") for p in paths)
+    assert not any("__pycache__" in p for p in paths)
+
+
+@pytest.mark.asyncio
+async def test_fallback_skips_large_files(mock_plugin_no_rg, tmp_path):
+    """Files > 1 MB are skipped."""
+    big = tmp_path / "big.py"
+    big.write_text("x" * 1024 + "\ntarget_token\n" + "y" * (2 * 1024 * 1024))
+    (tmp_path / "small.py").write_text("target_token\n")
+
+    result = await file_search.handle(
+        mock_plugin_no_rg,
+        umo="test:umo",
+        body={"pattern": "target_token"},
+    )
+    data = result["data"] if hasattr(result, "get") else result["data"]
+    paths = [r["path"] for r in data["results"]]
+    assert "small.py" in paths
+    assert "big.py" not in paths
+
+
+@pytest.mark.asyncio
+async def test_fallback_regex(mock_plugin_no_rg, write_files):
+    """Fallback handles regex=true."""
+    result = await file_search.handle(
+        mock_plugin_no_rg,
+        umo="test:umo",
+        body={"pattern": r"validate_\w+", "regex": True},
+    )
+    data = result["data"] if hasattr(result, "get") else result["data"]
+    assert data["reason"] is None
+    assert data["backend"] == "python"
+    assert data["result_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_fallback_invalid_regex(mock_plugin_no_rg):
+    """Fallback with bad regex returns invalid_pattern."""
+    result = await file_search.handle(
+        mock_plugin_no_rg,
+        umo="test:umo",
+        body={"pattern": "[unclosed", "regex": True},
+    )
+    data = result["data"] if hasattr(result, "get") else result["data"]
+    assert data["reason"] == ReasonCode.INVALID_PATTERN
+
+
+@pytest.mark.asyncio
+async def test_fallback_glob_filter(mock_plugin_no_rg, write_files):
+    """Fallback respects glob_filter."""
+    result = await file_search.handle(
+        mock_plugin_no_rg,
+        umo="test:umo",
+        body={"pattern": "validate_user", "glob_filter": "*.py"},
+    )
+    data = result["data"] if hasattr(result, "get") else result["data"]
+    paths = [r["path"] for r in data["results"]]
+    assert all(p.endswith(".py") for p in paths)
+
+
+@pytest.mark.asyncio
+async def test_fallback_case_sensitive(mock_plugin_no_rg, tmp_path, write_files):
+    """case_sensitive=true in fallback only matches exact case."""
+    # write_files wrote auth.py (lowercase "validate_user") and README.md.
+    # Add a file with uppercase content to verify case sensitivity.
+    (tmp_path / "Upper.txt").write_text("VALIDATE_USER here")
+    result = await file_search.handle(
+        mock_plugin_no_rg,
+        umo="test:umo",
+        body={"pattern": "validate_user", "case_sensitive": True},
+    )
+    data = result["data"] if hasattr(result, "get") else result["data"]
+    paths = [r["path"] for r in data["results"]]
+    # Upper.txt should NOT match (uppercase); auth.py should still match
+    assert not any("Upper.txt" in p for p in paths)
+    assert any("auth.py" in p for p in paths)

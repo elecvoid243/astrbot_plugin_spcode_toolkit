@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess as _sp
 import sys as _sys
 import time
@@ -38,6 +39,7 @@ DEFAULT_CONTEXT_CHARS: int = 60
 MAX_CONTEXT_CHARS: int = 200
 MAX_PATTERN_LENGTH: int = 256
 MAX_SNIPPET_LENGTH: int = 160
+MAX_BYTES_PER_FILE: int = 1024 * 1024  # 与 rg --max-filesize=1M 对齐
 
 _NO_WINDOW: dict = (
     {"creationflags": _sp.CREATE_NO_WINDOW} if _sys.platform == "win32" else {}
@@ -164,6 +166,204 @@ async def _run_ripgrep(
         "kind": kind,
         "error": err_msg or f"rg exit {proc.returncode}",
     }
+
+
+# ── 纯 Python 兜底 ─────────────────────────────────────────────
+
+_PYTHON_FALLBACK_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "env",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "dist",
+        "build",
+        "target",
+        ".next",
+        ".nuxt",
+        ".idea",
+        ".vscode",
+    }
+)
+
+
+def _glob_to_re(glob: str) -> re.Pattern[str]:
+    """把 shell glob (*.py → .*\\.py) 转成正则。
+
+    支持逗号分隔的多 glob: ``*.py,*.md`` → ``^(.*\\.py|.*\\.md)$``
+    """
+    parts = glob.split(",")
+    pat = "|".join(re.escape(p).replace(r"\*", ".*").replace(r"\?", ".") for p in parts)
+    return re.compile(f"^({pat})$")
+
+
+async def _run_python_fallback(
+    *,
+    pattern: str,
+    directory: str,
+    path_filter: str | None,
+    glob_filter: str | None,
+    case_sensitive: bool,
+    regex: bool,
+    max_results: int,
+    context_chars: int,
+) -> tuple[list[dict[str, Any]], bool, str | None]:
+    """纯 Python 兜底:os.walk + re.finditer。
+
+    Returns:
+        (results, truncated, error_message_or_None)
+    """
+    flags = 0 if case_sensitive else re.IGNORECASE
+    if regex:
+        try:
+            pat = re.compile(pattern, flags)
+        except re.error as exc:
+            return [], False, f"invalid regex: {exc}"
+    else:
+        pat = re.compile(re.escape(pattern), flags)
+
+    glob_re = _glob_to_re(glob_filter) if glob_filter else None
+    search_root = Path(directory) / path_filter if path_filter else Path(directory)
+    if not search_root.is_dir():
+        return [], False, f"path_filter not found: {path_filter}"
+
+    def _walk() -> tuple[list[dict[str, Any]], bool]:
+        out: list[dict[str, Any]] = []
+        was_truncated = False
+        for root, dirs, files in os.walk(search_root, followlinks=False):
+            # 原地修剪:跳过 _PYTHON_FALLBACK_SKIP_DIRS 与所有 dotfile 目录
+            dirs[:] = [
+                d
+                for d in dirs
+                if d not in _PYTHON_FALLBACK_SKIP_DIRS and not d.startswith(".")
+            ]
+            for fname in files:
+                if len(out) >= max_results:
+                    was_truncated = True
+                    break
+                if glob_re and not glob_re.match(fname):
+                    continue
+                fpath = Path(root) / fname
+                try:
+                    st = fpath.stat()
+                except OSError:
+                    continue
+                if st.st_size > MAX_BYTES_PER_FILE:
+                    continue
+                try:
+                    with fpath.open("r", encoding="utf-8", errors="ignore") as f:
+                        for i, line in enumerate(f, start=1):
+                            m = pat.search(line)
+                            if m:
+                                out.append(
+                                    {
+                                        "path": str(
+                                            fpath.relative_to(directory)
+                                        ).replace("\\", "/"),
+                                        "line": i,
+                                        "column": m.start() + 1,
+                                        "snippet": _make_snippet(
+                                            line.rstrip("\n"),
+                                            m.start(),
+                                            len(m.group(0)),
+                                            context_chars,
+                                        ),
+                                    }
+                                )
+                                if len(out) >= max_results:
+                                    was_truncated = True
+                                    break
+                except OSError:
+                    continue
+            if was_truncated:
+                break
+        return out, was_truncated
+
+    try:
+        results, truncated = await asyncio.to_thread(_walk)
+    except Exception as exc:
+        return [], False, f"fallback error: {exc}"
+    return results, truncated, None
+
+
+async def _run_fallback_or_error(
+    *,
+    pattern: str,
+    directory: str,
+    path_filter: str | None,
+    glob_filter: str | None,
+    case_sensitive: bool,
+    regex: bool,
+    max_results: int,
+    context_chars: int,
+    effective_umo: str | None,
+    worktree: str | None,
+    _elapsed: Any,
+) -> tuple[list[dict[str, Any]], bool, dict | None]:
+    """运行 Python 兜底,把 3 类错误映射成对应的 envelope。
+
+    Returns:
+        (results, truncated, error_envelope_or_None)
+        - 成功:  (results, truncated, None)
+        - 失败:  ([], False, error_envelope)
+    """
+    results, truncated, fb_err = await _run_python_fallback(
+        pattern=pattern,
+        directory=directory,
+        path_filter=path_filter,
+        glob_filter=glob_filter,
+        case_sensitive=case_sensitive,
+        regex=regex,
+        max_results=max_results,
+        context_chars=context_chars,
+    )
+    if fb_err and fb_err.startswith("invalid regex"):
+        return (
+            [],
+            False,
+            _make_envelope(
+                success=False,
+                reason=ReasonCode.INVALID_PATTERN,
+                elapsed_ms=_elapsed(),
+                umo=effective_umo,
+                worktree=worktree,
+                directory=directory,
+            ),
+        )
+    if fb_err and fb_err.startswith("path_filter"):
+        return (
+            [],
+            False,
+            _make_envelope(
+                success=False,
+                reason=ReasonCode.PATH_UNSAFE_FILTER,
+                elapsed_ms=_elapsed(),
+                umo=effective_umo,
+                worktree=worktree,
+                directory=directory,
+            ),
+        )
+    if fb_err and fb_err.startswith("fallback error"):
+        return (
+            [],
+            False,
+            _make_envelope(
+                success=False,
+                reason=ReasonCode.SEARCH_UNAVAILABLE,
+                elapsed_ms=_elapsed(),
+                umo=effective_umo,
+                worktree=worktree,
+                directory=directory,
+            ),
+        )
+    return results, truncated, None
 
 
 def _parse_ripgrep_json(
@@ -323,67 +523,86 @@ async def handle(
                 directory=directory,
             )
 
-    # 4. 实际搜索(rg 路径)
-    if not getattr(plugin, "_rg_available", False):
-        return _make_envelope(
-            success=False,
-            reason=ReasonCode.SEARCH_UNAVAILABLE,
-            elapsed_ms=_elapsed(),
-            umo=effective_umo,
-            worktree=worktree,
-            directory=directory,
-        )
+    # 4. 实际搜索(rg 优先,失败则走 Python 兜底)
+    backend_used = "python"
+    results: list[dict[str, Any]] = []
+    truncated = False
 
-    rg_path = getattr(plugin, "_rg_path", "rg")
-    rg_result = await _run_ripgrep(
-        pattern=pattern,
-        directory=directory,
-        path_filter=path_filter,
-        glob_filter=glob_filter,
-        case_sensitive=case_sensitive,
-        regex=regex,
-        max_results=max_results,
-        rg_path=rg_path,
-    )
-    if rg_result["ok"]:
-        results, truncated = _parse_ripgrep_json(
-            rg_result["stdout"],
-            max_results,
-            context_chars,
-            directory,
-        )
-        backend_used = "ripgrep"
-    elif rg_result.get("kind") == "timeout":
-        return _make_envelope(
-            success=False,
-            reason=ReasonCode.SEARCH_TIMEOUT,
-            elapsed_ms=_elapsed(),
-            umo=effective_umo,
-            worktree=worktree,
+    if getattr(plugin, "_rg_available", False):
+        rg_path = getattr(plugin, "_rg_path", "rg")
+        rg_result = await _run_ripgrep(
+            pattern=pattern,
             directory=directory,
+            path_filter=path_filter,
+            glob_filter=glob_filter,
+            case_sensitive=case_sensitive,
+            regex=regex,
+            max_results=max_results,
+            rg_path=rg_path,
         )
-    elif rg_result.get("kind") == "regex_error":
-        return _make_envelope(
-            success=False,
-            reason=ReasonCode.INVALID_PATTERN,
-            elapsed_ms=_elapsed(),
-            umo=effective_umo,
-            worktree=worktree,
-            directory=directory,
-        )
+        if rg_result["ok"]:
+            results, truncated = _parse_ripgrep_json(
+                rg_result["stdout"],
+                max_results,
+                context_chars,
+                directory,
+            )
+            backend_used = "ripgrep"
+        elif rg_result.get("kind") == "timeout":
+            return _make_envelope(
+                success=False,
+                reason=ReasonCode.SEARCH_TIMEOUT,
+                elapsed_ms=_elapsed(),
+                umo=effective_umo,
+                worktree=worktree,
+                directory=directory,
+            )
+        elif rg_result.get("kind") == "regex_error":
+            return _make_envelope(
+                success=False,
+                reason=ReasonCode.INVALID_PATTERN,
+                elapsed_ms=_elapsed(),
+                umo=effective_umo,
+                worktree=worktree,
+                directory=directory,
+            )
+        else:
+            logger.warning(
+                f"[file-search] rg failed ({rg_result.get('error')!r}),"
+                " falling back to Python"
+            )
+            results, truncated, fb_err = await _run_fallback_or_error(
+                pattern=pattern,
+                directory=directory,
+                path_filter=path_filter,
+                glob_filter=glob_filter,
+                case_sensitive=case_sensitive,
+                regex=regex,
+                max_results=max_results,
+                context_chars=context_chars,
+                effective_umo=effective_umo,
+                worktree=worktree,
+                _elapsed=_elapsed,
+            )
+            if fb_err is not None:
+                return fb_err
     else:
-        logger.warning(
-            f"[file-search] rg failed ({rg_result.get('error')!r}),"
-            " falling back to Python"
-        )
-        return _make_envelope(
-            success=False,
-            reason=ReasonCode.SEARCH_UNAVAILABLE,
-            elapsed_ms=_elapsed(),
-            umo=effective_umo,
-            worktree=worktree,
+        # rg 不可用 → 直接走兜底
+        results, truncated, fb_err = await _run_fallback_or_error(
+            pattern=pattern,
             directory=directory,
+            path_filter=path_filter,
+            glob_filter=glob_filter,
+            case_sensitive=case_sensitive,
+            regex=regex,
+            max_results=max_results,
+            context_chars=context_chars,
+            effective_umo=effective_umo,
+            worktree=worktree,
+            _elapsed=_elapsed,
         )
+        if fb_err is not None:
+            return fb_err
 
     return _JSONResponseCompat(
         _make_envelope(
