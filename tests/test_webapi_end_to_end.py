@@ -91,12 +91,13 @@ def test_git_show_handler_excluded_from_smoke() -> None:
     assert "handle_get_git_show" not in (set(HANDLERS.keys()) - _SKIP_FILE_BROWSER)
 
 
-def test_routes_table_has_eighteen_endpoints() -> None:
-    """The route table lists the 18 documented endpoints.
+def test_routes_table_has_nineteen_endpoints() -> None:
+    """The route table lists the 19 documented endpoints.
 
-    9 GET + 9 POST = 18。
+    9 GET + 10 POST = 19。
     v2.14.x (2026-06-28) 新增 /spcode/codegraph-status。
     v2.15.0 (2026-07-02) 新增 /spcode/file-search。
+    v2.15.0 (2026-07-02) 新增 /spcode/file-name-search。
     """
     routes = {entry[0] for entry in ROUTES}
     assert routes == {
@@ -118,11 +119,12 @@ def test_routes_table_has_eighteen_endpoints() -> None:
         "/spcode/git-worktree-unlock",  # v2.14.0 (2026-06-26) PR-D
         "/spcode/codegraph-status",  # v2.14.x (2026-06-28)
         "/spcode/file-search",  # v2.15.0 (2026-07-02)
+        "/spcode/file-name-search",  # v2.15.0 (2026-07-02)
     }
-    # Methods sanity: 9 GET + 9 POST
+    # Methods sanity: 9 GET + 10 POST
     methods = [m for entry in ROUTES for m in entry[1]]
     assert methods.count("GET") == 9
-    assert methods.count("POST") == 9
+    assert methods.count("POST") == 10
 
 
 # === _wrap adapter ====================================================
@@ -284,12 +286,12 @@ async def test_wrap_get_query_via_web_request(monkeypatch) -> None:
 # === register_webapi_routes ===========================================
 
 
-def test_register_webapi_routes_calls_context_eighteen_times() -> None:
+def test_register_webapi_routes_calls_context_nineteen_times() -> None:
     """``register_webapi_routes`` must call ``register_web_api`` once per route."""
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    # 18 endpoints (v2.14.x: + codegraph-status, v2.15.0: + file-search)
-    assert plugin.context.register_web_api.call_count == 18
+    # 19 endpoints (v2.14.x: + codegraph-status, v2.15.0: + file-search + file-name-search)
+    assert plugin.context.register_web_api.call_count == 19
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -306,9 +308,9 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 18 routes.
+    # Should not raise; should attempt all 19 routes.
     register_webapi_routes(plugin)
-    assert call_count == 18
+    assert call_count == 19
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

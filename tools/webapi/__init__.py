@@ -1,7 +1,7 @@
 # tools/webapi/__init__.py
 """Web API endpoint handlers, extracted from main.py.
 
-This package owns the 14 ``/spcode/*`` HTTP endpoints consumed by the
+This package owns the 19 ``/spcode/*`` HTTP endpoints consumed by the
 Dashboard / WebUI:
 
   * ``/spcode/project-status``  (GET)
@@ -12,6 +12,8 @@ Dashboard / WebUI:
   * ``/spcode/git-log``         (GET)   # v3.7
   * ``/spcode/file-browser``    (GET)
   * ``/spcode/file-restore``    (POST)
+  * ``/spcode/file-search``     (POST)  # v2.15.0 (2026-07-02)
+  * ``/spcode/file-name-search`` (POST) # v2.15.0 (2026-07-02)
   * ``/spcode/git-stage``       (POST)  # v3.7
   * ``/spcode/git-unstage``     (POST)  # v3.7
   * ``/spcode/git-commit``      (POST)  # v3.7
@@ -44,6 +46,7 @@ if TYPE_CHECKING:
 from . import (
     codegraph_status,  # v2.14.x (2026-06-28)
     file_browser,
+    file_name_search,  # v2.15.0 (2026-07-02)
     file_restore,
     file_search,  # v2.15.0 (2026-07-02)
     git_commit,
@@ -139,6 +142,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "在已加载项目(指定 worktree)内按内容搜索文件",
     ),
     (
+        "/spcode/file-name-search",  # v2.15.0 (2026-07-02)
+        ["POST"],
+        file_name_search.handle,
+        "在已加载项目(指定 worktree)内按文件名(basename)匹配文件",
+    ),
+    (
         "/spcode/file-restore",
         ["POST"],
         file_restore.handle,
@@ -187,6 +196,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_get_git_show": git_show.handle,  # v3.8 (2026-06-25)
     "handle_get_file_browser": file_browser.handle,
     "handle_post_file_search": file_search.handle,  # v2.15.0 (2026-07-02)
+    "handle_post_file_name_search": file_name_search.handle,  # v2.15.0 (2026-07-02)
     "handle_post_file_restore": file_restore.handle,
     "handle_post_git_stage": git_stage.handle,
     "handle_post_git_unstage": git_unstage.handle,
@@ -278,7 +288,7 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
 
 def register_webapi_routes(plugin: SPCodeToolkit) -> None:
-    """Register all 16 ``/spcode/*`` routes against ``plugin.context``.
+    """Register all 19 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
     but never raised — a single broken endpoint should not block
@@ -303,6 +313,7 @@ __all__ = [
     "register_webapi_routes",
     "codegraph_status",  # v2.14.x (2026-06-28)
     "file_browser",
+    "file_name_search",  # v2.15.0 (2026-07-02)
     "file_restore",
     "file_search",  # v2.15.0 (2026-07-02)
     "git_diff",
