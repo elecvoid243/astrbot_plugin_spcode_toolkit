@@ -177,7 +177,9 @@ class ReasonCode:
     COMMIT_TOO_LARGE = "commit_too_large"  # v3.8 (2026-06-25): --numstat 输出超 1 MB
 
     # ── file-search 专用(v2.15.0,2026-07-02) ──
-    SEARCH_UNAVAILABLE = "search_unavailable"  # 兜底 Python 也失败
+    SEARCH_UNAVAILABLE = (
+        "search_unavailable"  # python_ripgrep 库未安装或内部 rg 调用失败
+    )
     SEARCH_TIMEOUT = "search_timeout"  # 5s 超时
     INVALID_PATTERN = "invalid_pattern"  # pattern 为空 / 含换行 / 正则语法错
     PATTERN_TOO_LONG = "pattern_too_long"  # > 256 chars

@@ -232,51 +232,11 @@ class SPCodeToolkit(star.Star):
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(f"[git-diff] 启动期探测异常: {exc!s}")
 
-        # ── ripgrep 可用性探测(2026-07-02,v2.15.0) ──
-        # 失败不阻塞插件加载;file_search 端点会走纯 Python 兜底。
-        # 复用 git 探测的 CREATE_NO_WINDOW 抑制黑窗模式。
-        self._rg_path = (self._config.get("rg_path") or "rg").strip() or "rg"
-        self._rg_available = False
-        try:
-            import subprocess as _sp
-            import sys as _sys
-
-            _NO_WINDOW_RG: dict = (
-                {"creationflags": _sp.CREATE_NO_WINDOW}
-                if _sys.platform == "win32"
-                else {}
-            )
-            _rg_probe = _sp.run(
-                [self._rg_path, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                encoding="utf-8",
-                errors="replace",
-                **_NO_WINDOW_RG,
-            )
-            if _rg_probe.returncode == 0:
-                self._rg_available = True
-                _first_line = (
-                    (_rg_probe.stdout or "").splitlines()[0]
-                    if _rg_probe.stdout
-                    else "unknown"
-                )
-                logger.info(f"[file-search] detected ripgrep: {_first_line}")
-            else:
-                logger.warning(
-                    f"[file-search] ripgrep 探测失败"
-                    f"(returncode={_rg_probe.returncode})"
-                    " — /spcode/file-search 将走纯 Python 兜底(慢)"
-                )
-        except FileNotFoundError:
-            logger.info(
-                f"[file-search] ripgrep ({self._rg_path}) 未安装或不在 PATH 中"
-                " — /spcode/file-search 将走纯 Python 兜底(慢)。"
-                " 安装 ripgrep 后会自动启用高速路径。"
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning(f"[file-search] 启动期探测异常: {exc!s}")
+        # 注:v2.15.0 (2026-07-02) 起 /spcode/file-search 端点改用
+        # ``python_ripgrep.search``(AstrBot 自带依赖,见
+        # ``astrbot/core/computer/booters/local.py:13``),无需再做 ripgrep
+        # 启动期探测。原先这里的 ``_rg_available`` / ``_rg_path`` 探测块与
+        # ``_conf_schema.json`` 的 ``search.rg_path`` 字段均已删除。
 
     async def initialize(self) -> None:
         """插件激活(AstrBot 框架在 __init__ 后调用)。"""
