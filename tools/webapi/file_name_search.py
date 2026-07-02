@@ -2,16 +2,31 @@
 
 Spec: docs/superpowers/specs/2026-07-02-sidebar-search-design.md §5.6
 
-v1.0 (2026-07-02): 与 ``file_search``(内容搜索)并列;不同点:
-  - 后端: ``subprocess.run(["rg", "--files", directory, ...])`` 拿候选列表
-    (``python_ripgrep`` 库只暴露 ``search()`` 即 content-only,无 ``--files``;
-    路径级匹配只能用 rg CLI 子进程)。
-  - 响应 schema 不同: ``{path, name, type, size}``(无 line/column/snippet,
-    因为这是路径级匹配不是行级匹配)。
-  - ``context_chars`` 字段被忽略(filename 模式无 snippet 切片语义)。
+v2.0 (2026-07-02): 后端从 ``subprocess.run(["rg", "--files", ...])`` 改为
+``python_ripgrep.files()``(AstrBot 自带依赖,与 file-search 的
+``python_ripgrep.search`` 平行)。修复:rg 二进制在 AstrBot runtime 里
+NOT on system PATH(它被 bundled 在 ``python_ripgrep.pyd`` 模块内部),
+原 subprocess 路径总是 ``FileNotFoundError`` → ``search_unavailable``。
 
-共用 file-search 的 ReasonCode + preflight + path_filter 4 步防御。5s 超时
-由 ``asyncio.wait_for(asyncio.to_thread(...))`` 包裹,事件循环保持空闲。
+现在:
+  - 用 ``rg_files(patterns=[], paths=[dir], globs=[glob])`` 拿候选文件列表
+  - pattern / regex / case_sensitive 过滤在 Python 端做(不传给 rg 库)
+  - 5s 超时由 ``asyncio.wait_for(asyncio.to_thread(...))`` 包裹
+  - reason mapping:
+      - ``SEARCH_TIMEOUT``   → ``asyncio.TimeoutError``(5s)
+      - ``SEARCH_UNAVAILABLE`` → ``ImportError``(库未装)或 generic ``Exception``
+        (python_ripgrep.files 内部 rg 调用失败)
+
+路径处理:
+  - ``rg_files`` 返回 OS-native 绝对路径(Windows 上是反斜杠)
+  - 用 ``os.path.relpath(raw, directory)`` 转成相对路径
+  - 再 ``.replace(os.sep, "/")`` 统一为 POSIX 风格(跨平台响应一致)
+  - ``path_filter`` 防御:handler 在 Python 端二次确认每个结果以 path_filter
+    为前缀,防止 rg 库在 path_filter 边界外输出(TOCTOU / 符号链接等)。
+
+响应 schema: ``{path, name, type, size}``(无 line/column/snippet,因这是
+路径级匹配不是行级匹配)。``context_chars`` 字段被忽略(filename 模式无
+snippet 切片语义)。
 """
 
 from __future__ import annotations
@@ -19,11 +34,11 @@ import asyncio
 import logging
 import os
 import re
-import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from python_ripgrep import files as rg_files
 
 from ._helpers import (
     _JSONResponseCompat,
@@ -44,11 +59,25 @@ DEFAULT_MAX_RESULTS: int = 200
 MAX_MAX_RESULTS: int = 1000
 MAX_PATTERN_LENGTH: int = 256
 
-# 抑制 pythonw.exe 启动下子进程弹 cmd 黑窗。与 tools._helpers 同名常量
-# 行为一致,但 webapi 层不依赖 tools._helpers(跨层耦合),此处平行复刻。
-_NO_WINDOW_KWARGS: dict[str, int] = (
-    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
-)
+
+# ── 工具函数 ─────────────────────────────────────────────────
+
+
+def _path_is_in_subdir(rel_path: str, path_filter: str) -> bool:
+    """检查 ``rel_path`` 是否在 ``path_filter`` 子目录内(防御性二次确认)。
+
+    Args:
+        rel_path: POSIX 风格相对路径,如 ``src/api/auth.py``。
+        path_filter: 用户传入的子目录前缀,如 ``src/api`` 或 ``src/api/``。
+
+    Returns:
+        True → 在子目录内;False → 越界(应被过滤掉)。
+    """
+    if not path_filter:
+        return True
+    # 规范化 path_filter:确保以 "/" 结尾,避免 "src/api" 误匹配 "src/api_other"
+    prefix = path_filter if path_filter.endswith("/") else path_filter + "/"
+    return rel_path.startswith(prefix)
 
 
 # ── 主 handler ─────────────────────────────────────────────────
@@ -168,40 +197,24 @@ async def handle(
             worktree=worktree,
             directory=directory,
         )
-    compiled = re.compile(base_pattern, 0 if case_sensitive else re.IGNORECASE)
+    matcher = re.compile(base_pattern, 0 if case_sensitive else re.IGNORECASE).search
 
-    # 5. 构造 rg argv
-    # - -g: glob 过滤(传给 rg 端,不是 Python 端)
-    # - --ignore-case: 仅在 !case_sensitive 时加(影响 glob 大小写敏感行为)
-    # - search_path 放最后(标准 rg 习惯;handler 内部 _do_run 的 argv 顺序)
-    argv: list[str] = ["rg", "--files", "--no-config"]
-    if glob_filter:
-        argv += ["-g", glob_filter]
-    if not case_sensitive:
-        argv += ["--ignore-case"]
-    # search_path: 若 path_filter,搜索该子目录;否则搜整个 worktree
+    # 5. 搜索路径 = directory 下的 path_filter(若提供)
     search_path = os.path.join(directory, path_filter) if path_filter else directory
-    argv += [search_path]
 
-    # 6. 调用 rg: ``asyncio.to_thread`` 把阻塞的 subprocess 丢进线程池,
-    # ``asyncio.wait_for`` 限制 5s 超时,事件循环保持空闲。
+    # 6. 调用 python_ripgrep.files(包在 to_thread + 5s 超时里,保持事件循环空闲)
     #   - 超时: asyncio.TimeoutError → SEARCH_TIMEOUT
-    #   - rg 二进制缺失: subprocess.run 抛 FileNotFoundError → SEARCH_UNAVAILABLE
-    #   - 其他异常: 兜底 SEARCH_UNAVAILABLE
-    def _do_run() -> subprocess.CompletedProcess:
-        return subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            timeout=SEARCH_TIMEOUT_SECONDS,
-            encoding="utf-8",
-            errors="replace",
-            **_NO_WINDOW_KWARGS,
+    #   - 库未装 / rg 内部失败: ImportError / Exception → SEARCH_UNAVAILABLE
+    def _do_list() -> list[str]:
+        return rg_files(
+            patterns=[],  # empty = list all (no content regex)
+            paths=[search_path] if search_path else None,
+            globs=[glob_filter] if glob_filter else None,
         )
 
     try:
-        proc: subprocess.CompletedProcess = await asyncio.wait_for(
-            asyncio.to_thread(_do_run),
+        raw_paths: list[str] = await asyncio.wait_for(
+            asyncio.to_thread(_do_list),
             timeout=SEARCH_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
@@ -213,19 +226,7 @@ async def handle(
             worktree=worktree,
             directory=directory,
         )
-    except subprocess.TimeoutExpired:
-        # 双保险:asyncio.wait_for 之外,subprocess.run 自身也有 timeout=5s。
-        # 在某些边界场景下,subprocess.run 可能在 asyncio.wait_for 取消之前
-        # 先 raise TimeoutExpired(进程尚未结束,Python 端先观察到超时)。
-        return _make_envelope(
-            success=False,
-            reason=ReasonCode.SEARCH_TIMEOUT,
-            elapsed_ms=_elapsed(),
-            umo=effective_umo,
-            worktree=worktree,
-            directory=directory,
-        )
-    except FileNotFoundError:
+    except ImportError:
         return _make_envelope(
             success=False,
             reason=ReasonCode.SEARCH_UNAVAILABLE,
@@ -235,7 +236,7 @@ async def handle(
             directory=directory,
         )
     except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("[file-name-search] rg 调用失败: %s", exc)
+        logger.warning(f"[file-name-search] python_ripgrep.files 调用失败: {exc!s}")
         return _make_envelope(
             success=False,
             reason=ReasonCode.SEARCH_UNAVAILABLE,
@@ -245,49 +246,30 @@ async def handle(
             directory=directory,
         )
 
-    # 7. 解析 rg 输出
-    #   - returncode=0: 至少一个匹配
-    #   - returncode=1: 无匹配(rg 的"软失败",不视为错误)
-    #   - 其他: 错误 → SEARCH_UNAVAILABLE
-    if proc.returncode not in (0, 1):
-        return _make_envelope(
-            success=False,
-            reason=ReasonCode.SEARCH_UNAVAILABLE,
-            elapsed_ms=_elapsed(),
-            umo=effective_umo,
-            worktree=worktree,
-            directory=directory,
-            stderr=proc.stderr or "",
-        )
-
-    # rg --files 输出是 repo-relative POSIX 路径(它内部用 / 打印,跨平台一致)
-    # 我们的 search_path 可能是 directory 根,可能是 directory/path_filter 子目录。
-    # 解析时不需要剥前缀 —— rg 已经返回相对路径,只要保证后面 os.path.join 时
-    # 用 directory 作为根,os.path.basename(rel_path) 就能正确取到文件名。
-    #
-    # 防御性 path_filter 校验:rg 在 search_path 下应只返回该子目录内的文件,但
-    # 极端场景下 rg 可能输出边界外路径(例如 path_filter 含 symlink 跳出)。我们
-    # 在 Python 端做二次确认:rel_path 必须以 path_filter 为前缀(规范化带尾 /)。
-    # 这条防御同时也是 unit test 的关键 —— 测试通过 mock subprocess.run 注入
-    # 越界路径,验证 handler 不会把它们放进 results。
-    filter_prefix: str | None = None
-    if path_filter:
-        filter_prefix = path_filter if path_filter.endswith("/") else path_filter + "/"
-
+    # 7. 解析 + 过滤
+    #   - ``raw_paths``:python_ripgrep.files 返回 OS-native 绝对路径
+    #   - ``os.path.relpath`` → 相对 directory 的路径(OS-native 分隔符)
+    #   - ``.replace(os.sep, "/")`` → 统一为 POSIX 风格(跨平台响应一致)
+    #   - ``_path_is_in_subdir`` 防御:即使 rg_files 给 path_filter 搜了
+    #     <directory>/<path_filter> 子目录,Python 端再校验一次,防止 TOCTOU
+    #     或符号链接导致越界路径。
     results: list[dict[str, Any]] = []
     truncated = False
-    for raw in proc.stdout.splitlines():
-        if not raw.strip():
-            continue
+    for raw_path in raw_paths:
         if len(results) >= max_results:
             truncated = True
             break
-        rel_path = raw.replace("\\", "/")
-        if filter_prefix and not rel_path.startswith(filter_prefix):
-            # 越界 → 跳过(防御性)
+        try:
+            rel_path = os.path.relpath(raw_path, directory).replace(os.sep, "/")
+        except (OSError, ValueError):
+            # raw_path 在不同盘符 / 不可解析 → 跳过
+            continue
+        if not rel_path or rel_path == ".":
+            continue
+        if path_filter and not _path_is_in_subdir(rel_path, path_filter):
             continue
         basename = os.path.basename(rel_path)
-        if not compiled.search(basename):
+        if not matcher(basename):
             continue
         # type/size: 实际文件系统探测
         abs_path = os.path.join(directory, rel_path)
@@ -326,4 +308,4 @@ async def handle(
     )
 
 
-# Author: spcode_impl, 2026-07-02 16:35
+# Author: spcode_impl, 2026-07-02 17:40

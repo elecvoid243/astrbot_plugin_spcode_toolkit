@@ -3,15 +3,22 @@
 Spec: docs/superpowers/specs/2026-07-02-sidebar-search-design.md §5.6
 
 The endpoint matches files by **basename** (not content), using
-``rg --files`` for the candidate list (respects ``.gitignore``, fast) and
-then filtering by user pattern (substring or regex, case-sensitive or not).
+``python_ripgrep.files()`` for the candidate list (the rg binary is
+bundled inside the python_ripgrep.pyd module, NOT on system PATH; we
+must use the library, not ``subprocess.run(["rg", ...])``).
 
-All tests mock ``subprocess.run`` at the module level
-(``tools.webapi.file_name_search.subprocess.run``) so the test suite does
-not require an actual ``rg`` binary in PATH and stays deterministic.
+Pattern / regex / case_sensitive filtering is done in **Python**, after
+the file list is returned by ``rg_files``.
+
+All tests mock ``tools.webapi.file_name_search.rg_files`` at module
+level so the test suite does not require real filesystem traversal
+beyond a tmp_path with a few files for the per-result ``type``/``size``
+probes.
 """
 
 from __future__ import annotations
+import os
+import time as _time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -108,31 +115,25 @@ def write_files(tmp_path: Path) -> None:
     (tmp_path / "AUTH.md").write_text("# AUTH (uppercase)\n", encoding="utf-8")
 
 
-def _make_completed_proc(
-    stdout: str = "",
-    stderr: str = "",
-    returncode: int = 0,
-) -> MagicMock:
-    """Build a subprocess.CompletedProcess-like mock."""
-    proc = MagicMock()
-    proc.stdout = stdout
-    proc.stderr = stderr
-    proc.returncode = returncode
-    return proc
+def _abs_paths(directory: str | os.PathLike[str], *rel: str) -> list[str]:
+    """Build a list of absolute paths that mimics ``python_ripgrep.files()``.
 
-
-def _rg_files_output(*paths: str) -> str:
-    """Build a ``rg --files`` stdout string (one path per line, POSIX)."""
-    return "\n".join(paths)
+    On Windows the real library returns native backslash paths; we mirror
+    that with ``os.path.join`` so the test exercises the same code path as
+    production. ``os.path.relpath`` + ``.replace(os.sep, "/")`` in the
+    handler is what converts them back to forward-slash repo-relative.
+    """
+    return [os.path.join(str(directory), p) for p in rel]
 
 
 # ── Tests: basic match ────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_basic_match(mock_plugin, write_files):
+async def test_basic_match(mock_plugin, write_files, tmp_path):
     """Pattern 'auth' (default case-insensitive substring) matches auth*.py + AUTH.md."""
-    paths = [
+    abs_paths = _abs_paths(
+        tmp_path,
         "src/api/auth.py",
         "src/api/auth_helper.py",
         "src/api/user.py",
@@ -140,18 +141,14 @@ async def test_basic_match(mock_plugin, write_files):
         "tests/user_test.py",
         "README.md",
         "AUTH.md",
-    ]
-    with patch.object(
-        file_name_search.subprocess,
-        "run",
-        return_value=_make_completed_proc(_rg_files_output(*paths)),
-    ):
+    )
+    with patch.object(file_name_search, "rg_files", return_value=abs_paths):
         result = await file_name_search.handle(
             mock_plugin,
             umo="test:umo",
             body={"pattern": "auth"},
         )
-    data = result["data"] if hasattr(result, "__getitem__") else result["data"]
+    data = result["data"]
     assert data["reason"] is None
     matched = [r["path"] for r in data["results"]]
     assert "src/api/auth.py" in matched
@@ -165,14 +162,10 @@ async def test_basic_match(mock_plugin, write_files):
 
 
 @pytest.mark.asyncio
-async def test_no_match(mock_plugin, write_files):
+async def test_no_match(mock_plugin, write_files, tmp_path):
     """No matches → empty results, reason=None."""
-    paths = ["src/api/auth.py", "README.md"]
-    with patch.object(
-        file_name_search.subprocess,
-        "run",
-        return_value=_make_completed_proc(_rg_files_output(*paths)),
-    ):
+    abs_paths = _abs_paths(tmp_path, "src/api/auth.py", "README.md")
+    with patch.object(file_name_search, "rg_files", return_value=abs_paths):
         result = await file_name_search.handle(
             mock_plugin,
             umo="test:umo",
@@ -189,17 +182,10 @@ async def test_no_match(mock_plugin, write_files):
 
 
 @pytest.mark.asyncio
-async def test_case_sensitive_excludes_uppercase(mock_plugin, write_files):
+async def test_case_sensitive_excludes_uppercase(mock_plugin, write_files, tmp_path):
     """case_sensitive=true → 'auth' excludes AUTH.md (different case)."""
-    paths = [
-        "src/api/auth.py",
-        "AUTH.md",
-    ]
-    with patch.object(
-        file_name_search.subprocess,
-        "run",
-        return_value=_make_completed_proc(_rg_files_output(*paths)),
-    ):
+    abs_paths = _abs_paths(tmp_path, "src/api/auth.py", "AUTH.md")
+    with patch.object(file_name_search, "rg_files", return_value=abs_paths):
         result = await file_name_search.handle(
             mock_plugin,
             umo="test:umo",
@@ -212,14 +198,10 @@ async def test_case_sensitive_excludes_uppercase(mock_plugin, write_files):
 
 
 @pytest.mark.asyncio
-async def test_case_insensitive_default(mock_plugin, write_files):
+async def test_case_insensitive_default(mock_plugin, write_files, tmp_path):
     """Default → case-insensitive (matches both auth and AUTH)."""
-    paths = ["src/api/auth.py", "AUTH.md"]
-    with patch.object(
-        file_name_search.subprocess,
-        "run",
-        return_value=_make_completed_proc(_rg_files_output(*paths)),
-    ):
+    abs_paths = _abs_paths(tmp_path, "src/api/auth.py", "AUTH.md")
+    with patch.object(file_name_search, "rg_files", return_value=abs_paths):
         result = await file_name_search.handle(
             mock_plugin,
             umo="test:umo",
@@ -235,18 +217,15 @@ async def test_case_insensitive_default(mock_plugin, write_files):
 
 
 @pytest.mark.asyncio
-async def test_regex_mode(mock_plugin, write_files):
+async def test_regex_mode(mock_plugin, write_files, tmp_path):
     """regex=true → 'auth.*\\.py$' matches auth.py and auth_helper.py."""
-    paths = [
+    abs_paths = _abs_paths(
+        tmp_path,
         "src/api/auth.py",
         "src/api/auth_helper.py",
         "AUTH.md",  # doesn't end in .py → must not match
-    ]
-    with patch.object(
-        file_name_search.subprocess,
-        "run",
-        return_value=_make_completed_proc(_rg_files_output(*paths)),
-    ):
+    )
+    with patch.object(file_name_search, "rg_files", return_value=abs_paths):
         result = await file_name_search.handle(
             mock_plugin,
             umo="test:umo",
@@ -260,18 +239,10 @@ async def test_regex_mode(mock_plugin, write_files):
 
 
 @pytest.mark.asyncio
-async def test_substring_default_escapes_regex(mock_plugin, write_files):
+async def test_substring_default_escapes_regex(mock_plugin, write_files, tmp_path):
     """regex=False (default) → '.py' matches as literal '.'; AUTH.md is excluded."""
-    paths = [
-        "src/api/auth.py",
-        "AUTH.md",  # 'auth' substring → would match default but
-        # we use '.py' literal pattern here.
-    ]
-    with patch.object(
-        file_name_search.subprocess,
-        "run",
-        return_value=_make_completed_proc(_rg_files_output(*paths)),
-    ):
+    abs_paths = _abs_paths(tmp_path, "src/api/auth.py", "AUTH.md")
+    with patch.object(file_name_search, "rg_files", return_value=abs_paths):
         result = await file_name_search.handle(
             mock_plugin,
             umo="test:umo",
@@ -289,45 +260,40 @@ async def test_substring_default_escapes_regex(mock_plugin, write_files):
 
 
 @pytest.mark.asyncio
-async def test_glob_filter_passed_to_rg(mock_plugin, write_files):
-    """glob_filter='*.py' → rg argv contains '-g *.py'."""
-    paths = ["src/api/auth.py", "README.md"]
-    with patch.object(
-        file_name_search.subprocess,
-        "run",
-        return_value=_make_completed_proc(_rg_files_output(*paths)),
-    ) as m:
+async def test_glob_filter_passed_to_python_ripgrep(mock_plugin, write_files, tmp_path):
+    """glob_filter='*.py' → rg_files is called with globs=['*.py']."""
+    abs_paths = _abs_paths(tmp_path, "src/api/auth.py", "README.md")
+    with patch.object(file_name_search, "rg_files", return_value=abs_paths) as m:
         result = await file_name_search.handle(
             mock_plugin,
             umo="test:umo",
             body={"pattern": "auth", "glob_filter": "*.py"},
         )
     data = result["data"]
-    argv = m.call_args.args[0]
-    assert "-g" in argv
-    g_idx = argv.index("-g")
-    assert argv[g_idx + 1] == "*.py"
     assert data["reason"] is None
+    # rg_files(patterns=[], paths=[search_path], globs=[glob_filter])
+    kwargs = m.call_args.kwargs
+    assert m.call_args.args == ()  # no positional args
+    assert kwargs.get("globs") == ["*.py"]
+    # patterns=[]  → list all (no content regex filter)
+    assert kwargs.get("patterns") == []
 
 
 # ── Tests: max_results ───────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_max_results_clamp_to_two(mock_plugin, write_files):
+async def test_max_results_clamp_to_two(mock_plugin, write_files, tmp_path):
     """max_results=2 with 5 matches → 2 returned, truncated=True."""
-    paths = [
+    abs_paths = _abs_paths(
+        tmp_path,
         "src/api/auth.py",
         "src/api/auth_helper.py",
         "tests/auth_test.py",
         "tests/auth_test2.py",
         "AUTH.md",
-    ]
-    with patch.object(
-        file_name_search.subprocess,
-        "run",
-        return_value=_make_completed_proc(_rg_files_output(*paths)),
-    ):
+    )
+    with patch.object(file_name_search, "rg_files", return_value=abs_paths):
         result = await file_name_search.handle(
             mock_plugin,
             umo="test:umo",
@@ -341,14 +307,10 @@ async def test_max_results_clamp_to_two(mock_plugin, write_files):
 
 
 @pytest.mark.asyncio
-async def test_truncated_flag(mock_plugin, write_files):
+async def test_truncated_flag(mock_plugin, write_files, tmp_path):
     """truncated flag is True only when len(matches) > max_results."""
-    paths = [f"file_match_{i}.py" for i in range(5)]
-    with patch.object(
-        file_name_search.subprocess,
-        "run",
-        return_value=_make_completed_proc(_rg_files_output(*paths)),
-    ):
+    abs_paths = _abs_paths(tmp_path, *[f"file_match_{i}.py" for i in range(5)])
+    with patch.object(file_name_search, "rg_files", return_value=abs_paths):
         result = await file_name_search.handle(
             mock_plugin,
             umo="test:umo",
@@ -360,14 +322,10 @@ async def test_truncated_flag(mock_plugin, write_files):
 
 
 @pytest.mark.asyncio
-async def test_no_truncation_when_under_limit(mock_plugin, write_files):
+async def test_no_truncation_when_under_limit(mock_plugin, write_files, tmp_path):
     """truncated=False when matches ≤ max_results."""
-    paths = ["src/api/auth.py", "AUTH.md"]
-    with patch.object(
-        file_name_search.subprocess,
-        "run",
-        return_value=_make_completed_proc(_rg_files_output(*paths)),
-    ):
+    abs_paths = _abs_paths(tmp_path, "src/api/auth.py", "AUTH.md")
+    with patch.object(file_name_search, "rg_files", return_value=abs_paths):
         result = await file_name_search.handle(
             mock_plugin,
             umo="test:umo",
@@ -381,17 +339,14 @@ async def test_no_truncation_when_under_limit(mock_plugin, write_files):
 
 
 @pytest.mark.asyncio
-async def test_path_filter_restricts_subdir(mock_plugin, write_files):
-    """path_filter='src/api/' → only files under that subdir are searched."""
-    paths = [
+async def test_path_filter_restricts_subdir(mock_plugin, write_files, tmp_path):
+    """path_filter='src/api/' → rg_files gets the subdir as paths; results scoped."""
+    abs_paths = _abs_paths(
+        tmp_path,
         "src/api/auth.py",
-        "tests/auth_test.py",  # outside path_filter
-    ]
-    with patch.object(
-        file_name_search.subprocess,
-        "run",
-        return_value=_make_completed_proc(_rg_files_output(*paths)),
-    ) as m:
+        "tests/auth_test.py",  # returned by rg_files for test purposes
+    )
+    with patch.object(file_name_search, "rg_files", return_value=abs_paths) as m:
         result = await file_name_search.handle(
             mock_plugin,
             umo="test:umo",
@@ -400,13 +355,16 @@ async def test_path_filter_restricts_subdir(mock_plugin, write_files):
     data = result["data"]
     matched = [r["path"] for r in data["results"]]
     assert "src/api/auth.py" in matched
-    # tests/auth_test.py is outside the subdir — it should not be in the
-    # results even though it would match the pattern.
+    # Handler's defense-in-depth filter: tests/auth_test.py is outside the
+    # path_filter scope, so it must not be in the results.
     assert "tests/auth_test.py" not in matched
-    # rg argv's last positional arg should be the subdir (not the repo root).
-    argv = m.call_args.args[0]
-    last_arg = argv[-1]
-    assert "src" in last_arg and "api" in last_arg
+    # rg_files should be called with paths = <tmp_path>/src/api/ (subdir),
+    # not <tmp_path> (repo root).
+    kwargs = m.call_args.kwargs
+    assert kwargs.get("paths") is not None
+    paths_arg = kwargs["paths"]
+    assert len(paths_arg) == 1
+    assert "src" in paths_arg[0] and "api" in paths_arg[0]
 
 
 # ── Tests: input validation ──────────────────────────────────────
@@ -414,8 +372,8 @@ async def test_path_filter_restricts_subdir(mock_plugin, write_files):
 
 @pytest.mark.asyncio
 async def test_empty_pattern_returns_invalid(mock_plugin):
-    """Empty pattern → INVALID_PATTERN; subprocess.run NOT called."""
-    with patch.object(file_name_search.subprocess, "run") as m:
+    """Empty pattern → INVALID_PATTERN; rg_files NOT called."""
+    with patch.object(file_name_search, "rg_files") as m:
         result = await file_name_search.handle(
             mock_plugin, umo="test:umo", body={"pattern": ""}
         )
@@ -426,8 +384,8 @@ async def test_empty_pattern_returns_invalid(mock_plugin):
 
 @pytest.mark.asyncio
 async def test_pattern_too_long_returns_too_long(mock_plugin):
-    """257 chars → PATTERN_TOO_LONG; subprocess.run NOT called."""
-    with patch.object(file_name_search.subprocess, "run") as m:
+    """257 chars → PATTERN_TOO_LONG; rg_files NOT called."""
+    with patch.object(file_name_search, "rg_files") as m:
         result = await file_name_search.handle(
             mock_plugin, umo="test:umo", body={"pattern": "a" * 257}
         )
@@ -439,7 +397,7 @@ async def test_pattern_too_long_returns_too_long(mock_plugin):
 @pytest.mark.asyncio
 async def test_pattern_with_newline_returns_invalid(mock_plugin):
     """Pattern with \\n → INVALID_PATTERN (multi-line search not supported)."""
-    with patch.object(file_name_search.subprocess, "run") as m:
+    with patch.object(file_name_search, "rg_files") as m:
         result = await file_name_search.handle(
             mock_plugin, umo="test:umo", body={"pattern": "foo\nbar"}
         )
@@ -450,8 +408,8 @@ async def test_pattern_with_newline_returns_invalid(mock_plugin):
 
 @pytest.mark.asyncio
 async def test_path_unsafe_filter_rejected(mock_plugin):
-    """path_filter='../etc' → PATH_UNSAFE_FILTER; subprocess.run NOT called."""
-    with patch.object(file_name_search.subprocess, "run") as m:
+    """path_filter='../etc' → PATH_UNSAFE_FILTER; rg_files NOT called."""
+    with patch.object(file_name_search, "rg_files") as m:
         result = await file_name_search.handle(
             mock_plugin,
             umo="test:umo",
@@ -462,16 +420,36 @@ async def test_path_unsafe_filter_rejected(mock_plugin):
     m.assert_not_called()
 
 
-# ── Tests: rg-specific failure modes ────────────────────────────
+# ── Tests: rg_files failure modes ───────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_rg_not_found_returns_unavailable(mock_plugin, write_files):
-    """FileNotFoundError (rg missing) → SEARCH_UNAVAILABLE."""
+async def test_rg_files_timeout_returns_search_timeout(mock_plugin, write_files):
+    """rg_files() sleeps past SEARCH_TIMEOUT_SECONDS → SEARCH_TIMEOUT.
+
+    Implementation: 把 ``file_name_search.SEARCH_TIMEOUT_SECONDS`` 临时改成
+    ``0.001`` s,让真实 ``asyncio.wait_for`` 自然触发 ``TimeoutError``(避免
+    patch 全局 ``asyncio.wait_for`` 影响 preflight 的 git 调用)。
+    """
+
+    def _slow(*_args, **_kwargs):
+        _time.sleep(0.5)
+        return []
+
+    with patch.object(file_name_search, "rg_files", side_effect=_slow):
+        with patch.object(file_name_search, "SEARCH_TIMEOUT_SECONDS", 0.001):
+            result = await file_name_search.handle(
+                mock_plugin, umo="test:umo", body={"pattern": "auth"}
+            )
+    data = result["data"]
+    assert data["reason"] == ReasonCode.SEARCH_TIMEOUT
+
+
+@pytest.mark.asyncio
+async def test_python_ripgrep_import_error_returns_unavailable(mock_plugin):
+    """rg_files() raises ImportError → SEARCH_UNAVAILABLE (library missing)."""
     with patch.object(
-        file_name_search.subprocess,
-        "run",
-        side_effect=FileNotFoundError("rg not installed"),
+        file_name_search, "rg_files", side_effect=ImportError("no python_ripgrep")
     ):
         result = await file_name_search.handle(
             mock_plugin, umo="test:umo", body={"pattern": "auth"}
@@ -481,26 +459,14 @@ async def test_rg_not_found_returns_unavailable(mock_plugin, write_files):
 
 
 @pytest.mark.asyncio
-async def test_rg_timeout_returns_search_timeout(mock_plugin, write_files):
-    """subprocess.run sleeps > SEARCH_TIMEOUT_SECONDS → SEARCH_TIMEOUT.
-
-    Implementation: 把 ``file_name_search.SEARCH_TIMEOUT_SECONDS`` 临时改成
-    ``0.001`` s,让真实 ``asyncio.wait_for`` 自然触发 ``TimeoutError``(避免
-    patch 全局 ``asyncio.wait_for`` 影响 preflight 的 git 调用)。
-    """
-    import time as _time
-
-    def _slow(*_args, **_kwargs):
-        _time.sleep(0.5)
-        return _make_completed_proc()
-
-    with patch.object(file_name_search.subprocess, "run", side_effect=_slow):
-        with patch.object(file_name_search, "SEARCH_TIMEOUT_SECONDS", 0.001):
-            result = await file_name_search.handle(
-                mock_plugin, umo="test:umo", body={"pattern": "auth"}
-            )
+async def test_rg_files_generic_exception_returns_unavailable(mock_plugin):
+    """rg_files() raises generic Exception → SEARCH_UNAVAILABLE (defensive)."""
+    with patch.object(file_name_search, "rg_files", side_effect=RuntimeError("kaboom")):
+        result = await file_name_search.handle(
+            mock_plugin, umo="test:umo", body={"pattern": "auth"}
+        )
     data = result["data"]
-    assert data["reason"] == ReasonCode.SEARCH_TIMEOUT
+    assert data["reason"] == ReasonCode.SEARCH_UNAVAILABLE
 
 
 # ── Tests: preflight failure paths ──────────────────────────────
@@ -508,10 +474,10 @@ async def test_rg_timeout_returns_search_timeout(mock_plugin, write_files):
 
 @pytest.mark.asyncio
 async def test_no_project_loaded_returns_no_project(mock_plugin):
-    """No project loaded + umo=None → NO_PROJECT_LOADED; rg NOT called."""
+    """No project loaded + umo=None → NO_PROJECT_LOADED; rg_files NOT called."""
     # Don't pass umo so the preflight tries the state fallback (which the
     # autouse conftest fixture reset to empty).
-    with patch.object(file_name_search.subprocess, "run") as m:
+    with patch.object(file_name_search, "rg_files") as m:
         result = await file_name_search.handle(
             mock_plugin, umo=None, body={"pattern": "auth"}
         )
@@ -522,8 +488,8 @@ async def test_no_project_loaded_returns_no_project(mock_plugin):
 
 @pytest.mark.asyncio
 async def test_worktree_invalid_returns_worktree_invalid(mock_plugin):
-    """worktree that doesn't exist → WORKTREE_INVALID; rg NOT called."""
-    with patch.object(file_name_search.subprocess, "run") as m:
+    """worktree that doesn't exist → WORKTREE_INVALID; rg_files NOT called."""
+    with patch.object(file_name_search, "rg_files") as m:
         result = await file_name_search.handle(
             mock_plugin,
             umo="test:umo",
@@ -539,14 +505,10 @@ async def test_worktree_invalid_returns_worktree_invalid(mock_plugin):
 
 
 @pytest.mark.asyncio
-async def test_result_shape(mock_plugin, write_files):
+async def test_result_shape(mock_plugin, write_files, tmp_path):
     """Each result has exactly {path, name, type, size} with correct types."""
-    paths = ["src/api/auth.py"]
-    with patch.object(
-        file_name_search.subprocess,
-        "run",
-        return_value=_make_completed_proc(_rg_files_output(*paths)),
-    ):
+    abs_paths = _abs_paths(tmp_path, "src/api/auth.py")
+    with patch.object(file_name_search, "rg_files", return_value=abs_paths):
         result = await file_name_search.handle(
             mock_plugin, umo="test:umo", body={"pattern": "auth"}
         )
@@ -564,4 +526,49 @@ async def test_result_shape(mock_plugin, write_files):
         assert forbidden not in r
 
 
-# Author: spcode_impl, 2026-07-02 16:35
+# ── Tests: library integration ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_uses_python_ripgrep_files_not_subprocess(
+    mock_plugin, write_files, tmp_path
+):
+    """rg_files is invoked with the documented signature: patterns=[], paths=[dir], globs=[...]."""
+    abs_paths = _abs_paths(tmp_path, "src/api/auth.py")
+    with patch.object(file_name_search, "rg_files", return_value=abs_paths) as m:
+        await file_name_search.handle(
+            mock_plugin, umo="test:umo", body={"pattern": "auth"}
+        )
+    # The handler must NOT spawn an rg subprocess anymore (rg is not on PATH
+    # in the AstrBot runtime; the .pyd bundles it internally).
+    kwargs = m.call_args.kwargs
+    assert kwargs.get("patterns") == []
+    assert kwargs.get("paths") is not None
+    # No line_number / max_count / etc. — those would be for content search.
+    assert "line_number" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_path_forward_slash_normalization(mock_plugin, write_files, tmp_path):
+    """rg_files returns native backslash paths; response 'path' is forward-slash relative."""
+    # Real python_ripgrep.files() on Windows returns paths with backslashes.
+    raw = [
+        str(tmp_path) + "\\src\\api\\auth.py",
+        str(tmp_path) + "\\AUTH.md",
+    ]
+    with patch.object(file_name_search, "rg_files", return_value=raw):
+        result = await file_name_search.handle(
+            mock_plugin, umo="test:umo", body={"pattern": "auth"}
+        )
+    data = result["data"]
+    assert data["reason"] is None
+    paths = [r["path"] for r in data["results"]]
+    # No backslashes in the response path field (POSIX-style for cross-platform
+    # consistency with the rest of the API).
+    for p in paths:
+        assert "\\" not in p, f"backslash in response path: {p!r}"
+    assert "src/api/auth.py" in paths
+    assert "AUTH.md" in paths
+
+
+# Author: spcode_impl, 2026-07-02 17:40
