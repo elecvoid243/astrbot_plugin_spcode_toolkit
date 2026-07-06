@@ -434,6 +434,13 @@ AGENTS.md 是 OpenCode 提出的项目级 LLM 指令文件，功能类似 Cursor
 - `_helpers.py` — `ReasonCode` / `_make_envelope` / `_git_endpoint_preflight` /
   `_validate_repo_relative_file` / `_run_git_async` / `_JSONResponseCompat`
 
+## v2.16.0 (2026-07-06)
+
+- **New endpoint** `POST /spcode/file-discard-hunk` — 按 hunk 粒度丢弃工作区 / 已暂存改动(unified diff 文本入参,`git apply --reverse` 语义)
+- **Reason codes** +9 — `patch_empty` / `patch_too_large` / `patch_malformed` / `patch_unsafe_path` / `multi_file_patch` / `patch_file_mismatch` / `patch_binary` / `patch_check_failed` / `patch_apply_failed`
+- **Refactor** 提取 `X_TRULY_STAGED` / `Y_WORKTREE` 常量至 `tools/webapi/_helpers.py`,供 `file-restore` 与 `file-discard-hunk` 共享
+- **Tests** +30 — 单元测试覆盖 5 大类(parser / envelope / body 校验 / file 安全 / git ops)+ 端到端路由计数 19→20
+
 ## 架构
 
 ```

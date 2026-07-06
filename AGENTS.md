@@ -320,6 +320,7 @@ astrbot_plugin_spcode_toolkit/
 | `/spcode/git-worktree-remove` | POST | 删除 git worktree(硬禁 main,locked 拒,`force=true` 跳过 dirty) | body: `{path, force?}` |
 | `/spcode/git-worktree-lock` | POST | 锁定 git worktree(可选 `--reason`),main 允许但 git 自身拒绝 | body: `{path, reason?}` |
 | `/spcode/git-worktree-unlock` | POST | 解锁 git worktree,main 允许但 git 自身拒绝 | body: `{path}` |
+| `/spcode/file-discard-hunk` | POST | 按 hunk 丢弃工作区改动（unified diff 文本入参，`git apply --reverse`） | body: `{file, patch_text, umo?, worktree?}` |
 
 **v3.7 (2026-06-24) 新增 4 个端点**:`git-log`(读)、`git-stage`/`git-unstage`/
 `git-commit`(写,合称 git workflow)。所有写端点共享 5 步前置校验 +
@@ -337,6 +338,14 @@ astrbot_plugin_spcode_toolkit/
 | 业务结果 | `nothing_to_commit` / `nothing_staged` | 无 staged 改动 |
 | 业务结果 | `hook_rejected` / `pre_commit_hook_failed` | pre-commit / commit-msg 失败 |
 | 业务结果 | `identity_not_set` | user.email/name 未设 |
+
+**v2.16.0 新增 9 个 (file-discard-hunk 专用)**:
+
+| 类别 | 码 | 含义 |
+|------|------|------|
+| patch 输入 | `patch_empty` / `patch_too_large` / `patch_malformed` | patch_text 空 / 超 256 KB / 不是合法 unified diff |
+| patch 路径 | `patch_unsafe_path` / `multi_file_patch` / `patch_file_mismatch` / `patch_binary` | patch 中路径含 `..` / 绝对 / `.git/` 段 / 多文件 / 文件不匹配 / binary 内容 |
+| patch apply | `patch_check_failed` / `patch_apply_failed` | `git apply --check --reverse` 失败 / `git apply --reverse` 失败（极罕见，文件被并发改） |
 
 **`?worktree=` 参数(2026-06-18 引入)**:
 - 完全可选,缺省 = primary worktree,行为与 v1 完全一致
@@ -401,6 +410,15 @@ astrbot_plugin_spcode_toolkit/
 - `tests/test_git_worktree_e2e.py` — 5 个 E2E 生命周期 smoke 测试
 - `tests/test_webapi_end_to_end.py` — 16 路由表 + `_wrap` +
   `register_webapi_routes` smoke (route count 14→16)
+
+**v2.16.0 (2026-07-06) file-discard-hunk 端点**:
+- `POST /spcode/file-discard-hunk` — 接受 unified diff 文本入参,`git apply --check --reverse` 干跑 + `git apply --reverse` 实际应用
+- 单文件单次请求;patch ≤ 256 KB;9 个新 reason code
+- worktree 防御链 + 4 步文件防御复用既有实现
+- stdin 喂 patch 文本(规避 argv 长度限制 + shell quoting)
+- 单元测试 ~30 cases
+- **关键不变量**:`diff --git` 头中 `b/` 路径必须 = body `file` 字段,否则 `patch_file_mismatch`
+- **关键不变量**:`patch` 必须只含 1 个 `diff --git` 段,否则 `multi_file_patch`
 
 ## pytest 速查
 
