@@ -14,7 +14,12 @@ from typing import TYPE_CHECKING
 
 from .._helpers import _validate_worktree_param
 from ..project import state as _proj_state
-from ._helpers import _run_git_async, _validate_repo_relative_file
+from ._helpers import (
+    _run_git_async,
+    _validate_repo_relative_file,
+    X_TRULY_STAGED,
+    Y_WORKTREE,
+)
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
@@ -334,11 +339,9 @@ async def handle(
     # - Y 是 'A'(worktree 有新文件)
     # - 不能用 ``git checkout --``:它会把 worktree 内容置空(index 里 blob 是空的)
     # - 必须用 ``git reset HEAD`` 取消意图(worktree 内容保留,文件变 untracked)
-    _TRULY_STAGED_X = frozenset({"M", "D", "R", "C", "T"})
-    _WORKTREE_Y = frozenset({"M", "A", "D", "R", "C", "T"})
     is_intent_to_add = x_status == " " and y_status == "A"
-    is_truly_staged = x_status in _TRULY_STAGED_X
-    is_worktree_dirty = y_status in _WORKTREE_Y
+    is_truly_staged = x_status in X_TRULY_STAGED
+    is_worktree_dirty = y_status in Y_WORKTREE
 
     if is_intent_to_add:
         scope = "unstaged"

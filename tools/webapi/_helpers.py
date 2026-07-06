@@ -202,6 +202,25 @@ class ReasonCode:
     ALREADY_LOCKED = "already_locked"  # LOCK: 已 locked
     NOT_LOCKED = "not_locked"  # UNLOCK: 未 locked
 
+    # ── /spcode/file-discard-hunk(v2.16.0,2026-07-06) ──
+    PATCH_EMPTY = "patch_empty"
+    PATCH_TOO_LARGE = "patch_too_large"
+    PATCH_MALFORMED = "patch_malformed"
+    PATCH_UNSAFE_PATH = "patch_unsafe_path"
+    MULTI_FILE_PATCH = "multi_file_patch"
+    PATCH_FILE_MISMATCH = "patch_file_mismatch"
+    PATCH_BINARY = "patch_binary"
+    PATCH_CHECK_FAILED = "patch_check_failed"
+    PATCH_APPLY_FAILED = "patch_apply_failed"
+
+
+# ── git status --porcelain X/Y 列判定(共享常量)────────────────────
+# 从 tools/webapi/file_restore.py 提取(2026-07-06)。两个端点共用:
+# - /spcode/file-restore: 决定 `git checkout --` vs `git checkout HEAD --` vs `git reset HEAD --`
+# - /spcode/file-discard-hunk: 决定 `git apply --reverse` vs `git apply --reverse --cached`
+X_TRULY_STAGED: frozenset[str] = frozenset({"M", "D", "R", "C", "T"})
+Y_WORKTREE: frozenset[str] = frozenset({"M", "A", "D", "R", "C", "T"})
+
 
 def _make_envelope(
     *,
