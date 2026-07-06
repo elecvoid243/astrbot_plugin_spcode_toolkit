@@ -212,6 +212,7 @@ class ReasonCode:
     PATCH_BINARY = "patch_binary"
     PATCH_CHECK_FAILED = "patch_check_failed"
     PATCH_APPLY_FAILED = "patch_apply_failed"
+    FILE_NOT_FOUND = "file_not_found"  # Task 4 (2026-07-06): target 文件不存在于 worktree
 
 
 # ── git status --porcelain X/Y 列判定(共享常量)────────────────────

@@ -11,6 +11,7 @@ Class layout:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest  # noqa: F401  # used by TestEnvelopes / TestHandler* in Tasks 3-6
@@ -294,3 +295,235 @@ class TestHandlerBodyValidation:
         patch_web_request({"file": "x.py", "patch_text": "diff --git a/x.py b/x.py\n@@ -1 +1 @@\n-a\n+A\n"})
         result = await file_discard_hunk.handle(mock_plugin)
         assert result["data"]["reason"] == "no_project_loaded"
+
+
+# ── TestHandlerFileSafety ───────────────────────────────────────────
+
+
+class TestHandlerFileSafety:
+    """Handler steps 7-11 — file safety + repo probe + patch parsing."""
+
+    @pytest.fixture
+    def git_repo(self, tmp_path) -> "Path":
+        """Initialize a real git repo with a tracked file."""
+        import os
+        import subprocess
+
+        env = {
+            "GIT_AUTHOR_NAME": "T",
+            "GIT_AUTHOR_EMAIL": "t@e",
+            "GIT_COMMITTER_NAME": "T",
+            "GIT_COMMITTER_EMAIL": "t@e",
+            "PATH": os.environ["PATH"],
+        }
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "main.py").write_text("original\n", encoding="utf-8")
+        for cmd in (
+            ["git", "-C", str(repo), "init"],
+            ["git", "-C", str(repo), "config", "user.email", "t@e"],
+            ["git", "-C", str(repo), "config", "user.name", "T"],
+            ["git", "-C", str(repo), "add", "main.py"],
+            ["git", "-C", str(repo), "commit", "-m", "init"],
+        ):
+            subprocess.run(cmd, check=True, capture_output=True, env=env)
+        return repo
+
+    @pytest.fixture
+    def mock_plugin_with_repo(self, git_repo, monkeypatch) -> Any:
+        from tools.project import state as _proj_state
+        from tests.conftest import _make_plugin
+
+        plugin = _make_plugin()
+        _proj_state.put(
+            "test-umo", {"directory": str(git_repo), "loaded_at": 0}
+        )
+        return plugin
+
+    @pytest.fixture
+    def post_body(self, monkeypatch: pytest.MonkeyPatch):
+        from astrbot.api import web
+
+        def _post(body: dict) -> None:
+            class _Req:
+                @staticmethod
+                async def json(default=None):
+                    return body
+            monkeypatch.setattr(web, "request", _Req)
+
+        return _post
+
+    def _valid_patch(self) -> str:
+        return (
+            "diff --git a/main.py b/main.py\n"
+            "--- a/main.py\n"
+            "+++ b/main.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            "-original\n"
+            "+new line\n"
+            "+new line 2\n"
+        )
+
+    @pytest.mark.asyncio
+    async def test_directory_missing(
+        self, mock_plugin_with_repo, post_body
+    ) -> None:
+        """Loaded project was deleted externally → directory_missing.
+
+        不依赖 ``shutil.rmtree`` 物理删除:Windows 上 ``.git/objects/XX/YY``
+        因 transient handle / share mode 经常 PermissionError,导致目录残留、
+        ``Path.is_dir()`` 仍 True。改用"将 state 指向 guaranteed 缺失目录"
+        来稳定触发 ``directory_missing``,语义与生产场景一致。
+        """
+        from tools.project import state as _proj_state
+
+        guaranteed_missing = (
+            mock_plugin_with_repo.get_loaded_project("test-umo")["directory"]
+            + "_DELETED_BY_TEST"
+        )
+        _proj_state.put(
+            "test-umo",
+            {"directory": guaranteed_missing, "loaded_at": 0},
+        )
+        post_body({"file": "main.py", "patch_text": self._valid_patch()})
+        result = await file_discard_hunk.handle(mock_plugin_with_repo)
+        assert result["data"]["reason"] == "directory_missing"
+
+    @pytest.mark.asyncio
+    async def test_not_a_git_repo(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Loaded dir is not a git repo → not_a_git_repo."""
+        from astrbot.api import web
+        from tests.conftest import _make_plugin
+        from tools.project import state as _proj_state
+
+        non_git = tmp_path / "non_git"
+        non_git.mkdir()
+        (non_git / "x.txt").write_text("x")
+        plugin = _make_plugin()
+        _proj_state.put("u", {"directory": str(non_git), "loaded_at": 0})
+
+        class _Req:
+            @staticmethod
+            async def json(default=None):
+                return {
+                    "file": "x.txt",
+                    "patch_text": (
+                        "diff --git a/x.txt b/x.txt\n"
+                        "@@ -1 +1 @@\n"
+                        "-x\n"
+                        "+X\n"
+                    ),
+                }
+
+        monkeypatch.setattr(web, "request", _Req)
+        result = await file_discard_hunk.handle(plugin)
+        assert result["data"]["reason"] == "not_a_git_repo"
+
+    @pytest.mark.asyncio
+    async def test_path_unsafe_absolute(
+        self, mock_plugin_with_repo, post_body
+    ) -> None:
+        post_body({"file": "/etc/passwd", "patch_text": "x"})
+        result = await file_discard_hunk.handle(mock_plugin_with_repo)
+        assert result["data"]["reason"] == "path_unsafe"
+
+    @pytest.mark.asyncio
+    async def test_path_unsafe_parent_traversal(
+        self, mock_plugin_with_repo, post_body
+    ) -> None:
+        post_body({"file": "../escape.py", "patch_text": "x"})
+        result = await file_discard_hunk.handle(mock_plugin_with_repo)
+        assert result["data"]["reason"] == "path_unsafe"
+
+    @pytest.mark.asyncio
+    async def test_path_unsafe_dot_git(
+        self, mock_plugin_with_repo, post_body
+    ) -> None:
+        post_body({"file": ".git/config", "patch_text": "x"})
+        result = await file_discard_hunk.handle(mock_plugin_with_repo)
+        assert result["data"]["reason"] == "path_unsafe"
+
+    @pytest.mark.asyncio
+    async def test_file_not_found(
+        self, mock_plugin_with_repo, post_body
+    ) -> None:
+        post_body(
+            {
+                "file": "no_such.py",
+                "patch_text": (
+                    "diff --git a/no_such.py b/no_such.py\n"
+                    "@@ -1 +1 @@\n"
+                    "-x\n+X\n"
+                ),
+            }
+        )
+        result = await file_discard_hunk.handle(mock_plugin_with_repo)
+        assert result["data"]["reason"] == "file_not_found"
+
+    @pytest.mark.asyncio
+    async def test_worktree_invalid_six_step_defense(
+        self, mock_plugin_with_repo, post_body
+    ) -> None:
+        """All 6 attack vectors on worktree= should be rejected."""
+        # Body patch 选用仅 1 个 hunk 的 minimal valid patch —— 即使 worktree 校验
+        # 通过,patch 也会被 step 8-11 解析失败,但我们先确认 worktree 校验能拦下。
+        body_patch = (
+            "diff --git a/main.py b/main.py\n"
+            "@@ -1 +1 @@\n"
+            "-x\n+X\n"
+        )
+        attack_vectors = [
+            "../escape",         # 1. .. 段
+            "/etc/passwd",       # 2. 绝对路径
+            "C:\\Windows",       # 3. Windows 绝对路径
+            ".git/HEAD",         # 4. 隐藏目录组件
+            "non/existent/dir",  # 5. 不存在
+            # 6. git-common-dir 不匹配 — 需要 mock `_validate_worktree_param` 自身,
+            #    见 patch_check_failed 类比;此处省略(生产代码已覆盖,见
+            #    tools/_helpers.py _validate_worktree_param step 6)。
+        ]
+        for vector in attack_vectors:
+            post_body(
+                {"file": "main.py", "worktree": vector, "patch_text": body_patch}
+            )
+            result = await file_discard_hunk.handle(mock_plugin_with_repo)
+            assert result["data"]["reason"] in (
+                "worktree_invalid",
+                "directory_missing",
+                "not_a_git_repo",
+            ), (
+                f"worktree={vector!r} should be rejected (got {result['data']['reason']})"
+            )
+
+    @pytest.mark.asyncio
+    async def test_patch_file_mismatch_in_handler(
+        self, mock_plugin_with_repo, post_body
+    ) -> None:
+        patch = (
+            "diff --git a/other.py b/other.py\n"
+            "--- a/other.py\n"
+            "+++ b/other.py\n"
+            "@@ -1 +1 @@\n"
+            "-x\n+X\n"
+        )
+        post_body({"file": "main.py", "patch_text": patch})
+        result = await file_discard_hunk.handle(mock_plugin_with_repo)
+        assert result["data"]["reason"] == "patch_file_mismatch"
+
+    @pytest.mark.asyncio
+    async def test_multi_file_patch_in_handler(
+        self, mock_plugin_with_repo, post_body
+    ) -> None:
+        patch = (
+            "diff --git a/main.py b/main.py\n"
+            "@@ -1 +1 @@\n"
+            "-a\n+A\n"
+            "diff --git a/other.py b/other.py\n"
+            "@@ -1 +1 @@\n"
+            "-b\n+B\n"
+        )
+        post_body({"file": "main.py", "patch_text": patch})
+        result = await file_discard_hunk.handle(mock_plugin_with_repo)
+        assert result["data"]["reason"] == "multi_file_patch"

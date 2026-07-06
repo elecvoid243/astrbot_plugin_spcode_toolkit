@@ -20,7 +20,7 @@ from ._helpers import (
     X_TRULY_STAGED,  # noqa: F401  # used by handle() in Task 5
     Y_WORKTREE,  # noqa: F401  # used by handle() in Task 5
     ReasonCode,
-    _run_git_async,  # noqa: F401  # used by handle() in Task 5
+    _run_git_async,  # noqa: F401  # used by handle() in Task 4 (+ Task 5)
     _validate_repo_relative_file,  # noqa: F401  # used by handle() in Task 4
 )
 
@@ -284,10 +284,83 @@ async def handle(
         )
     directory = info.get("directory", "")
 
-    # Step 7-15: deferred to Tasks 4-5
+    # Step 7: worktree 6 步防御
+    if worktree_param is not None and worktree_param.strip():
+        validated_wt, wt_err = _validate_worktree_param(
+            plugin._git_binary(), directory, worktree_param
+        )
+        if wt_err is not None:
+            logger.warning(
+                f"[file-discard-hunk] rejected worktree={worktree_param!r} "
+                f"(loaded={directory!r})"
+            )
+            return _make_file_discard_hunk_empty_envelope(
+                file=file, umo=umo, directory=directory, patch_sha=patch_sha,
+                reason=wt_err, elapsed_ms=_elapsed(),
+            )
+        directory = validated_wt
+
+    # Step 8: 目录存在性
+    if not Path(directory).is_dir():
+        return _make_file_discard_hunk_empty_envelope(
+            file=file, umo=umo, directory=directory, patch_sha=patch_sha,
+            reason=ReasonCode.DIRECTORY_MISSING, elapsed_ms=_elapsed(),
+        )
+
+    # Step 9: git repo probe
+    git_bin = plugin._git_binary()
+    probe = await _run_git_async(
+        [git_bin, "-C", directory, "rev-parse", "--is-inside-work-tree"],
+        encoding="utf-8",
+    )
+    if not probe["ok"]:
+        combined = (probe.get("stderr", "") + probe.get("error", "")).lower()
+        if "not a git repository" in combined:
+            return _make_file_discard_hunk_empty_envelope(
+                file=file, umo=umo, directory=directory, patch_sha=patch_sha,
+                reason=ReasonCode.NOT_A_GIT_REPO, elapsed_ms=_elapsed(),
+            )
+        if "未安装" in probe.get("error", ""):
+            return _make_file_discard_hunk_empty_envelope(
+                file=file, umo=umo, directory=directory, patch_sha=patch_sha,
+                reason=ReasonCode.GIT_UNAVAILABLE, elapsed_ms=_elapsed(),
+            )
+        return _make_file_discard_hunk_empty_envelope(
+            file=file, umo=umo, directory=directory, patch_sha=patch_sha,
+            reason=ReasonCode.GIT_ERROR,
+            stderr=probe.get("stderr", "") or probe.get("error", ""),
+            elapsed_ms=_elapsed(),
+        )
+
+    # Step 10: file 路径 4 步防御
+    target, path_err = _validate_repo_relative_file(file, Path(directory))
+    if path_err is not None:
+        logger.warning(
+            f"[file-discard-hunk] rejected file={file!r} "
+            f"(worktree={directory!r}): {path_err}"
+        )
+        return _make_file_discard_hunk_empty_envelope(
+            file=file, umo=umo, directory=directory, patch_sha=patch_sha,
+            reason=ReasonCode.PATH_UNSAFE, elapsed_ms=_elapsed(),
+        )
+    if not target.exists():
+        return _make_file_discard_hunk_empty_envelope(
+            file=file, umo=umo, directory=directory, patch_sha=patch_sha,
+            reason=ReasonCode.FILE_NOT_FOUND, elapsed_ms=_elapsed(),
+        )
+
+    # Step 11: patch 解析(纯 Python,前置 fail-fast)
+    patch_meta = _parse_patch_header(patch_text, expected_file=file)
+    if patch_meta.err is not None:
+        return _make_file_discard_hunk_empty_envelope(
+            file=file, umo=umo, directory=directory, patch_sha=patch_sha,
+            reason=patch_meta.err, elapsed_ms=_elapsed(),
+        )
+
+    # Step 12-15: deferred to Task 5
     return _make_file_discard_hunk_empty_envelope(
         file=file, umo=umo, directory=directory, patch_sha=patch_sha,
-        reason=ReasonCode.GIT_ERROR,  # 临时占位,Task 5 完成
-        stderr="handler incomplete (Tasks 4-5 pending)",
+        reason=ReasonCode.GIT_ERROR,
+        stderr="handler incomplete (Task 5 pending)",
         elapsed_ms=_elapsed(),
     )
