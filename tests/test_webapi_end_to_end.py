@@ -1,10 +1,10 @@
 """End-to-end smoke test for the spcode webapi surface.
 
-The Dashboard talks to AstrBot via the 6 ``/spcode/*`` HTTP endpoints
+The Dashboard talks to AstrBot via the 20 ``/spcode/*`` HTTP endpoints
 registered by :func:`tools.webapi.register_webapi_routes`.  This
 test exercises the route table and each handler in isolation:
 
-* All 6 handlers are present, callable, and accept the
+* All handlers are present, callable, and accept the
   ``plugin`` positional + keyword args documented in their
   signatures.
 * The ``_wrap`` adapter pulls the right values out of a fake
@@ -91,13 +91,14 @@ def test_git_show_handler_excluded_from_smoke() -> None:
     assert "handle_get_git_show" not in (set(HANDLERS.keys()) - _SKIP_FILE_BROWSER)
 
 
-def test_routes_table_has_nineteen_endpoints() -> None:
-    """The route table lists the 19 documented endpoints.
+def test_routes_table_has_twenty_endpoints() -> None:
+    """The route table lists the 20 documented endpoints.
 
-    9 GET + 10 POST = 19。
+    9 GET + 11 POST = 20。
     v2.14.x (2026-06-28) 新增 /spcode/codegraph-status。
     v2.15.0 (2026-07-02) 新增 /spcode/file-search。
     v2.15.0 (2026-07-02) 新增 /spcode/file-name-search。
+    v2.16.0 (2026-07-06) 新增 /spcode/file-discard-hunk。
     """
     routes = {entry[0] for entry in ROUTES}
     assert routes == {
@@ -113,6 +114,7 @@ def test_routes_table_has_nineteen_endpoints() -> None:
         "/spcode/git-commit",  # PR-5 (2026-06-24)
         "/spcode/file-browser",
         "/spcode/file-restore",
+        "/spcode/file-discard-hunk",  # v2.16.0 (2026-07-06)
         "/spcode/git-worktree-add",  # v2.14.0 (2026-06-26) PR-B
         "/spcode/git-worktree-remove",  # v2.14.0 (2026-06-26) PR-C
         "/spcode/git-worktree-lock",  # v2.14.0 (2026-06-26) PR-D
@@ -121,10 +123,10 @@ def test_routes_table_has_nineteen_endpoints() -> None:
         "/spcode/file-search",  # v2.15.0 (2026-07-02)
         "/spcode/file-name-search",  # v2.15.0 (2026-07-02)
     }
-    # Methods sanity: 9 GET + 10 POST
+    # Methods sanity: 9 GET + 11 POST
     methods = [m for entry in ROUTES for m in entry[1]]
     assert methods.count("GET") == 9
-    assert methods.count("POST") == 10
+    assert methods.count("POST") == 11
 
 
 # === _wrap adapter ====================================================
@@ -286,12 +288,12 @@ async def test_wrap_get_query_via_web_request(monkeypatch) -> None:
 # === register_webapi_routes ===========================================
 
 
-def test_register_webapi_routes_calls_context_nineteen_times() -> None:
+def test_register_webapi_routes_calls_context_twenty_times() -> None:
     """``register_webapi_routes`` must call ``register_web_api`` once per route."""
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    # 19 endpoints (v2.14.x: + codegraph-status, v2.15.0: + file-search + file-name-search)
-    assert plugin.context.register_web_api.call_count == 19
+    # 20 endpoints (v2.16.0: + file-discard-hunk)
+    assert plugin.context.register_web_api.call_count == 20
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -308,9 +310,9 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 19 routes.
+    # Should not raise; should attempt all 20 routes.
     register_webapi_routes(plugin)
-    assert call_count == 19
+    assert call_count == 20
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────
@@ -525,3 +527,42 @@ async def test_wrap_post_to_git_worktree_add_passes_body(
     sig = inspect.signature(real_handle)
     assert "plugin" in sig.parameters
     assert "body" in sig.parameters
+
+
+# ─── v2.16.0 (2026-07-06) file-discard-hunk ───────────────────────
+
+
+def test_handlers_dict_has_discard_hunk_entry() -> None:
+    """HANDLERS 表应包含 handle_post_file_discard_hunk(v2.16.0)。"""
+    assert "handle_post_file_discard_hunk" in HANDLERS
+
+
+@pytest.mark.asyncio
+async def test_wrap_injects_body_for_post(monkeypatch) -> None:
+    """POST 路径:_wrap 为声明 body 的 handler 注入 JSON body。"""
+    from astrbot.api import web
+    from tests.conftest import make_web_request_mock
+
+    captured: dict = {}
+
+    async def handler(plugin, *, body=None):  # type: ignore[no-untyped-def]
+        captured["body"] = body
+        return {"status": "ok"}
+
+    payload = {
+        "file": "src/app.py",
+        "patch_text": "diff --git a/src/app.py b/src/app.py\n",
+    }
+
+    async def _json(default=None):  # type: ignore[no-untyped-def]
+        return payload
+
+    mock_req = make_web_request_mock(query={})
+    mock_req.method = "POST"
+    mock_req.json = _json
+    monkeypatch.setattr(web, "request", mock_req)
+
+    view = _wrap(handler, plugin=None)
+    await view()
+
+    assert captured["body"] == payload

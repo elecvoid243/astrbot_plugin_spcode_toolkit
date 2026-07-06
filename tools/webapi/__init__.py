@@ -1,7 +1,7 @@
 # tools/webapi/__init__.py
 """Web API endpoint handlers, extracted from main.py.
 
-This package owns the 19 ``/spcode/*`` HTTP endpoints consumed by the
+This package owns the 20 ``/spcode/*`` HTTP endpoints consumed by the
 Dashboard / WebUI:
 
   * ``/spcode/project-status``  (GET)
@@ -12,6 +12,7 @@ Dashboard / WebUI:
   * ``/spcode/git-log``         (GET)   # v3.7
   * ``/spcode/file-browser``    (GET)
   * ``/spcode/file-restore``    (POST)
+  * ``/spcode/file-discard-hunk`` (POST) # v2.16.0 (2026-07-06)
   * ``/spcode/file-search``     (POST)  # v2.15.0 (2026-07-02)
   * ``/spcode/file-name-search`` (POST) # v2.15.0 (2026-07-02)
   * ``/spcode/git-stage``       (POST)  # v3.7
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
 from . import (
     codegraph_status,  # v2.14.x (2026-06-28)
     file_browser,
+    file_discard_hunk,  # v2.16.0 (2026-07-06)
     file_name_search,  # v2.15.0 (2026-07-02)
     file_restore,
     file_search,  # v2.15.0 (2026-07-02)
@@ -154,6 +156,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "恢复工作区中某一文件相对 index 的改动",
     ),
     (
+        "/spcode/file-discard-hunk",  # v2.16.0 (2026-07-06)
+        ["POST"],
+        file_discard_hunk.handle,
+        "按 hunk 丢弃工作区改动(unified diff 文本入参,git apply --reverse)",
+    ),
+    (
         "/spcode/git-worktree-add",  # v2.14.0 (2026-06-26)
         ["POST"],
         git_worktree_add.handle,
@@ -195,6 +203,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_get_git_log": git_log.handle,
     "handle_get_git_show": git_show.handle,  # v3.8 (2026-06-25)
     "handle_get_file_browser": file_browser.handle,
+    "handle_post_file_discard_hunk": file_discard_hunk.handle,
     "handle_post_file_search": file_search.handle,  # v2.15.0 (2026-07-02)
     "handle_post_file_name_search": file_name_search.handle,  # v2.15.0 (2026-07-02)
     "handle_post_file_restore": file_restore.handle,
@@ -288,7 +297,7 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
 
 def register_webapi_routes(plugin: SPCodeToolkit) -> None:
-    """Register all 19 ``/spcode/*`` routes against ``plugin.context``.
+    """Register all 20 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
     but never raised — a single broken endpoint should not block
@@ -313,6 +322,7 @@ __all__ = [
     "register_webapi_routes",
     "codegraph_status",  # v2.14.x (2026-06-28)
     "file_browser",
+    "file_discard_hunk",  # v2.16.0 (2026-07-06)
     "file_name_search",  # v2.15.0 (2026-07-02)
     "file_restore",
     "file_search",  # v2.15.0 (2026-07-02)
