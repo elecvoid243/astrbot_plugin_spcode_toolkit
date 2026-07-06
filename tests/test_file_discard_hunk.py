@@ -527,3 +527,240 @@ class TestHandlerFileSafety:
         post_body({"file": "main.py", "patch_text": patch})
         result = await file_discard_hunk.handle(mock_plugin_with_repo)
         assert result["data"]["reason"] == "multi_file_patch"
+
+
+# ── TestHandlerGitOps ────────────────────────────────────────────────
+
+
+class TestHandlerGitOps:
+    """Handler steps 12-15 — scope auto-detect + git apply --check + --reverse."""
+
+    @pytest.fixture
+    def git_repo_with_change(self, tmp_path) -> Path:
+        """Git repo with main.py tracked + modified (unstaged)."""
+        import os
+        import subprocess
+
+        env = os.environ.copy()
+        env.update({
+            "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e",
+            "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e",
+        })
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "main.py").write_text("original line\n", encoding="utf-8")
+        for cmd in (
+            ["git", "-C", str(repo), "init"],
+            ["git", "-C", str(repo), "config", "user.email", "t@e"],
+            ["git", "-C", str(repo), "config", "user.name", "T"],
+            ["git", "-C", str(repo), "add", "main.py"],
+            ["git", "-C", str(repo), "commit", "-m", "init"],
+        ):
+            subprocess.run(cmd, check=True, capture_output=True, env=env)
+        # Modify the file
+        (repo / "main.py").write_text(
+            "original line\nadded line A\nadded line B\n", encoding="utf-8"
+        )
+        return repo
+
+    @pytest.fixture
+    def plugin(self, git_repo_with_change) -> Any:
+        from tests.conftest import _make_plugin
+        from tools.project import state as _proj_state
+
+        plugin = _make_plugin()
+        # NOTE: 计划示例代码使用 ``state.set()``(语法有误,Task 3 已修),
+        # 改用 ``put(umo, info)`` canonical API。
+        _proj_state.put(
+            "u",
+            {"directory": str(git_repo_with_change), "loaded_at": 0},
+        )
+        return plugin
+
+    @pytest.fixture
+    def post_body(self, monkeypatch: pytest.MonkeyPatch):
+        from astrbot.api import web
+
+        def _post(body: dict) -> None:
+            class _Req:
+                @staticmethod
+                async def json(default=None):
+                    return body
+            monkeypatch.setattr(web, "request", _Req)
+
+        return _post
+
+    @pytest.mark.asyncio
+    async def test_reverts_unstaged_hunk(
+        self, plugin, post_body, git_repo_with_change
+    ) -> None:
+        """修改文件后,用 patch 丢弃新增的 1 个 hunk → 文件回到原始。"""
+        forward_patch = (
+            "diff --git a/main.py b/main.py\n"
+            "--- a/main.py\n"
+            "+++ b/main.py\n"
+            "@@ -1,1 +1,3 @@\n"
+            " original line\n"
+            "+added line A\n"
+            "+added line B\n"
+        )
+        post_body({"file": "main.py", "patch_text": forward_patch})
+        result = await file_discard_hunk.handle(plugin)
+        assert result["data"]["discarded"] is True, result
+        assert result["data"]["scope"] == "unstaged"
+        assert result["data"]["hunks_reverted"] == 1
+        assert result["data"]["patch_sha256"]  # non-empty
+        # 文件应回到原始
+        assert (git_repo_with_change / "main.py").read_text(
+            encoding="utf-8"
+        ) == "original line\n"
+
+    @pytest.mark.asyncio
+    async def test_reverts_staged_hunk(
+        self, plugin, post_body, git_repo_with_change
+    ) -> None:
+        """git add 后,patch 应用用 --cached。"""
+        import subprocess
+        # Stage the modification
+        subprocess.run(
+            ["git", "-C", str(git_repo_with_change), "add", "main.py"],
+            check=True, capture_output=True,
+        )
+        # Same forward patch
+        forward_patch = (
+            "diff --git a/main.py b/main.py\n"
+            "--- a/main.py\n"
+            "+++ b/main.py\n"
+            "@@ -1,1 +1,3 @@\n"
+            " original line\n"
+            "+added line A\n"
+            "+added line B\n"
+        )
+        post_body({"file": "main.py", "patch_text": forward_patch})
+        result = await file_discard_hunk.handle(plugin)
+        assert result["data"]["discarded"] is True, result
+        assert result["data"]["scope"] == "staged"
+        assert result["data"]["hunks_reverted"] == 1
+
+    @pytest.mark.asyncio
+    async def test_not_modified(
+        self, plugin, post_body, git_repo_with_change
+    ) -> None:
+        """文件无改动 → not_modified。"""
+        # Reset file to clean state
+        import subprocess
+        subprocess.run(
+            ["git", "-C", str(git_repo_with_change), "checkout", "--", "main.py"],
+            check=True, capture_output=True,
+        )
+        post_body({
+            "file": "main.py",
+            "patch_text": (
+                "diff --git a/main.py b/main.py\n"
+                "@@ -1 +1 @@\n-a\n+A\n"
+            ),
+        })
+        result = await file_discard_hunk.handle(plugin)
+        assert result["data"]["reason"] == "not_modified"
+
+    @pytest.mark.asyncio
+    async def test_untracked_file(
+        self, plugin, post_body, git_repo_with_change
+    ) -> None:
+        """新 untracked 文件 → untracked_file。"""
+        (git_repo_with_change / "new.txt").write_text("hello")
+        post_body({
+            "file": "new.txt",
+            "patch_text": (
+                "diff --git a/new.txt b/new.txt\n"
+                "@@ -1 +1 @@\n-hello\n+bye\n"
+            ),
+        })
+        result = await file_discard_hunk.handle(plugin)
+        assert result["data"]["reason"] == "untracked_file"
+
+    @pytest.mark.asyncio
+    async def test_patch_check_failed_context_mismatch(
+        self, plugin, post_body, git_repo_with_change
+    ) -> None:
+        """patch hunk 上下文与工作区不匹配 → patch_check_failed。"""
+        # Patch claims to change "wrong context" that doesn't exist in file
+        bad_patch = (
+            "diff --git a/main.py b/main.py\n"
+            "--- a/main.py\n"
+            "+++ b/main.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-this line does not exist in the file\n"
+            "+something else\n"
+        )
+        post_body({"file": "main.py", "patch_text": bad_patch})
+        result = await file_discard_hunk.handle(plugin)
+        assert result["data"]["reason"] == "patch_check_failed"
+        assert result["data"]["stderr"]  # non-empty
+
+    @pytest.mark.asyncio
+    async def test_patch_check_failed_whitespace(
+        self, plugin, post_body, git_repo_with_change
+    ) -> None:
+        """patch 含 trailing whitespace → patch_check_failed(--whitespace=error)。"""
+        # Modify the file with trailing whitespace first
+        (git_repo_with_change / "main.py").write_text(
+            "original line\nnew line   \n", encoding="utf-8"  # trailing spaces
+        )
+        # Patch that would add another trailing-whitespace line
+        bad_patch = (
+            "diff --git a/main.py b/main.py\n"
+            "--- a/main.py\n"
+            "+++ b/main.py\n"
+            "@@ -1,2 +1,3 @@\n"
+            " original line\n"
+            "-new line   \n"
+            "+new line   \n"
+            "+another line   \n"
+        )
+        post_body({"file": "main.py", "patch_text": bad_patch})
+        result = await file_discard_hunk.handle(plugin)
+        # git 在 --whitespace=error 下会拒绝 trailing whitespace
+        assert result["data"]["reason"] in (
+            "patch_check_failed", "patch_apply_failed"
+        ), result
+
+    @pytest.mark.asyncio
+    async def test_patch_apply_failed_concurrent(
+        self, plugin, post_body, git_repo_with_change, monkeypatch
+    ) -> None:
+        """check 通过后 apply 失败(模拟并发修改)→ patch_apply_failed。"""
+        import tools.webapi.file_discard_hunk as fdh
+
+        original_run = fdh._run_git_async
+        call_count = {"n": 0}
+
+        async def mock_run(cmd_args, **kwargs):
+            call_count["n"] += 1
+            res = await original_run(cmd_args, **kwargs)
+            # 第一次调用是 --check(在 4 步里;但 step 9 是 probe)
+            # 找到 apply 步骤的 --check 调用,放行;再找到 apply 调用,改成失败
+            # 简化:让所有非 probe 的 git 调用都成功,只让 apply 失败
+            if "apply" in cmd_args and "--check" not in cmd_args:
+                return {
+                    "ok": False,
+                    "stderr": "simulated concurrent modification",
+                    "code": 1,
+                    "stdout": "",
+                }
+            return res
+
+        monkeypatch.setattr(fdh, "_run_git_async", mock_run)
+
+        forward_patch = (
+            "diff --git a/main.py b/main.py\n"
+            "--- a/main.py\n"
+            "+++ b/main.py\n"
+            "@@ -1,1 +1,3 @@\n"
+            " original line\n"
+            "+added line A\n"
+            "+added line B\n"
+        )
+        post_body({"file": "main.py", "patch_text": forward_patch})
+        result = await file_discard_hunk.handle(plugin)
+        assert result["data"]["reason"] == "patch_apply_failed"

@@ -186,6 +186,29 @@ def _make_file_discard_hunk_success_envelope(
 # ── Handler ──
 
 
+def _classify_apply_failure(stderr: str) -> str:
+    """把 `git apply --check --reverse` 的 stderr 关键串映射到 reason code。
+
+    优先级:
+      1. 格式错("corrupt patch" / "unable to read") → patch_malformed
+      2. context / whitespace 错 → patch_check_failed
+      3. 兜底 → git_error
+    """
+    lower = stderr.lower()
+    if "corrupt patch" in lower or "unable to read" in lower:
+        return ReasonCode.PATCH_MALFORMED
+    if (
+        "patch does not apply" in lower
+        or "context does not match" in lower
+        or "whitespace" in lower
+        or "trailing whitespace" in lower
+        or "indent" in lower
+        or "no such line" in lower
+    ):
+        return ReasonCode.PATCH_CHECK_FAILED
+    return ReasonCode.GIT_ERROR
+
+
 async def handle(
     plugin: "SPCodeToolkit",
     **kwargs: Any,
@@ -357,10 +380,86 @@ async def handle(
             reason=patch_meta.err, elapsed_ms=_elapsed(),
         )
 
-    # Step 12-15: deferred to Task 5
-    return _make_file_discard_hunk_empty_envelope(
-        file=file, umo=umo, directory=directory, patch_sha=patch_sha,
-        reason=ReasonCode.GIT_ERROR,
-        stderr="handler incomplete (Task 5 pending)",
+    # Step 12: scope auto-detect(porcelain X/Y 列)
+    status = await _run_git_async(
+        [git_bin, "-C", directory, "status", "--porcelain", "--", file],
+        encoding="utf-8",
+    )
+    if not status["ok"]:
+        return _make_file_discard_hunk_empty_envelope(
+            file=file, umo=umo, directory=directory, scope="unstaged",
+            patch_sha=patch_sha,
+            reason=ReasonCode.GIT_ERROR,
+            stderr=status.get("stderr", ""),
+            elapsed_ms=_elapsed(),
+        )
+    porcelain = status["stdout"]
+    if not porcelain.strip():
+        return _make_file_discard_hunk_empty_envelope(
+            file=file, umo=umo, directory=directory, scope="unstaged",
+            patch_sha=patch_sha,
+            reason=ReasonCode.NOT_MODIFIED, elapsed_ms=_elapsed(),
+        )
+    first_line = porcelain.splitlines()[0]
+    x_status = first_line[0] if len(first_line) >= 1 else " "
+    y_status = first_line[1] if len(first_line) >= 2 else " "
+    if x_status == "?" and y_status == "?":
+        return _make_file_discard_hunk_empty_envelope(
+            file=file, umo=umo, directory=directory, scope="unstaged",
+            patch_sha=patch_sha,
+            reason=ReasonCode.UNTRACKED_FILE, stderr=porcelain,
+            elapsed_ms=_elapsed(),
+        )
+    is_intent_to_add = x_status == " " and y_status == "A"
+    is_truly_staged = x_status in X_TRULY_STAGED
+    # intent-to-add 和 truly staged 都走 --cached
+    if is_intent_to_add or is_truly_staged:
+        scope = "staged"
+        apply_base = ["apply", "--reverse", "--cached",
+                      "--whitespace=error", "--no-unsafe-paths"]
+    else:
+        scope = "unstaged"
+        apply_base = ["apply", "--reverse",
+                      "--whitespace=error", "--no-unsafe-paths"]
+
+    # Step 13: git apply --check --reverse(干跑)
+    check_args = [git_bin, "-C", directory, "-c", "color.ui=never"] + apply_base
+    # 注入 --check
+    check_args = check_args[:check_args.index("apply") + 1] + ["--check"] + check_args[check_args.index("apply") + 1:]
+    check = await _run_git_async(
+        check_args, input_text=patch_text, encoding="utf-8",
+    )
+    if not check["ok"]:
+        stderr = check.get("stderr", "")
+        reason = _classify_apply_failure(stderr)
+        return _make_file_discard_hunk_empty_envelope(
+            file=file, umo=umo, directory=directory, scope=scope,
+            patch_sha=patch_sha, reason=reason, stderr=stderr,
+            elapsed_ms=_elapsed(),
+        )
+
+    # Step 14: git apply --reverse(实际应用)
+    apply_args = [git_bin, "-C", directory, "-c", "color.ui=never"] + apply_base
+    apply = await _run_git_async(
+        apply_args, input_text=patch_text, encoding="utf-8",
+    )
+    if not apply["ok"]:
+        return _make_file_discard_hunk_empty_envelope(
+            file=file, umo=umo, directory=directory, scope=scope,
+            patch_sha=patch_sha,
+            reason=ReasonCode.PATCH_APPLY_FAILED,
+            stderr=apply.get("stderr", ""),
+            elapsed_ms=_elapsed(),
+        )
+
+    # Step 15: 成功:审计 + success envelope
+    logger.info(
+        f"[file-discard-hunk] reverted: file={file!r} scope={scope} "
+        f"hunks={patch_meta.hunk_count} patch_sha={patch_sha} "
+        f"worktree={directory!r} umo={umo!r} elapsed_ms={_elapsed()}"
+    )
+    return _make_file_discard_hunk_success_envelope(
+        umo=umo, file=file, directory=directory, scope=scope,
+        hunks=patch_meta.hunk_count, patch_sha=patch_sha,
         elapsed_ms=_elapsed(),
     )
