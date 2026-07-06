@@ -101,6 +101,24 @@ class CodegraphManager:
             logger.warning(f"codegraph MCP 关闭失败(可能 zombie 进程): {e}")
             # 继续尝试启动新实例
 
+        # ── AstrBot v4.26.x (commit 3ce66576f / PR #9070) workaround ─────
+        # `func_tool_manager.connect_and_lifecycle` 的 finally 用了
+        # `asyncio.shield(self._terminate_mcp_client(name))`,这把 cleanup
+        # 隔离在外层 cancel 之外,导致 disable 早退时旧 runtime 仍在
+        # `_mcp_server_runtime` 里(等后台的 _terminate_mcp_client 跑完才
+        # pop)。此时立刻 enable_mcp_server 会撞到 idempotent 检查里的
+        # `ignoring this startup request` 短路,新 MCP 起不来。
+        # 这里轮询等待旧 runtime 真正被 pop,最多 3s。
+        for _ in range(30):
+            if "codegraph" not in mgr.mcp_server_runtime:
+                break
+            await asyncio.sleep(0.1)
+        else:
+            logger.warning(
+                "codegraph MCP 旧 runtime 在 3s 内未释放,后续 enable 仍可能"
+                " 被 `ignoring this startup request` 短路(AstrBot #9070 副作用)"
+            )
+
         try:
             ensure_stdio_allowlist()
             cfg = build_mcp_cfg(self._plugin)
