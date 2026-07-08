@@ -287,7 +287,7 @@ async def handle(
         )
 
     # Step 6: umo 解析 + 最近载入回退
-    from tools.project import state as _proj_state
+    from ..project import state as _proj_state
 
     if umo:
         info = plugin.get_loaded_project(umo)
