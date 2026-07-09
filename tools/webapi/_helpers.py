@@ -388,8 +388,8 @@ def _validate_repo_relative_file(
     Spec: docs/superpowers/specs/2026-06-23-git-stage-untage-commit-log-design.md §1.4
 
     4 steps:
-      1. Reject absolute paths (POSIX "/" or Windows "\\") and ".." segments;
-         force POSIX-style forward slashes only.
+      1. Normalize Windows ``\\`` separators to POSIX ``/``; reject
+         absolute paths and ".." segments.
       2. Resolve relative to ``repo_root`` and ensure target stays inside.
       3. Reject paths containing a ``.git`` component.
       4. Reject symlinks whose realpath escapes ``repo_root``.
@@ -398,16 +398,35 @@ def _validate_repo_relative_file(
         (resolved_path, None) on success; (None, "path_unsafe") on rejection.
 
     v3.x: extracted from tools/webapi/file_restore._validate_restore_file in PR-1.
+    2026-07-09: Step 1 now NORMALIZES ``\\`` → ``/`` instead of rejecting
+        backslash-bearing paths. Rationale: `str(Path(...))` on Windows
+        yields backslash paths (e.g. ``dashboard\\src\\x.vue``), and
+        file-browser callers legitimately pass those through. Git itself
+        accepts either separator, so the previous reject-everything rule
+        broke file-level history (and any other endpoint) on Windows for
+        zero security gain: steps 2-4 still bound the path to ``repo_root``
+        and reject ``..`` traversal after the normalization. See the
+        ``test_normalizes_backslash_to_forward_slash`` regression test.
     """
     if not file_path:
         return None, "path_unsafe"
 
     # Step 1: format
-    if file_path.startswith("/") or file_path.startswith("\\"):
+    #
+    # On Windows, ``str(Path("a/b"))`` returns ``"a\\b"`` (or vice-versa).
+    # We accept either separator by normalizing, then run the rest of
+    # the defense with POSIX-style paths. This keeps callers
+    # cross-platform without weakening any of the security steps:
+    #   - Leading ``/`` or ``\\`` is still rejected (catches ``/etc/passwd``,
+    #     UNC ``\\\\server\\share``, Windows drive-rooted ``C:\\...`` that
+    #     survived the slash normalization).
+    #   - ``..`` segments are still rejected via the split-based check.
+    #   - Steps 2-4 are path-system-agnostic and bind the resolved target
+    #     to ``repo_root`` regardless of the input separator style.
+    file_path = file_path.replace("\\", "/")
+    if file_path.startswith("/"):
         return None, "path_unsafe"
-    if "\\" in file_path:  # 强制 POSIX 风格
-        return None, "path_unsafe"
-    if ".." in file_path.replace("\\", "/").split("/"):
+    if ".." in file_path.split("/"):
         return None, "path_unsafe"
 
     # Step 2: resolve into repo_root
