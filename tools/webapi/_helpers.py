@@ -216,6 +216,11 @@ class ReasonCode:
     NOT_MODIFIED = "not_modified"  # Task 5 (2026-07-06): porcelain 为空(已落盘无改动)
     UNTRACKED_FILE = "untracked_file"  # Task 5 (2026-07-06): porcelain X/Y = ??
 
+    # ── /spcode/git-file + /spcode/docs 专用(spec B,2026-07-11) ──
+    FILE_TOO_LARGE = "file_too_large"  # git-file: blob 超过 1 MB
+    FILE_MISSING_AT_REF = "file_missing_at_ref"  # git-file: ref 解析成功但 path 不在 ref 下
+    FILE_EXISTS = "file_exists"  # PATCH /spcode/docs: new_path 已存在
+
 
 # ── git status --porcelain X/Y 列判定(共享常量)────────────────────
 # 从 tools/webapi/file_restore.py 提取(2026-07-06)。两个端点共用:
