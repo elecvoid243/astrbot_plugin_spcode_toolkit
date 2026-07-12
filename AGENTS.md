@@ -321,6 +321,10 @@ astrbot_plugin_spcode_toolkit/
 | `/spcode/git-worktree-lock` | POST | 锁定 git worktree(可选 `--reason`),main 允许但 git 自身拒绝 | body: `{path, reason?}` |
 | `/spcode/git-worktree-unlock` | POST | 解锁 git worktree,main 允许但 git 自身拒绝 | body: `{path}` |
 | `/spcode/file-discard-hunk` | POST | 按 hunk 丢弃工作区改动（unified diff 文本入参，`git apply --reverse`） | body: `{file, patch_text, umo?, worktree?}` |
+| `/spcode/git-file` | GET | 给定 ref 下某文件的完整内容(blob) | `umo?`, `worktree?`, `ref`(默认 `HEAD`), `path` |
+| `/spcode/docs` | POST | 创建 / 覆盖 docs 文件(upsert 到工作区) | body: `{umo?, worktree?, path, content}` |
+| `/spcode/docs` | PATCH | 重命名 docs 文件(纯文件系统 mv) | body: `{umo?, worktree?, path, new_path}` |
+| `/spcode/docs` | DELETE | 从工作区删除 docs 文件(unlink) | body: `{umo?, worktree?, path}` |
 
 **v3.7 (2026-06-24) 新增 4 个端点**:`git-log`(读)、`git-stage`/`git-unstage`/
 `git-commit`(写,合称 git workflow)。所有写端点共享 5 步前置校验 +
