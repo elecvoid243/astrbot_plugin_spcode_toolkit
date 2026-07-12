@@ -1,7 +1,7 @@
 # tools/webapi/__init__.py
 """Web API endpoint handlers, extracted from main.py.
 
-This package owns the 20 ``/spcode/*`` HTTP endpoints consumed by the
+This package owns the 24 ``/spcode/*`` HTTP endpoints consumed by the
 Dashboard / WebUI:
 
   * ``/spcode/project-status``  (GET)
@@ -25,6 +25,11 @@ Dashboard / WebUI:
   * ``/spcode/git-worktree-unlock`` (POST) # v2.14.0 (2026-06-26) — PR-D UNLOCK endpoint
   * ``/spcode/codegraph-status``    (GET)  # v2.14.x (2026-06-28)
 
+  * ``/spcode/git-file``         (GET)   # spec B (2026-07-11)
+  * ``/spcode/docs``             (POST)  # spec B (2026-07-11) — create/upsert
+  * ``/spcode/docs``             (PATCH) # spec B (2026-07-11) — rename
+  * ``/spcode/docs``             (DELETE) # spec B (2026-07-11) — delete
+
 Each endpoint lives in its own module (e.g. ``project_status.handle``).
 ``register_webapi_routes`` is the single entry-point main.py calls
 during ``initialize()``; it iterates :data:`ROUTES` and adapts every
@@ -46,6 +51,7 @@ if TYPE_CHECKING:
 
 from . import (
     codegraph_status,  # v2.14.x (2026-06-28)
+    docs_crud,  # spec B (2026-07-11): POST/PATCH/DELETE /spcode/docs
     file_browser,
     file_discard_hunk,  # v2.16.0 (2026-07-06)
     file_name_search,  # v2.15.0 (2026-07-02)
@@ -53,6 +59,7 @@ from . import (
     file_search,  # v2.15.0 (2026-07-02)
     git_commit,
     git_diff,
+    git_file,  # spec B (2026-07-11): GET /spcode/git-file
     git_log,
     git_show,
     git_stage,
@@ -191,6 +198,30 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         codegraph_status.handle,
         "获取 codegraph MCP 运行状态(供 dashboard 显示)",
     ),
+    (
+        "/spcode/git-file",  # spec B (2026-07-11)
+        ["GET"],
+        git_file.handle,
+        "获取 ref 下某文件的完整内容(blob),供 dashboard 文档管理子页面",
+    ),
+    (
+        "/spcode/docs",  # spec B (2026-07-11) — create / upsert
+        ["POST"],
+        docs_crud.handle_post_docs,
+        "创建或覆盖 docs 文件(写到工作区,后续走 Git Diff 提交)",
+    ),
+    (
+        "/spcode/docs",  # spec B (2026-07-11) — rename
+        ["PATCH"],
+        docs_crud.handle_patch_docs,
+        "重命名 docs 文件(纯文件系统 mv,git 后续识别 rename)",
+    ),
+    (
+        "/spcode/docs",  # spec B (2026-07-11) — delete
+        ["DELETE"],
+        docs_crud.handle_delete_docs,
+        "从工作区删除 docs 文件(unlink,不调 git rm)",
+    ),
 ]
 
 # 旧方法名 -> 新模块级 handler (for back-compat / introspection)
@@ -215,6 +246,10 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_worktree_remove": git_worktree_remove.handle,  # v2.14.0 (2026-06-26)
     "handle_post_git_worktree_unlock": git_worktree_unlock.handle,  # v2.14.0 (2026-06-26)
     "handle_get_codegraph_status": codegraph_status.handle,  # v2.14.x (2026-06-28)
+    "handle_get_git_file": git_file.handle,  # spec B (2026-07-11)
+    "handle_post_docs": docs_crud.handle_post_docs,  # spec B (2026-07-11)
+    "handle_patch_docs": docs_crud.handle_patch_docs,  # spec B (2026-07-11)
+    "handle_delete_docs": docs_crud.handle_delete_docs,  # spec B (2026-07-11)
 }
 
 
@@ -297,7 +332,7 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
 
 def register_webapi_routes(plugin: SPCodeToolkit) -> None:
-    """Register all 20 ``/spcode/*`` routes against ``plugin.context``.
+    """Register all 24 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
     but never raised — a single broken endpoint should not block
@@ -321,12 +356,14 @@ __all__ = [
     "_wrap",
     "register_webapi_routes",
     "codegraph_status",  # v2.14.x (2026-06-28)
+    "docs_crud",  # spec B (2026-07-11)
     "file_browser",
     "file_discard_hunk",  # v2.16.0 (2026-07-06)
     "file_name_search",  # v2.15.0 (2026-07-02)
     "file_restore",
     "file_search",  # v2.15.0 (2026-07-02)
     "git_diff",
+    "git_file",  # spec B (2026-07-11)
     "git_log",
     "git_show",
     "git_stage",
