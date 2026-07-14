@@ -145,25 +145,34 @@ astrbot_plugin_spcode_toolkit/
     │   ├── paths.py              # 路径与会话工作目录
     │   ├── session_models.py     # 数据模型(Session 等)
     │   └── tools.py              # 5 个工具入口(start/send/read/stop/list)
-    └── webapi/                   # v3.6+ Dashboard HTTP 端点(自 main.py 拆出)
-        ├── __init__.py           #   ROUTES 路由表 + _wrap() 适配层 + register_webapi_routes()
+    └── webapi/                   # v3.6+ Dashboard HTTP 端点(自 main.py 拆出;当前 24 条路由)
+        ├── __init__.py           #   ROUTES 路由表 + HANDLERS 别名 + _wrap() 适配层 + register_webapi_routes()
         ├── _helpers.py           #   [内部] _run_git_async / _JSONResponseCompat /
         │                         #            ReasonCode / _git_endpoint_preflight /
-        │                         #            _validate_repo_relative_file / _make_envelope
-        ├── project_status.py     #   GET  /spcode/project-status
-        ├── plan_mode.py          #   GET  /spcode/plan-mode
-        ├── git_worktrees.py      #   GET  /spcode/git-worktrees
-        ├── git_diff.py           #   GET  /spcode/git-diff
-        ├── git_log.py            #   GET  /spcode/git-log              (v3.7+)
-        ├── git_stage.py          #   POST /spcode/git-stage            (v3.7+)
-        ├── git_unstage.py        #   POST /spcode/git-unstage          (v3.7+)
-        ├── git_commit.py         #   POST /spcode/git-commit           (v3.7+)
-        ├── file_browser.py       #   GET  /spcode/file-browser
-        ├── file_restore.py       #   POST /spcode/file-restore
-        ├── git_worktree_add.py   #   POST /spcode/git-worktree-add     (v2.14.0 PR-B)
-        ├── git_worktree_remove.py #  POST /spcode/git-worktree-remove   (v2.14.0 PR-C)
-        ├── git_worktree_lock.py   #  POST /spcode/git-worktree-lock     (v2.14.0 PR-D)
-        └── git_worktree_unlock.py #  POST /spcode/git-worktree-unlock   (v2.14.0 PR-D)
+        │                         #            _validate_repo_relative_file / _make_envelope /
+        │                         #            _compute_git_etag / _compute_porcelain_diffs
+        ├── project_status.py     #   GET    /spcode/project-status
+        ├── plan_mode.py          #   GET    /spcode/plan-mode
+        ├── git_worktrees.py      #   GET    /spcode/git-worktrees
+        ├── git_diff.py           #   GET    /spcode/git-diff
+        ├── git_status.py         #   GET    /spcode/git-status          (v2.13, 2026-06-24)
+        ├── git_log.py            #   GET    /spcode/git-log             (v3.7)
+        ├── git_show.py           #   GET    /spcode/git-show            (v3.8, 2026-06-25)
+        ├── git_file.py           #   GET    /spcode/git-file            (spec B, 2026-07-11)
+        ├── codegraph_status.py   #   GET    /spcode/codegraph-status    (v2.14.x, 2026-06-28)
+        ├── file_browser.py       #   GET    /spcode/file-browser
+        ├── git_stage.py          #   POST   /spcode/git-stage           (v3.7)
+        ├── git_unstage.py        #   POST   /spcode/git-unstage         (v3.7)
+        ├── git_commit.py         #   POST   /spcode/git-commit          (v3.7)
+        ├── file_restore.py       #   POST   /spcode/file-restore
+        ├── file_discard_hunk.py  #   POST   /spcode/file-discard-hunk   (v2.16.0, 2026-07-06)
+        ├── file_search.py        #   POST   /spcode/file-search         (v2.15.0, 2026-07-02)
+        ├── file_name_search.py   #   POST   /spcode/file-name-search    (v2.15.0, 2026-07-02)
+        ├── git_worktree_add.py   #   POST   /spcode/git-worktree-add    (v2.14.0 PR-B)
+        ├── git_worktree_remove.py #  POST   /spcode/git-worktree-remove  (v2.14.0 PR-C)
+        ├── git_worktree_lock.py   #  POST   /spcode/git-worktree-lock    (v2.14.0 PR-D)
+        ├── git_worktree_unlock.py #  POST   /spcode/git-worktree-unlock  (v2.14.0 PR-D)
+        └── docs_crud.py          #   POST/PATCH/DELETE /spcode/docs      (spec B, 2026-07-11)
 ```
 
 ### 架构分层
@@ -181,12 +190,16 @@ astrbot_plugin_spcode_toolkit/
    - **无下划线前缀** 模块(`xxx.py`):直接注册为 AstrBot 工具
    - **复合工具子目录**(如 `inta_shell/`):内部按职责再拆分为多个文件
 
-3. **Web API 层** `tools/webapi/`(v3.6+ 自 main.py 拆出,v3.7+ 增至 10 端点)
+3. **Web API 层** `tools/webapi/`(v3.6+ 自 main.py 拆出;当前 24 条路由记录)
    - 每个端点一个文件,handler 命名固定为 `async def handle(plugin, ...) -> dict`
-   - `__init__.py` 拥有 `ROUTES` 路由表 + `_wrap()` 适配器 + `register_webapi_routes()`
-   - `main.py.initialize()` 调用一次 `register_webapi_routes(self)` 注册全部 10 个端点
+     (`docs_crud.py` 例外:一个文件承载 `handle_post_docs` / `handle_patch_docs` /
+     `handle_delete_docs` 三个方法,复用同一 `/spcode/docs` 路径)
+   - `__init__.py` 拥有 `ROUTES` 路由表 + `HANDLERS` 别名表 + `_wrap()` 适配器 +
+     `register_webapi_routes()`
+   - `main.py.initialize()` 调用一次 `register_webapi_routes(self)` 注册全部 24 条路由
    - `_wrap()` 通过 `inspect.signature(handler)` 自动注入 `umo` / `worktree` /
-     `scope` / `path` / `if_none_match` / `body` 形参(handler 必须显式声明才注入)
+     `scope` / `path` / `if_none_match` / `body` 形参(handler 必须显式声明才注入;
+     GET 从 query/header 取,POST/PATCH/DELETE 从 JSON body 取)
    - **共享基础设施**(`tools/webapi/_helpers.py`):
      - `ReasonCode` — 集中所有 reason 码字面量(读/写端点统一引用)
      - `_make_envelope(**fields)` — 统一 envelope 工厂(success/reason/data/elapsed_ms)
@@ -195,6 +208,8 @@ astrbot_plugin_spcode_toolkit/
      - `_validate_repo_relative_file(path, repo_root)` — 4 步路径防御
      - `_run_git_async(..., input_text=None, env=None)` — 异步子进程(支持 stdin / env 覆盖)
      - `_JSONResponseCompat` — 同时是 Response + dict-like,兼容 framework + 测试
+     - `_compute_git_etag` / `_compute_porcelain_diffs` — 只读端点弱 ETag(3 路 porcelain
+       探测,解决 staleness),供 git-diff / git-status / git-log / git-show 共享
    - **新增 webapi 端点**流程:`tools/webapi/<name>.py` 写 `handle()` →
      在 `ROUTES` 添加 `(route, methods, handler, desc)` → 在 `HANDLERS` 添加别名 →
      `tests/test_webapi_end_to_end.py` 更新 routes/handlers 计数断言 →
@@ -204,7 +219,7 @@ astrbot_plugin_spcode_toolkit/
    - 与 `tools/` 模块一一对应,命名 `test_<模块名>.py`
    - `conftest.py` 提供共享 fixtures(workspace、临时目录等)
    - `tests/fixtures/` 存放静态样本
-   - `tests/test_webapi_end_to_end.py` 跨端点烟囱测试(10 路由表 + `_wrap` 注入 +
+   - `tests/test_webapi_end_to_end.py` 跨端点烟囱测试(24 条路由表 + `_wrap` 注入 +
      `register_webapi_routes` 注册流程 + handler smoke)
 
 5. **数据层** `data/`
@@ -302,29 +317,38 @@ astrbot_plugin_spcode_toolkit/
 
 ## Web API 端点(供 Dashboard 消费)
 
-`main.py` 暴露的 Web 路由(注册在 `_register_routes` 中,挂载前缀 `/spcode`):
+Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()`
+中注册,挂载前缀 `/spcode`。当前共 **24 条路由记录**(`/spcode/docs` 一路径复用
+POST/PATCH/DELETE 三方法):
 
 | 端点 | 方法 | 用途 | 关键参数 |
 |------|------|------|---------|
 | `/spcode/project-status` | GET | 当前加载项目状态 | `umo?` |
-| `/spcode/plan-mode` | GET | 当前 plan-mode 状态 | `umo?` |
-| `/spcode/git-diff` | GET | 工作区 diff | `umo`, `worktree?` |
-| `/spcode/git-worktrees` | GET | 列出 worktree | `umo` |
-| `/spcode/git-log` | GET | git 历史(8 字段标准粒度) | `umo`, `n?`, `ref?`, `path?`, `author?`, `since?`, `until?` |
+| `/spcode/plan-mode` | GET | 当前 plan-mode 状态(严格 per-session,不回退) | `umo?` |
+| `/spcode/git-worktrees` | GET | 列出 worktree | `umo?` |
+| `/spcode/git-diff` | GET | 工作区 diff(ETag/304) | `umo?`, `worktree?` |
+| `/spcode/git-status` | GET | 工作区状态(branch/upstream/staged/unstaged/untracked,ETag/304) | `umo?`, `worktree?` |
+| `/spcode/git-log` | GET | git 历史(8 字段标准粒度,ETag/304) | `umo?`, `worktree?`, `n?`, `ref?`, `path?`, `author?`, `since?`, `until?` |
+| `/spcode/git-show` | GET | 某 ref 修改的文件列表(name-status+numstat),可选单文件 patch | `umo?`, `worktree?`, `ref`(默认 `HEAD`), `max_files?`(≤2000), `path?` |
+| `/spcode/git-file` | GET | 给定 ref 下某文件的完整内容(blob,≤1MB,no-store) | `umo?`, `worktree?`, `ref`(默认 `HEAD`), `path` |
+| `/spcode/codegraph-status` | GET | codegraph MCP 运行状态 | — |
+| `/spcode/file-browser` | GET | 读取文件内容 / 列出单层目录 | `umo?`, `path`, `worktree?`, `if_none_match?` |
 | `/spcode/git-stage` | POST | git add(指定文件 or all,互斥) | body: `{files:[…]}` \| `{all:true}` |
 | `/spcode/git-unstage` | POST | git reset HEAD(指定文件 or all,互斥) | body: `{files:[…]}` \| `{all:true}` |
 | `/spcode/git-commit` | POST | git commit(严格最小,仅 message) | body: `{message:"…"}` |
-| `/spcode/file-browser` | GET | 读取文件内容 / 列出单层目录 | `umo`, `path`, `worktree?`, `if_none_match?` |
-| `/spcode/file-restore` | POST | 从快照恢复文件 | body: `{path:"…"}` |
+| `/spcode/file-restore` | POST | 恢复文件相对 index/HEAD 的改动(scope 自动检测) | body: `{file, umo?, worktree?}` |
+| `/spcode/file-discard-hunk` | POST | 按 hunk 丢弃工作区改动(unified diff 文本入参,`git apply --reverse`) | body: `{file, patch_text, umo?, worktree?}` |
+| `/spcode/file-search` | POST | 项目内按内容搜索(python_ripgrep) | body: `{pattern, case_sensitive?, regex?, max_results?, path_filter?, glob_filter?, umo?, worktree?}` |
+| `/spcode/file-name-search` | POST | 项目内按文件名(basename)匹配 | body: `{pattern, case_sensitive?, regex?, max_results?, path_filter?, glob_filter?, umo?, worktree?}` |
 | `/spcode/git-worktree-add` | POST | 新建 git worktree(CLI 旗标平铺) | body: `{path, branch?, create?, force?, detach?, base?}` |
 | `/spcode/git-worktree-remove` | POST | 删除 git worktree(硬禁 main,locked 拒,`force=true` 跳过 dirty) | body: `{path, force?}` |
 | `/spcode/git-worktree-lock` | POST | 锁定 git worktree(可选 `--reason`),main 允许但 git 自身拒绝 | body: `{path, reason?}` |
 | `/spcode/git-worktree-unlock` | POST | 解锁 git worktree,main 允许但 git 自身拒绝 | body: `{path}` |
-| `/spcode/file-discard-hunk` | POST | 按 hunk 丢弃工作区改动（unified diff 文本入参，`git apply --reverse`） | body: `{file, patch_text, umo?, worktree?}` |
-| `/spcode/git-file` | GET | 给定 ref 下某文件的完整内容(blob) | `umo?`, `worktree?`, `ref`(默认 `HEAD`), `path` |
 | `/spcode/docs` | POST | 创建 / 覆盖 docs 文件(upsert 到工作区) | body: `{umo?, worktree?, path, content}` |
 | `/spcode/docs` | PATCH | 重命名 docs 文件(纯文件系统 mv) | body: `{umo?, worktree?, path, new_path}` |
 | `/spcode/docs` | DELETE | 从工作区删除 docs 文件(unlink) | body: `{umo?, worktree?, path}` |
+
+> 完整的请求/返回字段与 ReasonCode 前端消费文档见 `docs/webapi_endpoints_report.md`。
 
 **v3.7 (2026-06-24) 新增 4 个端点**:`git-log`(读)、`git-stage`/`git-unstage`/
 `git-commit`(写,合称 git workflow)。所有写端点共享 5 步前置校验 +
@@ -342,6 +366,11 @@ astrbot_plugin_spcode_toolkit/
 | 业务结果 | `nothing_to_commit` / `nothing_staged` | 无 staged 改动 |
 | 业务结果 | `hook_rejected` / `pre_commit_hook_failed` | pre-commit / commit-msg 失败 |
 | 业务结果 | `identity_not_set` | user.email/name 未设 |
+| 参数校验 | `invalid_param` | ref / max_files / content 等通用参数非法 |
+| ref/仓库 | `empty_repository` / `ref_not_found` / `commit_too_large` | 空仓库 / ref 不存在 / 输出超上限(git-show/git-file) |
+| file-search | `invalid_pattern` / `pattern_too_long` / `path_unsafe_filter` | pattern 非法 / >256 / path_filter 越界 |
+| file-search | `search_timeout` / `search_unavailable` | 5s 超时 / python_ripgrep 库缺失或失败 |
+| git-file/docs | `file_missing_at_ref` / `file_too_large` / `file_not_found` / `file_exists` | ref 下无此 path / blob 超 1MB / 目标不存在 / rename 目标已存在 |
 
 **v2.16.0 新增 9 个 (file-discard-hunk 专用)**:
 
@@ -370,7 +399,7 @@ astrbot_plugin_spcode_toolkit/
 - `tests/test_git_stage.py` — `git-stage` endpoint 单元测试(15 cases)
 - `tests/test_git_unstage.py` — `git-unstage` endpoint 单元测试(15 cases)
 - `tests/test_git_commit.py` — `git-commit` endpoint 单元测试(15 cases)
-- `tests/test_webapi_end_to_end.py` — 10 路由表 + `_wrap` + `register_webapi_routes` smoke
+- `tests/test_webapi_end_to_end.py` — 24 条路由表 + `_wrap` + `register_webapi_routes` smoke
 
 **v3.7+ 写端点 (git-stage / git-unstage / git-commit) 共享约束**:
 - 单次请求文件数 ≤ 100
@@ -413,7 +442,7 @@ astrbot_plugin_spcode_toolkit/
 - `tests/test_helpers_worktree.py` — helpers 单元测试
 - `tests/test_git_worktree_e2e.py` — 5 个 E2E 生命周期 smoke 测试
 - `tests/test_webapi_end_to_end.py` — 16 路由表 + `_wrap` +
-  `register_webapi_routes` smoke (route count 14→16)
+  `register_webapi_routes` smoke (最新路由计数以 `ROUTES` 为准,当前 24)
 
 **v2.16.0 (2026-07-06) file-discard-hunk 端点**:
 - `POST /spcode/file-discard-hunk` — 接受 unified diff 文本入参,`git apply --check --reverse` 干跑 + `git apply --reverse` 实际应用
