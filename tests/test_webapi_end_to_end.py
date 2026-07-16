@@ -68,13 +68,19 @@ _SKIP_FILE_BROWSER = frozenset(
 )
 async def test_handler_callable_returns_dict(handler_name: str) -> None:
     """Every handler in :data:`HANDLERS` can be awaited with a mock
-    plugin and returns a dict (possibly an error envelope)."""
+    plugin and returns a dict-shaped object (possibly an error envelope,
+    或 ``_JSONResponseCompat`` — starlette-compatible 双面体)。
+    """
+    from tools.webapi._helpers import _JSONResponseCompat
+
     plugin = _make_minimal_plugin()
     handler = HANDLERS[handler_name]
     # We pass empty kwargs so handlers fall through to their default
     # (no-umo / no-worktree / no-scope) branches.
     result = await handler(plugin)
-    assert isinstance(result, dict), f"{handler_name} returned {type(result)!r}"
+    assert isinstance(result, (dict, _JSONResponseCompat)), (
+        f"{handler_name} returned {type(result)!r}"
+    )
 
 
 def test_file_browser_handler_excluded_from_smoke() -> None:
@@ -92,14 +98,15 @@ def test_git_show_handler_excluded_from_smoke() -> None:
     assert "handle_get_git_show" not in (set(HANDLERS.keys()) - _SKIP_FILE_BROWSER)
 
 
-def test_routes_table_has_twenty_endpoints() -> None:
-    """The route table lists the 20 documented endpoints.
+def test_routes_table_has_thirty_endpoints() -> None:
+    """The route table lists all spcode webapi endpoints.
 
-    9 GET + 11 POST = 20。
-    v2.14.x (2026-06-28) 新增 /spcode/codegraph-status。
-    v2.15.0 (2026-07-02) 新增 /spcode/file-search。
-    v2.15.0 (2026-07-02) 新增 /spcode/file-name-search。
-    v2.16.0 (2026-07-06) 新增 /spcode/file-discard-hunk。
+    v2.17.0 (2026-07-15) 新增 6 个 git 端点(init/branches/create/delete/switch/revert)。
+    端点总数演进:24 (spec B) → 30 (v2.17.0)。
+    - 24 个之前端点:9 GET + 11 POST + 1 PATCH + 1 DELETE = 22 routes,
+      部分端点共享路径(/spcode/docs 用 POST/PATCH/DELETE 三方法)。
+    - v2.17.0 新增:1 GET (git-branches) + 5 POST (init/create/delete/switch/revert)。
+    - 30 entries:10 GET + 17 POST + 1 PATCH + 1 DELETE (含 /spcode/docs 多方法)。
     """
     routes = {entry[0] for entry in ROUTES}
     assert routes == {
@@ -125,13 +132,69 @@ def test_routes_table_has_twenty_endpoints() -> None:
         "/spcode/file-name-search",  # v2.15.0 (2026-07-02)
         "/spcode/git-file",  # spec B (2026-07-11)
         "/spcode/docs",  # spec B (2026-07-11)
+        # ── v2.17.0 (2026-07-15) PR-B ~ PR-G 新增 6 端点 ──
+        "/spcode/git-init",  # v2.17.0 PR-B
+        "/spcode/git-branches",  # v2.17.0 PR-C GET
+        "/spcode/git-branch-create",  # v2.17.0 PR-D
+        "/spcode/git-branch-delete",  # v2.17.0 PR-E
+        "/spcode/git-branch-switch",  # v2.17.0 PR-F
+        "/spcode/git-revert",  # v2.17.0 PR-G
     }
-    # Methods sanity: 10 GET + 12 POST + 1 PATCH + 1 DELETE = 24 entries
+    # Methods sanity:
+    # 24 base: 10 GET (含 docs GET?) + 12 POST + 1 PATCH + 1 DELETE = 24 entries
+    #   docs 是 POST/PATCH/DELETE 三方法(同一路径)
+    # v2.17.0 +1 GET (git-branches) + 5 POST = 6 entries
+    # 30 entries total: 11 GET + 17 POST + 1 PATCH + 1 DELETE
     methods = [m for entry in ROUTES for m in entry[1]]
-    assert methods.count("GET") == 10
-    assert methods.count("POST") == 12
+    assert methods.count("GET") == 11  # was 10; +1 for git-branches
+    assert methods.count("POST") == 17  # was 12; +5 for v2.17.0 POST endpoints
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
+
+
+class TestV217NewEndpointsSmoke:
+    """v2.17.0 6 个新端点的 smoke 验证(纯 import + route 检查)。
+
+    spec §6.4 端到端烟囱测试:每个新端点被注册到 ROUTES 表 + handler
+    模块可正确 import。handler 的实质逻辑在专属 test file
+    (``tests/test_git_*``) 验证。
+    """
+
+    @staticmethod
+    def _route_paths() -> set[str]:
+        from tools.webapi import ROUTES
+        return {r[0] for r in ROUTES}
+
+    def test_git_init_route_registered(self) -> None:
+        from tools.webapi import git_init
+        from tools.webapi import ROUTES  # noqa: F401  (consistency)
+        assert git_init.handle is not None
+        assert "/spcode/git-init" in self._route_paths()
+
+    def test_git_branches_route_registered(self) -> None:
+        from tools.webapi import git_branches
+        assert git_branches.handle is not None
+        assert "/spcode/git-branches" in self._route_paths()
+
+    def test_git_branch_create_route_registered(self) -> None:
+        from tools.webapi import git_branch_create
+        assert git_branch_create.handle is not None
+        assert "/spcode/git-branch-create" in self._route_paths()
+
+    def test_git_branch_delete_route_registered(self) -> None:
+        from tools.webapi import git_branch_delete
+        assert git_branch_delete.handle is not None
+        assert "/spcode/git-branch-delete" in self._route_paths()
+
+    def test_git_branch_switch_route_registered(self) -> None:
+        from tools.webapi import git_branch_switch
+        assert git_branch_switch.handle is not None
+        assert "/spcode/git-branch-switch" in self._route_paths()
+
+    def test_git_revert_route_registered(self) -> None:
+        from tools.webapi import git_revert
+        assert git_revert.handle is not None
+        assert "/spcode/git-revert" in self._route_paths()
 
 
 # === _wrap adapter ====================================================
@@ -293,12 +356,15 @@ async def test_wrap_get_query_via_web_request(monkeypatch) -> None:
 # === register_webapi_routes ===========================================
 
 
-def test_register_webapi_routes_calls_context_twenty_four_times() -> None:
-    """``register_webapi_routes`` must call ``register_web_api`` once per route."""
+def test_register_webapi_routes_calls_context_thirty_times() -> None:
+    """``register_webapi_routes`` must call ``register_web_api`` once per route.
+
+    v2.17.0 (2026-07-15): route count 24 → 30(+git-init/branches/create/delete/switch/revert)。
+    """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    # 24 endpoints (spec B 2026-07-11: + git-file + docs POST/PATCH/DELETE)
-    assert plugin.context.register_web_api.call_count == 24
+    # 30 entries total: 24 base + 6 v2.17.0
+    assert plugin.context.register_web_api.call_count == 30
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -315,9 +381,9 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 24 routes.
+    # Should not raise; should attempt all 30 routes(v2.17.0 totals).
     register_webapi_routes(plugin)
-    assert call_count == 24
+    assert call_count == 30
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

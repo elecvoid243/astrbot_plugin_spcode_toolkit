@@ -1,7 +1,7 @@
 # tools/webapi/__init__.py
 """Web API endpoint handlers, extracted from main.py.
 
-This package owns the 24 ``/spcode/*`` HTTP endpoints consumed by the
+This package owns the 25 ``/spcode/*`` HTTP endpoints consumed by the
 Dashboard / WebUI:
 
   * ``/spcode/project-status``  (GET)
@@ -18,11 +18,12 @@ Dashboard / WebUI:
   * ``/spcode/git-stage``       (POST)  # v3.7
   * ``/spcode/git-unstage``     (POST)  # v3.7
   * ``/spcode/git-commit``      (POST)  # v3.7
+  * ``/spcode/git-init``        (POST)  # v2.17.0 (2026-07-15) — git init 端点
   * ``/spcode/git-show``        (GET)   # v3.8 (2026-06-25)
   * ``/spcode/git-worktree-add``   (POST)  # v2.14.0 (2026-06-26) — PR-B ADD endpoint
   * ``/spcode/git-worktree-remove`` (POST) # v2.14.0 (2026-06-26) — PR-C REMOVE endpoint
-  * ``/spcode/git-worktree-lock``   (POST) # v2.14.0 (2026-06-26) — PR-D LOCK endpoint
-  * ``/spcode/git-worktree-unlock`` (POST) # v2.14.0 (2026-06-26) — PR-D UNLOCK endpoint
+  * ``/spcode/git-worktree-lock``   (POST)  # v2.14.0 (2026-06-26) — PR-D LOCK endpoint
+  * ``/spcode/git-worktree-unlock`` (POST)  # v2.14.0 (2026-06-26) — PR-D UNLOCK endpoint
   * ``/spcode/codegraph-status``    (GET)  # v2.14.x (2026-06-28)
 
   * ``/spcode/git-file``         (GET)   # spec B (2026-07-11)
@@ -57,9 +58,15 @@ from . import (
     file_name_search,  # v2.15.0 (2026-07-02)
     file_restore,
     file_search,  # v2.15.0 (2026-07-02)
+    git_branch_create,  # v2.17.0 (2026-07-16) — PR-D POST endpoint
+    git_branch_delete,  # v2.17.0 (2026-07-16) — PR-E POST endpoint
+    git_branches,  # v2.17.0 (2026-07-16) — PR-C GET endpoint
+    git_branch_switch,  # v2.17.0 (2026-07-16) — PR-F POST endpoint
     git_commit,
+    git_revert,  # v2.17.0 (2026-07-16) — PR-G POST endpoint
     git_diff,
     git_file,  # spec B (2026-07-11): GET /spcode/git-file
+    git_init,  # v2.17.0 (2026-07-16) — PR-B POST endpoint
     git_log,
     git_show,
     git_stage,
@@ -115,10 +122,46 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "获取已加载项目的 git 历史(8 字段标准粒度)",
     ),
     (
+        "/spcode/git-branches",  # v2.17.0 (2026-07-16) — PR-C
+        ["GET"],
+        git_branches.handle,
+        "列出已加载项目的本地和远程分支",
+    ),
+    (
+        "/spcode/git-branch-create",  # v2.17.0 (2026-07-16) — PR-D
+        ["POST"],
+        git_branch_create.handle,
+        "git branch <name> (从当前 HEAD 拉新分支)",
+    ),
+    (
+        "/spcode/git-branch-delete",  # v2.17.0 (2026-07-16) — PR-E
+        ["POST"],
+        git_branch_delete.handle,
+        "git branch -d/-D (硬禁 current branch)",
+    ),
+    (
+        "/spcode/git-branch-switch",  # v2.17.0 (2026-07-16) — PR-F
+        ["POST"],
+        git_branch_switch.handle,
+        "git switch <name> (支持 create/detach/force 跨字段)",
+    ),
+    (
+        "/spcode/git-revert",  # v2.17.0 (2026-07-16) — PR-G
+        ["POST"],
+        git_revert.handle,
+        "git revert <ref> --no-edit (自动生成回滚 commit)",
+    ),
+    (
         "/spcode/git-show",  # v3.8 (2026-06-25)
         ["GET"],
         git_show.handle,
         "查看给定 ref 修改的文件列表 (name-status + numstat)",
+    ),
+    (
+        "/spcode/git-init",  # v2.17.0 (2026-07-15)
+        ["POST"],
+        git_init.handle,
+        "在已存在空目录上 git init(独立 preflight,无 umo 解析)",
     ),
     (
         "/spcode/git-stage",
@@ -231,6 +274,11 @@ HANDLERS: dict[str, Callable] = {
     "handle_get_git_worktrees": git_worktrees.handle,
     "handle_get_git_diff": git_diff.handle,
     "handle_get_git_status": git_status.handle,  # v2.13 (2026-06-24)
+    "handle_get_git_branches": git_branches.handle,  # v2.17.0 (2026-07-16)
+    "handle_post_git_branch_create": git_branch_create.handle,  # v2.17.0 (2026-07-16)
+    "handle_post_git_branch_delete": git_branch_delete.handle,  # v2.17.0 (2026-07-16)
+    "handle_post_git_branch_switch": git_branch_switch.handle,  # v2.17.0 (2026-07-16)
+    "handle_post_git_revert": git_revert.handle,  # v2.17.0 (2026-07-16)
     "handle_get_git_log": git_log.handle,
     "handle_get_git_show": git_show.handle,  # v3.8 (2026-06-25)
     "handle_get_file_browser": file_browser.handle,
@@ -241,6 +289,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_stage": git_stage.handle,
     "handle_post_git_unstage": git_unstage.handle,
     "handle_post_git_commit": git_commit.handle,
+    "handle_post_git_init": git_init.handle,  # v2.17.0 (2026-07-15)
     "handle_post_git_worktree_add": git_worktree_add.handle,  # v2.14.0 (2026-06-26)
     "handle_post_git_worktree_lock": git_worktree_lock.handle,  # v2.14.0 (2026-06-26)
     "handle_post_git_worktree_remove": git_worktree_remove.handle,  # v2.14.0 (2026-06-26)
@@ -332,7 +381,7 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
 
 def register_webapi_routes(plugin: SPCodeToolkit) -> None:
-    """Register all 24 ``/spcode/*`` routes against ``plugin.context``.
+    """Register all 25 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
     but never raised — a single broken endpoint should not block
@@ -364,7 +413,13 @@ __all__ = [
     "file_search",  # v2.15.0 (2026-07-02)
     "git_diff",
     "git_file",  # spec B (2026-07-11)
+    "git_init",  # v2.17.0 (2026-07-15)
+    "git_branches",  # v2.17.0 (2026-07-16)
+    "git_branch_create",  # v2.17.0 (2026-07-16)
+    "git_branch_delete",  # v2.17.0 (2026-07-16)
+    "git_branch_switch",  # v2.17.0 (2026-07-16)
     "git_log",
+    "git_revert",  # v2.17.0 (2026-07-16)
     "git_show",
     "git_stage",
     "git_status",
