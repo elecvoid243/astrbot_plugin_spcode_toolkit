@@ -344,6 +344,12 @@ POST/PATCH/DELETE 三方法):
 | `/spcode/git-worktree-remove` | POST | 删除 git worktree(硬禁 main,locked 拒,`force=true` 跳过 dirty) | body: `{path, force?}` |
 | `/spcode/git-worktree-lock` | POST | 锁定 git worktree(可选 `--reason`),main 允许但 git 自身拒绝 | body: `{path, reason?}` |
 | `/spcode/git-worktree-unlock` | POST | 解锁 git worktree,main 允许但 git 自身拒绝 | body: `{path}` |
+| `/spcode/git-init` | POST | 在空目录上 git init(**唯一**豁免 preflight) | body: `{path, initial_branch?="main", bare?=false}` |
+| `/spcode/git-branches` | GET | 列出 branch(local+remote)+current+default(ETag/304) | `umo?`, `worktree?` |
+| `/spcode/git-branch-create` | POST | 从 HEAD/指定 start_point 创建 branch | body: `{name, start_point?, force?}` |
+| `/spcode/git-branch-delete` | POST | 删除 branch(`-d` 仅 merged,`-D` 含 unmerged;硬禁 current/main) | body: `{name, force?=false}` |
+| `/spcode/git-branch-switch` | POST | git switch <name>(支持 create/detach/force 跨字段) | body: `{name, create?=false, start_point?, force?=false, detach?=false}` |
+| `/spcode/git-revert` | POST | 创建回滚 commit(`--no-edit`,复用 `git_commit` env passthrough) | body: `{ref?="HEAD", no_edit?=true}` |
 | `/spcode/docs` | POST | 创建 / 覆盖 docs 文件(upsert 到工作区) | body: `{umo?, worktree?, path, content}` |
 | `/spcode/docs` | PATCH | 重命名 docs 文件(纯文件系统 mv) | body: `{umo?, worktree?, path, new_path}` |
 | `/spcode/docs` | DELETE | 从工作区删除 docs 文件(unlink) | body: `{umo?, worktree?, path}` |
@@ -416,6 +422,40 @@ POST/PATCH/DELETE 三方法):
 - `docs/superpowers/plans/2026-06-23-git-stage-untage-commit-log-impl.md` — 6 PR 实施记录
 - `docs/superpowers/specs/2026-06-26-git-worktree-management-design.md` —
   v2.14.0 worktree management 4 端点 (ADD / REMOVE / LOCK / UNLOCK)
+- `docs/superpowers/specs/2026-07-15-git-init-branch-revert-design.md` —
+  v2.17.0 git-init/branch/revert 6 端点 (PR-B ~ PR-G)
+- `docs/superpowers/plans/2026-07-15-git-init-branch-revert.md` —
+  v2.17.0 9-Task 实施计划 (PR-B ~ PR-I)
+- `docs/webapi-git-init-branch-revert-api.md` —
+  v2.17.0 6 端点 dashboard 消费参考 (请求/响应/ReasonCode/best practice)
+
+**v2.17.0 (2026-07-15) git-init/branch/revert 6 端点(PR-B ~ PR-G)**:
+- `POST /spcode/git-init` — PR-B(**唯一**完全豁免 `_git_endpoint_preflight` 的写端点,
+  需在空目录上 `git init`;与所有其他写端点相反,走 `_git_init_preflight`)
+- `GET /spcode/git-branches` — PR-C(支持 ETag/304,3 路 porcelain 弱缓存,_compute_git_etag 共享)
+- `POST /spcode/git-branch-create` — PR-D(8 步防御:name 校验 + 创建前分支已存在 +
+  start_point ^{commit} 校验 + worktree dirty 检查)
+- `POST /spcode/git-branch-delete` — PR-E(**硬禁**删 current branch,`force=true` 仅影响
+  `-d` vs `-D`(merged check),**不绕过** `branch_is_current` 检查)
+- `POST /spcode/git-branch-switch` — PR-F(跨字段互斥:create+detach 互斥,
+  start_point 仅 create=true 时合法,force 仅 create=false 时附加 `-f` 旗标)
+- `POST /spcode/git-revert` — PR-G(复用 `git_commit._classify_commit_error` +
+  `git_commit._build_git_env`,`no_edit=true` 强制,headless 服务不开编辑器)
+
+**v2.17.0 端点 (git-init / branch-* / git-revert) 共享约束**:
+- 名称校验复用 `tools._helpers._is_valid_ref_name`(与 worktree-* 一致)
+- body 校验统一 `invalid_body` / `invalid_param` / `invalid_branch`(git-ref-name 非法)
+- preflight 5 步 + worktree 6 步防御链(v2.14.0 已建立)
+- commit/branch 操作 stderr 通过 `_classify_*_stderr` 集中分类
+
+**v2.17.0 单元测试**:
+- `tests/test_git_init_*.py` — git-init 路径测试(空目录、已有 .git、path 不存在等)
+- `tests/test_git_branches.py` — git-branches 单元测试(12 cases,PR-C)
+- `tests/test_git_branch_create.py` / `_delete.py` / `_switch.py` — PR-D/E/F
+- `tests/test_git_revert.py` — git-revert 单元测试(18 cases,PR-G)
+- `tests/test_git_branches_lifecycle.py` — E2E lifecycle(init→commit→branch→switch→revert→delete)
+- `tests/test_webapi_end_to_end.py::TestV217NewEndpointsSmoke` — 6 个路由 smoke
+- `tests/test_reason_code.py::test_v217_git_reason_codes_defined` — 12 个新 reason literal
 
 **v2.14.0 (2026-06-26) worktree management 4 端点(PR-B / C / D)**:
 - `POST /spcode/git-worktree-add` — PR-B(`-b/-B/--detach/--force` 旗标平铺,
