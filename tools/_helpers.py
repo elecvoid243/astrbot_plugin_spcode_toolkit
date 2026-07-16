@@ -313,6 +313,8 @@ def _is_commit_ref(git_bin: str, directory: str, ref: str) -> bool:
         [git_bin, "-C", directory, "rev-parse", "--verify", f"{ref}^{{commit}}"],
         capture_output=True,
         text=True,
+        # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+        **_NO_WINDOW_KWARGS,
     )
     return result.returncode == 0
 

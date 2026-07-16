@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from . import _helpers as _helpers_module
 from ._helpers import (
+    _NO_WINDOW_KWARGS,
     ReasonCode,
     _git_init_preflight,
     _JSONResponseCompat,
@@ -39,9 +40,15 @@ def _git_supports_init_b(git_bin: str) -> bool:
     import subprocess
 
     try:
-        result = subprocess.run([git_bin, "--version"], capture_output=True, text=True)
+        result = subprocess.run(
+            [git_bin, "--version"],
+            capture_output=True,
+            text=True,
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+            **_NO_WINDOW_KWARGS,
+        )
     except (FileNotFoundError, OSError):
-        # git 二进制不存在或不可执行 — 走 fallback 路径
+        # git 二进制不存在或不可执行 - 走 fallback 路径
         return False
     if result.returncode != 0:
         return False
