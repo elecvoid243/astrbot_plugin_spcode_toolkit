@@ -410,11 +410,17 @@ async def _git_init_preflight(
     plugin: object,
     *,
     path: str,
+    force: bool = False,
 ) -> tuple[dict | None, dict | None]:
     """Run the git-init-only path preflight.
 
     Unlike ``_git_endpoint_preflight``, this helper does not resolve a loaded
     project or probe for an existing Git repository.
+
+    ``force=True`` (v2.17.1) skips the ``directory_not_empty`` check, allowing
+    initialization of a non-empty directory. It does NOT bypass
+    ``already_a_git_repo`` (hard-ban), ``path_not_directory``, or
+    ``path_unsafe`` - those are unconditional safety guards.
     """
     from .._path_safety import is_path_safe as _is_path_safe
 
@@ -463,7 +469,9 @@ async def _git_init_preflight(
             path=path,
         ), None
 
-    if any(target.iterdir()):
+    # v2.17.1: force=True 跳过非空检查(允许在已有代码目录 init)。
+    # already_a_git_repo 检查在上面已完成,force 不绕过 hard-ban。
+    if not force and any(target.iterdir()):
         return _make_envelope(
             success=False,
             reason=ReasonCode.DIRECTORY_NOT_EMPTY,

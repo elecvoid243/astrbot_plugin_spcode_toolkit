@@ -126,3 +126,89 @@ def test_classify_switch_stderr(stderr: str, expected: str) -> None:
 )
 def test_classify_revert_stderr(stderr: str, expected: str) -> None:
     assert _classify_revert_stderr(stderr) == expected
+
+
+# ── v2.17.1: force 标志 ────────────────────────────────────
+
+
+def test_init_preflight_force_true_skips_nonempty_check(
+    tmp_path: Path, plugin: Any
+) -> None:
+    """force=true 时,非空目录(无 .git)应通过 preflight。"""
+    target = tmp_path / "occupied"
+    target.mkdir()
+    (target / "README.md").write_text("hello", encoding="utf-8")
+    err, ctx = _await(_git_init_preflight(plugin, path=str(target), force=True))
+    assert err is None
+    assert ctx is not None
+    assert Path(ctx["path"]).resolve() == target.resolve()
+
+
+def test_init_preflight_force_false_rejects_nonempty(
+    tmp_path: Path, plugin: Any
+) -> None:
+    """force=false 时,非空目录仍被拒绝。"""
+    target = tmp_path / "occupied"
+    target.mkdir()
+    (target / "README.md").write_text("hello", encoding="utf-8")
+    err, ctx = _await(_git_init_preflight(plugin, path=str(target), force=False))
+    assert err is not None
+    assert err["data"]["reason"] == ReasonCode.DIRECTORY_NOT_EMPTY
+    assert ctx is None
+
+
+def test_init_preflight_force_default_rejects_nonempty(
+    tmp_path: Path, plugin: Any
+) -> None:
+    """不传 force(默认)时,非空目录仍被拒绝 - 向后兼容验证。"""
+    target = tmp_path / "occupied"
+    target.mkdir()
+    (target / "README.md").write_text("hello", encoding="utf-8")
+    err, ctx = _await(_git_init_preflight(plugin, path=str(target)))
+    assert err is not None
+    assert err["data"]["reason"] == ReasonCode.DIRECTORY_NOT_EMPTY
+
+
+def test_init_preflight_force_true_still_rejects_already_git_repo(
+    tmp_path: Path, plugin: Any
+) -> None:
+    """force=true 时,已有 .git 的目录仍被拒绝(hard-ban)。"""
+    target = tmp_path / "already"
+    target.mkdir()
+    subprocess.run(["git", "init", "-q", str(target)], check=True)
+    err, ctx = _await(_git_init_preflight(plugin, path=str(target), force=True))
+    assert err is not None
+    assert err["data"]["reason"] == ReasonCode.ALREADY_A_GIT_REPO
+
+
+def test_init_preflight_force_true_still_rejects_path_not_directory(
+    tmp_path: Path, plugin: Any
+) -> None:
+    """force=true 时,不存在的路径仍被拒绝(force 不绕过路径防御)。"""
+    err, ctx = _await(
+        _git_init_preflight(plugin, path=str(tmp_path / "nope"), force=True)
+    )
+    assert err is not None
+    assert err["data"]["reason"] == ReasonCode.PATH_NOT_DIRECTORY
+
+
+def test_init_preflight_force_true_still_rejects_path_unsafe(
+    plugin: Any,
+) -> None:
+    """force=true 时,含 .. 的路径仍被拒绝(force 不绕过路径安全)。"""
+    err, ctx = _await(_git_init_preflight(plugin, path="../../../etc", force=True))
+    assert err is not None
+    assert err["data"]["reason"] == ReasonCode.PATH_UNSAFE
+
+
+def test_init_preflight_force_true_with_subdirectory(
+    tmp_path: Path, plugin: Any
+) -> None:
+    """force=true 时,非空目录(含子目录)也应通过 preflight。"""
+    target = tmp_path / "occupied"
+    target.mkdir()
+    (target / "src").mkdir()
+    (target / "src" / "main.py").write_text("print('hi')", encoding="utf-8")
+    err, ctx = _await(_git_init_preflight(plugin, path=str(target), force=True))
+    assert err is None
+    assert ctx is not None
