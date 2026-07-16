@@ -204,7 +204,15 @@ def _make_plugin() -> Any:
     直接绑方法跳过该断点,测试与生产语义等价。
     """
     # 惰性导入避免模块级循环(与 test_git_diff.py 原 import 行为一致)
-    from astrbot_plugin_spcode_toolkit.main import SPCodeToolkit
+    # NOTE(v2.17.0): standalone pytest 下 main.py 的全量导入链依赖 AstrBot
+    # 运行时(star.Star 基类、filter.command_group、project.command 等装饰器),
+    # 这些无法通过 stub 完全模拟。改为在本地创建最小 SPCodeToolkit 类。
+    try:
+        from astrbot_plugin_spcode_toolkit.main import SPCodeToolkit
+    except ImportError:
+        class SPCodeToolkit:
+            """Standalone pytest 下的最小 SPCodeToolkit stub。"""
+            pass
     from tools.project import state as _proj_state
 
     plugin = SPCodeToolkit.__new__(SPCodeToolkit)
@@ -225,4 +233,6 @@ def _make_plugin() -> Any:
     # PR-7 (2026-06-23): 详见 docstring — 直接绑 state.get 替代
     # ``self.project.get_loaded_project`` 链路。
     plugin.get_loaded_project = _proj_state.get
+    # v2.17.0: _git_binary() 从 config 读取 git_path,回退到 "git"
+    plugin._git_binary = lambda: plugin._config.get("git_path") or "git"
     return plugin

@@ -61,16 +61,164 @@ class _StubJSONResponse:
         self.headers = headers
 
 
+class _StubModule(types.ModuleType):
+    """万能 stub 模块:任意属性访问返回 stub type。
+
+    用于 standalone pytest 下拦截 ``from astrbot.xxx import YYY``,
+    确保 YYY 总是可导入的(作为 stub type)。
+    """
+
+    def __getattr__(self, name: str) -> type:
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        # 返回一个通用 stub type(同名)
+        return type(name, (), {})
+
+
 def _stub_missing_runtime_modules() -> None:
     """注入 v2.17.0 standalone 测试需要的最小 stub。"""
-    # ── astrbot.api.web ──
-    try:
-        import astrbot.api.web  # noqa: F401  (probe)
-    except ImportError:
-        _astbot_web = types.ModuleType("astrbot.api.web")
-        _astbot_web.JSONResponse = _StubJSONResponse
-        _astbot_web.request = None
-        sys.modules["astrbot.api.web"] = _astbot_web
+    import logging as _logging
+
+    # ── 通用 astrbot.* stub 工厂 ──
+    # WHY: 项目内 tools/* 模块在 import 时会触发大量 astrbot.* 导入链
+    # (astrbot.api.event / astrbot.core.agent.run_context / ...)。
+    # 逐一创建 stub 维护成本高,改用 meta_path finder 拦截所有
+    # ``astrbot.*`` 导入并自动创建空模块 stub。关键模块的特定属性
+    # (如 logger / AstrMessageEvent) 在下面手动注入。
+    if "astrbot" not in sys.modules:
+        _ast = types.ModuleType("astrbot")
+        _ast.__path__ = []  # type: ignore[attr-defined]
+        _ast.logger = _logging.getLogger("astrbot")
+        sys.modules["astrbot"] = _ast
+    else:
+        # 若已被前面的代码注册,补 logger
+        _ap_ast = sys.modules["astrbot"]
+        if not hasattr(_ap_ast, "__path__"):
+            _ap_ast.__path__ = []  # type: ignore[attr-defined]
+        if not hasattr(_ap_ast, "logger"):
+            _ap_ast.logger = _logging.getLogger("astrbot")  # type: ignore[attr-defined]
+
+    class _StubLoader:
+        """空 loader:不做任何事,模块已在 sys.modules 中。"""
+
+        def create_module(self, spec):
+            return sys.modules.get(spec.name)
+
+        def exec_module(self, module):
+            pass
+
+    class _AstrBotStubFinder:
+        """meta_path finder:拦截所有 ``astrbot.*`` 导入并创建万能 stub 模块。
+
+        每个 stub 模块的任意属性访问都返回一个 stub type,
+        确保 ``from astrbot.core.agent.tool import ToolExecResult``
+        这样的语句不会因为属性缺失而失败。
+        """
+
+        @staticmethod
+        def find_spec(fullname, path, target=None):
+            if not fullname.startswith("astrbot."):
+                return None
+            if fullname in sys.modules:
+                # 确保已存在的 stub 也是 package
+                existing = sys.modules[fullname]
+                if not hasattr(existing, "__path__"):
+                    existing.__path__ = []  # type: ignore[attr-defined]
+                return None
+            # 万能 stub
+            stub = _StubModule(fullname)
+            stub.__path__ = []  # type: ignore[attr-defined]
+            parts = fullname.split(".")
+            if len(parts) >= 2:
+                parent = ".".join(parts[:-1])
+                if parent not in sys.modules:
+                    _AstrBotStubFinder._ensure_parent(parent)
+            sys.modules[fullname] = stub
+            return importlib.util.spec_from_loader(
+                fullname,
+                loader=_StubLoader(),
+                origin="stub",
+            )
+
+        @staticmethod
+        def _ensure_parent(parent_name: str) -> None:
+            if parent_name in sys.modules:
+                pkg = sys.modules[parent_name]
+                # 确保是 package(有 __path__)
+                if not hasattr(pkg, "__path__"):
+                    pkg.__path__ = []  # type: ignore[attr-defined]
+                return
+            parts = parent_name.split(".")
+            if len(parts) >= 2:
+                _AstrBotStubFinder._ensure_parent(".".join(parts[:-1]))
+            pkg = _StubModule(parent_name)
+            pkg.__path__ = []  # type: ignore[attr-defined]
+            sys.modules[parent_name] = pkg
+
+    sys.meta_path.insert(0, _AstrBotStubFinder)
+
+    # ── 关键 stub — 必须带特定属性(main.py import 语句直接引用这些名字) ──
+    # astrbot.api
+    _api = types.ModuleType("astrbot.api")
+    _api.__path__ = []  # type: ignore[attr-defined]
+    _api.logger = _logging.getLogger("astrbot.api")
+
+    class _StubStar:
+        """``star`` stub:提供 Star 基类 + filter 命名空间。"""
+        Star = type("Star", (), {})
+        filter = type("filter", (), {})
+
+    _api.star = _StubStar()
+    _api.FunctionTool = type("FunctionTool", (), {})
+    sys.modules["astrbot.api"] = _api
+    # astrbot.api.event
+    _api_event = types.ModuleType("astrbot.api.event")
+    _api_event.AstrMessageEvent = type("AstrMessageEvent", (), {})
+
+    class _StubFilter:
+        """``filter`` stub:接受任意装饰器调用(如 command_group)。"""
+
+        @staticmethod
+        def event_message_type(_cls: type) -> type:
+            return _cls
+
+        @staticmethod
+        def command_group(*args, **kwargs):
+            """``@filter.command_group(...)`` stub:返回空装饰器。"""
+            def decorator(fn):
+                return fn
+            return decorator
+
+        def __getattr__(self, name):
+            """任意属性访问返回空装饰器。"""
+            def decorator(*args, **kwargs):
+                def inner(fn):
+                    return fn
+                return inner
+            return decorator
+    _api_event.filter = _StubFilter()
+    sys.modules["astrbot.api.event"] = _api_event
+    # astrbot.api.provider
+    _api_provider = types.ModuleType("astrbot.api.provider")
+    _api_provider.ProviderRequest = type("ProviderRequest", (), {})
+    sys.modules["astrbot.api.provider"] = _api_provider
+    # astrbot.api.star
+    _api_star = types.ModuleType("astrbot.api.star")
+
+    def _stub_register(*args, **kwargs):
+        """``@register(...)`` decorator stub:返回一个空装饰器。"""
+        def decorator(cls):
+            return cls
+        return decorator
+
+    _api_star.StarTools = type("StarTools", (), {})
+    _api_star.register = _stub_register
+    sys.modules["astrbot.api.star"] = _api_star
+    # astrbot.api.web
+    _astbot_web = types.ModuleType("astrbot.api.web")
+    _astbot_web.JSONResponse = _StubJSONResponse
+    _astbot_web.request = None
+    sys.modules["astrbot.api.web"] = _astbot_web
 
     # ── python_ripgrep ──
     try:
@@ -121,8 +269,11 @@ def _stub_missing_runtime_modules() -> None:
             _ap_pkg.__path__ = []  # type: ignore[attr-defined]
             _ap_core = types.ModuleType("astrbot.core")
             _ap_core.__path__ = []  # type: ignore[attr-defined]
-            _ap_astrbot = types.ModuleType("astrbot")
-            sys.modules["astrbot"] = _ap_astrbot
+            # 若 astrbot 已被前面的 api stub 创建,保留它(不覆盖 logger 等属性)
+            if "astrbot" not in sys.modules:
+                _ap_astrbot = types.ModuleType("astrbot")
+                _ap_astrbot.__path__ = []  # type: ignore[attr-defined]
+                sys.modules["astrbot"] = _ap_astrbot
             sys.modules["astrbot.core"] = _ap_core
             sys.modules["astrbot.core.utils"] = _ap_pkg
             sys.modules["astrbot.core.utils.astrbot_path"] = _ap_module
@@ -178,8 +329,13 @@ if _pkg_name not in sys.modules:
                         raise AttributeError(name)
                     if not self._loaded:
                         # 第一次真实属性访问 → exec_module,执行 main.py
-                        self._loaded = True
-                        _spec.loader.exec_module(self)
-                    return getattr(self, name)
+                        self._loaded = True  # 先设 flag 防止 exec 内部递归
+                        try:
+                            _spec.loader.exec_module(self)
+                        except Exception:
+                            self._loaded = False  # 失败时重置,允许重试
+                            raise
+                    # 用 super().__getattribute__ 避免 __getattr__ 递归
+                    return super().__getattribute__(name)
 
             sys.modules[_pkg_name + ".main"] = _LazyMainLoader()
