@@ -15,8 +15,16 @@ from tools.webapi import git_branches
 
 
 def _run(coro):
-    """Sync wrapper for async handler calls."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    """Sync wrapper for async handler calls.
+
+    使用 ``asyncio.run()`` 而非 ``asyncio.get_event_loop().run_until_complete()``:
+    Python 3.10+ 在主线程没有 running loop 时 ``get_event_loop()`` 返回的
+    loop 会触发 ``RuntimeError: There is no current event loop``(实测在
+    Python 3.12 + pytest 并发场景下大量出现,导致合跑大量失败)。
+    ``asyncio.run()`` (Python 3.7+) 内部自动创建/关闭 loop,跨文件跨测试
+    独立且不污染事件循环状态。
+    """
+    return asyncio.run(coro)
 
 
 # ── preflight ──────────────────────────────────────────────

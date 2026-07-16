@@ -16,8 +16,14 @@ from tools.webapi import git_branch_delete
 
 
 def _run(coro):
-    """Sync wrapper for async handler calls."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    """Sync wrapper for async handler calls.
+
+    使用 ``asyncio.run()`` 而非 ``asyncio.get_event_loop().run_until_complete()``:
+    Python 3.10+ 在主线程没有 running loop 时会触发
+    ``RuntimeError: There is no current event loop``(pytest 合跑大量触发)。
+    ``asyncio.run()`` 内部自动管理 loop,跨测试隔离干净。
+    """
+    return asyncio.run(coro)
 
 
 # ── preflight (3 cases: no_umo / not_git_repo / cross worktree) ──
