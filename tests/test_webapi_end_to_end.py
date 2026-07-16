@@ -102,11 +102,13 @@ def test_routes_table_has_thirty_endpoints() -> None:
     """The route table lists all spcode webapi endpoints.
 
     v2.17.0 (2026-07-15) 新增 6 个 git 端点(init/branches/create/delete/switch/revert)。
-    端点总数演进:24 (spec B) → 30 (v2.17.0)。
+    v2.18.0 (2026-07-16) 新增 1 个 git 端点(repo-check)。
+    端点总数演进:24 (spec B) -> 30 (v2.17.0) -> 31 (v2.18.0)。
     - 24 个之前端点:9 GET + 11 POST + 1 PATCH + 1 DELETE = 22 routes,
       部分端点共享路径(/spcode/docs 用 POST/PATCH/DELETE 三方法)。
     - v2.17.0 新增:1 GET (git-branches) + 5 POST (init/create/delete/switch/revert)。
-    - 30 entries:10 GET + 17 POST + 1 PATCH + 1 DELETE (含 /spcode/docs 多方法)。
+    - v2.18.0 新增:1 GET (git-repo-check)。
+    - 31 entries:12 GET + 17 POST + 1 PATCH + 1 DELETE (含 /spcode/docs 多方法)。
     """
     routes = {entry[0] for entry in ROUTES}
     assert routes == {
@@ -139,6 +141,7 @@ def test_routes_table_has_thirty_endpoints() -> None:
         "/spcode/git-branch-delete",  # v2.17.0 PR-E
         "/spcode/git-branch-switch",  # v2.17.0 PR-F
         "/spcode/git-revert",  # v2.17.0 PR-G
+        "/spcode/git-repo-check",  # v2.18.0 (2026-07-16)
     }
     # Methods sanity:
     # 24 base: 10 GET (含 docs GET?) + 12 POST + 1 PATCH + 1 DELETE = 24 entries
@@ -146,7 +149,7 @@ def test_routes_table_has_thirty_endpoints() -> None:
     # v2.17.0 +1 GET (git-branches) + 5 POST = 6 entries
     # 30 entries total: 11 GET + 17 POST + 1 PATCH + 1 DELETE
     methods = [m for entry in ROUTES for m in entry[1]]
-    assert methods.count("GET") == 11  # was 10; +1 for git-branches
+    assert methods.count("GET") == 12  # was 11; +1 for git-repo-check
     assert methods.count("POST") == 17  # was 12; +5 for v2.17.0 POST endpoints
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
@@ -359,12 +362,13 @@ async def test_wrap_get_query_via_web_request(monkeypatch) -> None:
 def test_register_webapi_routes_calls_context_thirty_times() -> None:
     """``register_webapi_routes`` must call ``register_web_api`` once per route.
 
-    v2.17.0 (2026-07-15): route count 24 → 30(+git-init/branches/create/delete/switch/revert)。
+    v2.17.0 (2026-07-15): route count 24 -> 30(+git-init/branches/create/delete/switch/revert)。
+    v2.18.0 (2026-07-16): route count 30 -> 31(+git-repo-check)。
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    # 30 entries total: 24 base + 6 v2.17.0
-    assert plugin.context.register_web_api.call_count == 30
+    # 31 entries total: 30 base + 1 v2.18.0
+    assert plugin.context.register_web_api.call_count == 31
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -381,9 +385,9 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 30 routes(v2.17.0 totals).
+    # Should not raise; should attempt all 31 routes(v2.18.0 totals).
     register_webapi_routes(plugin)
-    assert call_count == 30
+    assert call_count == 31
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

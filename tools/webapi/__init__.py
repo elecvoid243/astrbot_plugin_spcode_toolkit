@@ -19,6 +19,7 @@ Dashboard / WebUI:
   * ``/spcode/git-unstage``     (POST)  # v3.7
   * ``/spcode/git-commit``      (POST)  # v3.7
   * ``/spcode/git-init``        (POST)  # v2.17.0 (2026-07-15) — git init 端点
+  * ``/spcode/git-repo-check``   (GET)   # v2.18.0 (2026-07-16) - git 仓库探测
   * ``/spcode/git-show``        (GET)   # v3.8 (2026-06-25)
   * ``/spcode/git-worktree-add``   (POST)  # v2.14.0 (2026-06-26) — PR-B ADD endpoint
   * ``/spcode/git-worktree-remove`` (POST) # v2.14.0 (2026-06-26) — PR-C REMOVE endpoint
@@ -63,11 +64,12 @@ from . import (
     git_branches,  # v2.17.0 (2026-07-16) — PR-C GET endpoint
     git_branch_switch,  # v2.17.0 (2026-07-16) — PR-F POST endpoint
     git_commit,
-    git_revert,  # v2.17.0 (2026-07-16) — PR-G POST endpoint
     git_diff,
     git_file,  # spec B (2026-07-11): GET /spcode/git-file
-    git_init,  # v2.17.0 (2026-07-16) — PR-B POST endpoint
+    git_init,  # v2.17.0 (2026-07-16) - PR-B POST endpoint
     git_log,
+    git_repo_check,  # v2.18.0 (2026-07-16) - GET git 仓库探测
+    git_revert,  # v2.17.0 (2026-07-16) - PR-G POST endpoint
     git_show,
     git_stage,
     git_status,
@@ -150,6 +152,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["POST"],
         git_revert.handle,
         "git revert <ref> --no-edit (自动生成回滚 commit)",
+    ),
+    (
+        "/spcode/git-repo-check",  # v2.18.0 (2026-07-16)
+        ["GET"],
+        git_repo_check.handle,
+        "判断已加载项目是否为 git 仓库(解耦自 git-branches preflight 第 5 步)",
     ),
     (
         "/spcode/git-show",  # v3.8 (2026-06-25)
@@ -279,6 +287,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_branch_delete": git_branch_delete.handle,  # v2.17.0 (2026-07-16)
     "handle_post_git_branch_switch": git_branch_switch.handle,  # v2.17.0 (2026-07-16)
     "handle_post_git_revert": git_revert.handle,  # v2.17.0 (2026-07-16)
+    "handle_get_git_repo_check": git_repo_check.handle,  # v2.18.0 (2026-07-16)
     "handle_get_git_log": git_log.handle,
     "handle_get_git_show": git_show.handle,  # v3.8 (2026-06-25)
     "handle_get_file_browser": file_browser.handle,
@@ -381,7 +390,7 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
 
 def register_webapi_routes(plugin: SPCodeToolkit) -> None:
-    """Register all 25 ``/spcode/*`` routes against ``plugin.context``.
+    """Register all 26 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
     but never raised — a single broken endpoint should not block
@@ -420,6 +429,7 @@ __all__ = [
     "git_branch_switch",  # v2.17.0 (2026-07-16)
     "git_log",
     "git_revert",  # v2.17.0 (2026-07-16)
+    "git_repo_check",  # v2.18.0 (2026-07-16)
     "git_show",
     "git_stage",
     "git_status",
