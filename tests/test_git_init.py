@@ -172,12 +172,17 @@ def test_init_then_git_status_works(empty_dir):
 
 
 def test_init_then_validate_worktree_param_passes(empty_dir):
-    """init 后,_validate_worktree_param 应能接受该路径。"""
+    """init 后,_validate_worktree_param 应能接受该路径作为 worktree candidate。
+
+    WHY:loaded_dir 必须是 candidate 所属 git repo 的根(否则
+    `_resolve_git_common_dir(loaded_dir)` 找不到 .git,直接抛异常,
+    step 6 校验会以 worktree_invalid 拒绝 candidate)。
+    """
     plugin = _make_plugin()
     _run(git_init.handle(plugin, body={"path": str(empty_dir)}))
     from tools._helpers import _validate_worktree_param
     validated, err = _validate_worktree_param(
-        "git", str(empty_dir.parent), str(empty_dir)
+        "git", str(empty_dir), str(empty_dir)
     )
     assert err is None
     assert Path(validated).resolve() == empty_dir.resolve()
