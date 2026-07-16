@@ -37,10 +37,9 @@ def _git_supports_init_b(git_bin: str) -> bool:
     """检查 git 是否支持 ``git init -b <branch>``(需要 2.28+)。"""
     import re
     import subprocess
+
     try:
-        result = subprocess.run(
-            [git_bin, "--version"], capture_output=True, text=True
-        )
+        result = subprocess.run([git_bin, "--version"], capture_output=True, text=True)
     except (FileNotFoundError, OSError):
         # git 二进制不存在或不可执行 — 走 fallback 路径
         return False
@@ -53,7 +52,7 @@ def _git_supports_init_b(git_bin: str) -> bool:
 
 
 async def handle(
-    plugin: "SPCodeToolkit",
+    plugin: SPCodeToolkit,
     *,
     umo: str | None = None,
     worktree: str | None = None,
@@ -82,6 +81,7 @@ async def handle(
     path = body.get("path")
     initial_branch = body.get("initial_branch", "main")
     bare = body.get("bare", False)
+    force = body.get("force", False)
 
     # ── 2. 参数类型校验 ──
     if not isinstance(path, str):
@@ -120,9 +120,17 @@ async def handle(
             initialized=False,
             path=path,
         )
+    if not isinstance(force, bool):
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            initialized=False,
+            path=path,
+        )
 
-    # ── 3. init-only preflight (4 步) ──
-    err, ctx = await _git_init_preflight(plugin, path=path)
+    # ── 3. init-only preflight (4 步,force 透传给非空检查) ──
+    err, ctx = await _git_init_preflight(plugin, path=path, force=force)
     if err is not None:
         err["data"]["elapsed_ms"] = _elapsed()
         err["data"].setdefault("initialized", False)
@@ -148,7 +156,14 @@ async def handle(
     # 兜底:旧版 git 无 -b,init 完手动 symbolic-ref
     if result["ok"] and not _git_supports_init_b(git_bin):
         ref_result = await _helpers_module._run_git_async(
-            [git_bin, "-C", abs_path, "symbolic-ref", "HEAD", f"refs/heads/{initial_branch}"],
+            [
+                git_bin,
+                "-C",
+                abs_path,
+                "symbolic-ref",
+                "HEAD",
+                f"refs/heads/{initial_branch}",
+            ],
             encoding="utf-8",
         )
         if not ref_result["ok"]:
@@ -172,7 +187,9 @@ async def handle(
         )
 
     git_dir = f"{abs_path}/.git" if not bare else f"{abs_path}"
-    logger.info("git init 成功: %s (branch=%s, bare=%s)", abs_path, initial_branch, bare)
+    logger.info(
+        "git init 成功: %s (branch=%s, bare=%s)", abs_path, initial_branch, bare
+    )
     return _JSONResponseCompat(
         _make_envelope(
             success=True,
@@ -181,6 +198,7 @@ async def handle(
             path=abs_path,
             initial_branch=initial_branch,
             bare=bare,
+            force=force,
             git_dir=git_dir,
             umo=umo,
             worktree="",
