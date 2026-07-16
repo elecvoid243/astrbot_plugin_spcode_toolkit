@@ -475,11 +475,20 @@ async def _git_init_preflight(
 
 
 def _classify_switch_stderr(stderr: str) -> str:
-    """将 ``git switch`` 失败 stderr 映射到 ReasonCode。"""
+    """将 ``git switch`` 失败 stderr 映射到 ReasonCode。
+
+    真实 git 2.30+ stdout/stderr 实测模式:
+    - ``fatal: invalid reference: <name>`` (BRANCH_NOT_FOUND)
+    - ``error: pathspec '<name>' did not match any file(s) known to git`` (BRANCH_NOT_FOUND)
+    - ``fatal: a branch named '<name>' already exists`` (BRANCH_EXISTS)
+    - ``Your local changes ... would be overwritten`` (WORKTREE_DIRTY)
+    - ``fatal: '<name>' is not a valid branch name`` (INVALID_BRANCH)
+    """
     s = stderr.lower()
     if "already exists" in s:
         return ReasonCode.BRANCH_EXISTS
-    if "did not match" in s or "not found" in s:
+    # 'invalid reference' / 'did not match' / 'not found' — 三种 git switch 失败模式
+    if "invalid reference" in s or "did not match" in s or "not found" in s:
         return ReasonCode.BRANCH_NOT_FOUND
     if "your local changes" in s or "would be overwritten" in s:
         return ReasonCode.WORKTREE_DIRTY
