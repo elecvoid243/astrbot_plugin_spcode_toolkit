@@ -285,7 +285,7 @@ async def _git_init_preflight(
 | `force=true` + 空目录 | `{path, force: true}` + 空目录 | ✅ 成功 init(与 `force=false` 一致) |
 | `force` 类型校验 | `{path, force: "true"}`(字符串) | ❌ `invalid_param` |
 | `force` 类型校验 | `{path, force: 1}`(int) | ❌ `invalid_param` |
-| `force` 类型校验 | `{path, force: null}` | ✅ 等同 `force=false`(None -> default) |
+| `force` 类型校验 | `{path, force: null}` | ❌ `invalid_param`(None 不属于 bool,与 §4.3 一致) |
 
 ### 7.3 测试文件组织
 
