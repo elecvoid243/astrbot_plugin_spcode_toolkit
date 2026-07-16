@@ -432,6 +432,11 @@ POST/PATCH/DELETE 三方法):
 **v2.17.0 (2026-07-15) git-init/branch/revert 6 端点(PR-B ~ PR-G)**:
 - `POST /spcode/git-init` — PR-B(**唯一**完全豁免 `_git_endpoint_preflight` 的写端点,
   需在空目录上 `git init`;与所有其他写端点相反,走 `_git_init_preflight`)
+
+> **v2.17.1 (2026-07-16) git-init `force` 标志**:`POST /spcode/git-init` 新增 `force: bool`
+> 请求字段(默认 `false`)。`force=true` 跳过 `directory_not_empty` 检查,允许在非空目录
+> init git 仓库。`already_a_git_repo` 是 hard-ban,`force` 不绕过。详见
+> `docs/superpowers/specs/2026-07-16-git-init-force-design.md`。
 - `GET /spcode/git-branches` — PR-C(支持 ETag/304,3 路 porcelain 弱缓存,_compute_git_etag 共享)
 - `POST /spcode/git-branch-create` — PR-D(8 步防御:name 校验 + 创建前分支已存在 +
   start_point ^{commit} 校验 + worktree dirty 检查)

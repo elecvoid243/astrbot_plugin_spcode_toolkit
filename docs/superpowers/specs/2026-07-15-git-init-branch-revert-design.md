@@ -2,6 +2,10 @@
 
 > **For agentic workers:** 这是 brainstorming 阶段的产出。设计经用户审核通过后,下一步调用 writing-plans 技能输出实现计划。
 
+> **v2.17.1 Update (2026-07-16)**: 本 spec §3.1 的 `directory_not_empty` "最严格"语义
+> 已被 `docs/superpowers/specs/2026-07-16-git-init-force-design.md` 放宽为 opt-in。
+> `force=true` 时跳过非空检查;`force=false`(默认)行为不变。
+
 **状态**: ✅ 设计已通过(用户确认日期 2026-07-15,3 段全部确认:§2 架构总览 → §3 各端点详细规格 → §6 测试策略)
 **作者**: elecvoid243 @ 2026-07-15 23:30
 **目标插件 / 仓库**:

@@ -401,7 +401,7 @@ AGENTS.md 是 OpenCode 提出的项目级 LLM 指令文件，功能类似 Cursor
 | `/spcode/git-stage` | POST | git add(files 或 all,互斥) | body: `{files:[…]}` \| `{all:true}` |
 | `/spcode/git-unstage` | POST | git reset HEAD(files 或 all,互斥) | body: `{files:[…]}` \| `{all:true}` |
 | `/spcode/git-commit` | POST | git commit(仅 message) | body: `{message:"…"}` |
-| `/spcode/git-init` | POST | 在空目录上 git init(**唯一**豁免 preflight) | body: `{path, initial_branch?="main", bare?=false}` |
+| `/spcode/git-init` | POST | 在目录上 git init(**唯一**豁免 preflight,v2.17.1 支持 `force` 非空目录) | body: `{path, initial_branch?="main", bare?=false, force?=false}` |
 | `/spcode/git-branches` | GET | 列出所有 branch(local+remote)+current+default(ETag/304) | `umo`, `worktree?` |
 | `/spcode/git-branch-create` | POST | 从 HEAD/指定 start_point 创建 branch | body: `{name, start_point?, force?}` |
 | `/spcode/git-branch-delete` | POST | 删除 branch(`-d` 仅 merged,`-D` 含 unmerged;硬禁 current/main) | body: `{name, force?=false}` |
