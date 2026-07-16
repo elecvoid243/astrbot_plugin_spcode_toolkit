@@ -1,20 +1,41 @@
-# Progress Ledger — file-discard-hunk
+# v2.17.0 SDD Progress Ledger
 
-Branch: `feature/file-discard-hunk-impl`
-Worktree: `F:\github\astrbot_plugin_spcode_toolkit-discard-hunk`
-Base: `8e3acbb` (main, ahead of origin/main by 1 commit)
-Plan: `docs/superpowers/plans/2026-07-06-file-discard-hunk.md`
+**Branch:** `v2.17.0-git-init-branch-revert`
+**Base:** `14ebb0a` (main + docs(spec+plan))
+**Worktree:** `F:\github\astrbot_plugin_spcode_toolkit\.worktrees\v2.17.0`
 
-## Tasks
+## Task Status
 
-- [x] Task 1: helpers refactor (commits 8e3acbb..5645e65, review clean)
-  - Minor findings (record for final review):
-    1. `tools/webapi/git_status.py:78` has duplicate `_WORKTREE_Y` definition (out of scope)
-    2. `tests/test_helpers.py` missing trailing newline (cosmetic)
-    3. `tests/test_helpers.py` missing `from __future__ import annotations` (stylistic)
-- [x] Task 2: _parse_patch_header (commits 5645e65..fa136a4, review clean). 4 plan-bug fixes confirmed real.
-- [x] Task 3: envelope + body validation (commits fa136a4..32c3164, review clean). 3 plan-bug fixes: _proj_state.put (not set), MISSING_FILE string literal, F841 noqa.
-- [x] Task 4: file safety + git probe + patch parsing (commits 32c3164..88936b5, review clean). 4 plan-bug fixes.
-- [x] Task 5: scope detect + git apply (commits 88936b5..e512cf4, review clean). 37/37 tests pass; handler complete. 3 plan-bug fixes: NOT_MODIFIED/UNTRACKED_FILE constants, fixture set→put, dead-code patch draft cleanup.
-- [x] Task 6: route registration (commits e512cf4..efb3320, review clean). 40 e2e tests pass. 1 unrelated pre-existing test_todo_guidance_inject failure (not in our scope).
-- [x] Task 7: README + AGENTS.md docs (committed ba99ef1). Docs already had entries; verified and committed.
+- [x] Task 1: 基础设施 (PR-A) — ReasonCode +12, `_git_init_preflight`, `_is_commit_ref`, fixtures
+  - Implementer: DONE_WITH_CONCERNS, 30/30 tests passing, 3 commits, pre-existing AstrBot error noted
+- [x] Task 2: git-init (PR-B) — handler + 18 tests
+  - Implementer: DONE_WITH_CONCERNS, 17/18 tests passing, 1 commit, plan-design issue noted
+- [ ] Task 3: git-branches (PR-C) — handler + 14 tests
+- [ ] Task 4: git-branch-create (PR-D) — handler + 12 tests
+- [ ] Task 5: git-branch-delete (PR-E) — handler + 16 tests
+- [ ] Task 6: git-branch-switch (PR-F) — handler + 22 tests
+- [ ] Task 7: git-revert (PR-G) — handler + 20 tests
+- [ ] Task 8: E2E + 路由断言 (PR-H)
+- [ ] Task 9: 文档 (PR-I)
+
+## Pre-Flight Fix
+
+- [x] `0427ee9` fix(test): lazy-load main.py + stub missing runtime modules
+  (env-only; standalone pytest now collects + runs ReasonCode test = 8 PASS)
+
+## Commits Log
+
+- `0427ee9` fix(test): lazy-load main.py + stub missing runtime modules
+- `cce2a30` feat: add v2.17 git reason codes and init preflight
+- `da31e78` feat: add commit ref validation helper
+- `58f48ba` feat: add v2.17 git lifecycle test fixtures
+- `9564057` feat: fix Task 1 reviewer findings
+- `14b3f2f` feat(webapi): add POST /spcode/git-init (v2.17.0 PR-B)
+
+## Test Coverage Snapshot
+
+| Task | Files | Tests | Status |
+|------|-------|-------|--------|
+| Task 1 | test_helpers_commit_ref.py, test_git_init_preflight.py, test_reason_code.py | 25 PASSED + 6 ERROR (env) | partial |
+| Task 2 | test_git_init.py | 17 PASSED + 1 FAILED (plan-design) | partial |
+| Task 1-2 combined | | 42 PASSED | |
