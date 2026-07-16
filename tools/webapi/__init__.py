@@ -63,6 +63,7 @@ from . import (
     git_branches,  # v2.17.0 (2026-07-16) — PR-C GET endpoint
     git_branch_switch,  # v2.17.0 (2026-07-16) — PR-F POST endpoint
     git_commit,
+    git_revert,  # v2.17.0 (2026-07-16) — PR-G POST endpoint
     git_diff,
     git_file,  # spec B (2026-07-11): GET /spcode/git-file
     git_init,  # v2.17.0 (2026-07-16) — PR-B POST endpoint
@@ -143,6 +144,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["POST"],
         git_branch_switch.handle,
         "git switch <name> (支持 create/detach/force 跨字段)",
+    ),
+    (
+        "/spcode/git-revert",  # v2.17.0 (2026-07-16) — PR-G
+        ["POST"],
+        git_revert.handle,
+        "git revert <ref> --no-edit (自动生成回滚 commit)",
     ),
     (
         "/spcode/git-show",  # v3.8 (2026-06-25)
@@ -271,6 +278,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_branch_create": git_branch_create.handle,  # v2.17.0 (2026-07-16)
     "handle_post_git_branch_delete": git_branch_delete.handle,  # v2.17.0 (2026-07-16)
     "handle_post_git_branch_switch": git_branch_switch.handle,  # v2.17.0 (2026-07-16)
+    "handle_post_git_revert": git_revert.handle,  # v2.17.0 (2026-07-16)
     "handle_get_git_log": git_log.handle,
     "handle_get_git_show": git_show.handle,  # v3.8 (2026-06-25)
     "handle_get_file_browser": file_browser.handle,
@@ -411,6 +419,7 @@ __all__ = [
     "git_branch_delete",  # v2.17.0 (2026-07-16)
     "git_branch_switch",  # v2.17.0 (2026-07-16)
     "git_log",
+    "git_revert",  # v2.17.0 (2026-07-16)
     "git_show",
     "git_stage",
     "git_status",
