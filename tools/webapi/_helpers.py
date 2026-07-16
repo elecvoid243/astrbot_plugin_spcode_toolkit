@@ -5,13 +5,15 @@ Only imported by webapi/* handler modules. Do NOT import from main.py
 """
 
 from __future__ import annotations
+
 import asyncio
 import hashlib
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from astrbot.api.web import JSONResponse  # _JSONResponseCompat 父类
 
@@ -221,6 +223,26 @@ class ReasonCode:
     FILE_MISSING_AT_REF = "file_missing_at_ref"  # git-file: ref 解析成功但 path 不在 ref 下
     FILE_EXISTS = "file_exists"  # PATCH /spcode/docs: new_path 已存在
 
+    # Added by v2170impl on 2026-07-16 09:26 CST.
+    # ── v2.17.0 新增:git-init / branch / revert(2026-07-15) ──
+    # git-init (4)
+    PATH_NOT_DIRECTORY = "path_not_directory"  # init: 路径存在但不是目录
+    DIRECTORY_NOT_EMPTY = "directory_not_empty"  # init: 目录里已有文件
+    ALREADY_A_GIT_REPO = "already_a_git_repo"  # init: 目录里已有 .git/
+    INIT_FAILED = "init_failed"  # init: git init 自身失败
+    # git-branch-create (1)
+    BRANCH_EXISTS = "branch_exists"  # create/switch: 分支已存在
+    # git-branch-delete (3)
+    BRANCH_NOT_FOUND = "branch_not_found"  # delete/switch: ref 不存在
+    BRANCH_IS_CURRENT = "branch_is_current"  # delete: 试图删当前 HEAD 所在分支
+    BRANCH_NOT_MERGED = "branch_not_merged"  # delete: -d 但分支未合并
+    # git-branch-switch (1)
+    WORKTREE_DIRTY = "worktree_dirty"  # switch/revert: working tree 有未提交改动
+    # git-revert (3)
+    COMMIT_NOT_FOUND = "commit_not_found"  # revert: <ref>^{commit} 解析失败
+    REVERT_CONFLICT = "revert_conflict"  # revert: 反向 patch 与 worktree 冲突
+    NOTHING_TO_REVERT = "nothing_to_revert"  # revert: ref 无改动可被反
+
 
 # ── git status --porcelain X/Y 列判定(共享常量)────────────────────
 # 从 tools/webapi/file_restore.py 提取(2026-07-06)。两个端点共用:
@@ -382,6 +404,106 @@ async def _git_endpoint_preflight(
         "umo": umo,
         "worktree": directory,
     }
+
+
+# Added by v2170impl on 2026-07-16 09:26 CST.
+async def _git_init_preflight(
+    plugin: object,
+    *,
+    path: str,
+) -> tuple[dict | None, dict | None]:
+    """Run the git-init-only path preflight.
+
+    Unlike ``_git_endpoint_preflight``, this helper does not resolve a loaded
+    project or probe for an existing Git repository.
+    """
+    from .._path_safety import is_path_safe as _is_path_safe
+
+    if not isinstance(path, str) or not path.strip():
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=0,
+            path=path or "",
+        ), None
+
+    target = Path(path).resolve()
+    if not Path(path).is_absolute():
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.PATH_UNSAFE,
+            elapsed_ms=0,
+            path=path,
+        ), None
+
+    blacklist = plugin._config.get("file_remove_blacklist")  # type: ignore[attr-defined]
+    ok, safety_reason = _is_path_safe(target, user_blacklist=blacklist)
+    if not ok:
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.PATH_UNSAFE,
+            elapsed_ms=0,
+            path=path,
+            stderr=safety_reason,
+        ), None
+
+    if not target.exists() or not target.is_dir():
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.PATH_NOT_DIRECTORY,
+            elapsed_ms=0,
+            path=path,
+        ), None
+
+    # Existing repositories get their dedicated reason before non-empty.
+    if (target / ".git").exists():
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.ALREADY_A_GIT_REPO,
+            elapsed_ms=0,
+            path=path,
+        ), None
+
+    if any(target.iterdir()):
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.DIRECTORY_NOT_EMPTY,
+            elapsed_ms=0,
+            path=path,
+        ), None
+
+    return None, {"path": str(target)}
+
+
+def _classify_switch_stderr(stderr: str) -> str:
+    """将 ``git switch`` 失败 stderr 映射到 ReasonCode。"""
+    s = stderr.lower()
+    if "already exists" in s:
+        return ReasonCode.BRANCH_EXISTS
+    if "did not match" in s or "not found" in s:
+        return ReasonCode.BRANCH_NOT_FOUND
+    if "your local changes" in s or "would be overwritten" in s:
+        return ReasonCode.WORKTREE_DIRTY
+    if "not a valid branch name" in s:
+        return ReasonCode.INVALID_BRANCH
+    return ReasonCode.GIT_ERROR
+
+
+def _classify_revert_stderr(stderr: str) -> str:
+    """将 ``git revert`` 失败 stderr 映射到 ReasonCode。"""
+    from .git_commit import _classify_commit_error
+
+    classified = _classify_commit_error(stderr, returncode=-1)
+    if classified != ReasonCode.GIT_ERROR:
+        return classified
+    s = stderr.lower()
+    if "merge conflict" in s or "conflict" in s:
+        return ReasonCode.REVERT_CONFLICT
+    if "nothing to revert" in s or "no changes" in s:
+        return ReasonCode.NOTHING_TO_REVERT
+    if "your local changes" in s or "would be overwritten" in s:
+        return ReasonCode.WORKTREE_DIRTY
+    return ReasonCode.GIT_ERROR
 
 
 def _validate_repo_relative_file(
