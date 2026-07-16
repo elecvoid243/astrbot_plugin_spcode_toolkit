@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 # 抑制 pythonw.exe 启动下子进程弹 cmd 黑窗的统一直路常量。
 #
 # WHY:
@@ -301,6 +300,21 @@ def _is_valid_ref_name(ref: str | None) -> bool:
     if "@{" in ref:
         return False
     return True
+
+
+# Added by v2170impl on 2026-07-16 09:26 CST.
+def _is_commit_ref(git_bin: str, directory: str, ref: str) -> bool:
+    """Check whether ``ref`` resolves to a commit in ``directory``.
+
+    ``^{commit}`` rejects refs that resolve only to trees or blobs, which is
+    required by the v2.17.0 git-revert endpoint.
+    """
+    result = subprocess.run(
+        [git_bin, "-C", directory, "rev-parse", "--verify", f"{ref}^{{commit}}"],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
 
 
 def _validate_new_worktree_path(
