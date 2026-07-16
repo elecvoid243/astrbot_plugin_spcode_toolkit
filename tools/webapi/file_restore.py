@@ -267,15 +267,12 @@ async def handle(
             elapsed_ms=_elapsed(),
         )
 
-    # 10. file 存在性
-    if not target.exists():
-        return _make_file_restore_empty_envelope(
-            umo=umo,
-            file=file_path,
-            reason="file_not_found",
-            directory=directory,
-            elapsed_ms=_elapsed(),
-        )
+    # 10. file 存在性已挪到 step 11+统一处理:
+    # 此前在这里硬拒 worktree 不存在的文件,会把删除类 (D / DD /  D) 的恢复
+    # 全部拦在 checkout 之前。这些场景下 ``git checkout [HEAD] -- <file>``
+    # 自己会从 index/HEAD 把文件重新拉回来,不需要 pre-check。
+    # 真正需要 "文件不存在才算 failure" 的场景交给 porcelain 之后的
+    # 判定统一给出(见 step 11+ 分支)。
 
     # 11. git status --porcelain 预检 + scope 自动检测
     # v3.6 改造:不仅区分 not_modified / untracked_file,还按 X/Y 列
@@ -314,14 +311,42 @@ async def handle(
     x_status = first_line[0] if len(first_line) >= 1 else " "
     y_status = first_line[1] if len(first_line) >= 2 else " "
 
-    # 未跟踪文件(``?? path``)
+    # 未跟踪文件(``?? path``)— 语义:撤销新增。worktree 中已存在的副本
+    # 直接 unlink;如果用户/并发已经先删了,当作 nothing-to-do。
+    #
+    # 选 ``Path.unlink`` 而非 ``git clean -f -- <path>``:
+    # - git clean 对 .gitignore 中的文件不会删,与"撤销新增"语义不一致
+    # - 这里 file 路径已在 step 9 通过 ``_validate_repo_relative_file`` 4 步
+    #   防御(含 .git 段、绝对路径、父目录穿越、symlink 转义),安全性可靠
     if x_status == "?" and y_status == "?":
-        return _make_file_restore_empty_envelope(
+        if not target.exists():
+            return _make_file_restore_empty_envelope(
+                umo=umo,
+                file=file_path,
+                reason="not_modified",
+                directory=directory,
+                elapsed_ms=_elapsed(),
+            )
+        try:
+            target.unlink()
+        except OSError as exc:
+            return _make_file_restore_empty_envelope(
+                umo=umo,
+                file=file_path,
+                reason="git_error",
+                directory=directory,
+                stderr=str(exc),
+                elapsed_ms=_elapsed(),
+            )
+        logger.info(
+            f"[file-restore] untracked delete: file={file_path!r} "
+            f"worktree={directory!r} umo={umo!r} elapsed_ms={_elapsed()}"
+        )
+        return _make_file_restore_success_envelope(
             umo=umo,
             file=file_path,
-            reason="untracked_file",
             directory=directory,
-            stderr=porcelain,
+            scope="unstaged",
             elapsed_ms=_elapsed(),
         )
 
