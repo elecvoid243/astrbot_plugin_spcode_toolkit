@@ -58,6 +58,7 @@ from . import (
     file_name_search,  # v2.15.0 (2026-07-02)
     file_restore,
     file_search,  # v2.15.0 (2026-07-02)
+    git_branch_create,  # v2.17.0 (2026-07-16) — PR-D POST endpoint
     git_branches,  # v2.17.0 (2026-07-16) — PR-C GET endpoint
     git_commit,
     git_diff,
@@ -122,6 +123,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["GET"],
         git_branches.handle,
         "列出已加载项目的本地和远程分支",
+    ),
+    (
+        "/spcode/git-branch-create",  # v2.17.0 (2026-07-16) — PR-D
+        ["POST"],
+        git_branch_create.handle,
+        "git branch <name> (从当前 HEAD 拉新分支)",
     ),
     (
         "/spcode/git-show",  # v3.8 (2026-06-25)
@@ -247,6 +254,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_get_git_diff": git_diff.handle,
     "handle_get_git_status": git_status.handle,  # v2.13 (2026-06-24)
     "handle_get_git_branches": git_branches.handle,  # v2.17.0 (2026-07-16)
+    "handle_post_git_branch_create": git_branch_create.handle,  # v2.17.0 (2026-07-16)
     "handle_get_git_log": git_log.handle,
     "handle_get_git_show": git_show.handle,  # v3.8 (2026-06-25)
     "handle_get_file_browser": file_browser.handle,
@@ -383,6 +391,7 @@ __all__ = [
     "git_file",  # spec B (2026-07-11)
     "git_init",  # v2.17.0 (2026-07-15)
     "git_branches",  # v2.17.0 (2026-07-16)
+    "git_branch_create",  # v2.17.0 (2026-07-16)
     "git_log",
     "git_show",
     "git_stage",
