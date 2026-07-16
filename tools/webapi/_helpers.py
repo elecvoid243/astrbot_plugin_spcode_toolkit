@@ -236,8 +236,7 @@ class ReasonCode:
     BRANCH_NOT_FOUND = "branch_not_found"  # delete/switch: ref 不存在
     BRANCH_IS_CURRENT = "branch_is_current"  # delete: 试图删当前 HEAD 所在分支
     BRANCH_NOT_MERGED = "branch_not_merged"  # delete: -d 但分支未合并
-    # git-branch-switch (1)
-    WORKTREE_DIRTY = "worktree_dirty"  # switch/revert: working tree 有未提交改动
+    # git-branch-switch (shared WORKTREE_DIRTY above)
     # git-revert (3)
     COMMIT_NOT_FOUND = "commit_not_found"  # revert: <ref>^{commit} 解析失败
     REVERT_CONFLICT = "revert_conflict"  # revert: 反向 patch 与 worktree 冲突

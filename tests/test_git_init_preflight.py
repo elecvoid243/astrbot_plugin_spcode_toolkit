@@ -8,7 +8,6 @@ import subprocess
 from collections.abc import Awaitable
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from tools.webapi._helpers import (
@@ -18,20 +17,12 @@ from tools.webapi._helpers import (
     _git_init_preflight,
 )
 
-
-def _make_plugin() -> MagicMock:
-    """Create the minimal plugin configuration needed by init preflight."""
-    plugin = MagicMock()
-    plugin._config = {
-        "file_remove_blacklist": None,
-        "git_path": "",
-    }
-    return plugin
+from tests.conftest import _make_plugin
 
 
 @pytest.fixture
-def init_plugin() -> Any:
-    """Build the init-specific test plugin configuration."""
+def plugin() -> Any:
+    """Build a per-test plugin using the shared project factory."""
     return _make_plugin()
 
 
@@ -42,26 +33,26 @@ def _await(
     return asyncio.run(coro)
 
 
-def test_init_preflight_happy_path(tmp_path: Path, init_plugin: Any) -> None:
+def test_init_preflight_happy_path(tmp_path: Path, plugin: Any) -> None:
     target = tmp_path / "new_repo"
     target.mkdir()
-    err, ctx = _await(_git_init_preflight(init_plugin, path=str(target)))
+    err, ctx = _await(_git_init_preflight(plugin, path=str(target)))
     assert err is None
     assert ctx is not None
     assert ctx["path"] == str(target.resolve())
 
 
-def test_init_preflight_path_missing(tmp_path: Path, init_plugin: Any) -> None:
-    err, ctx = _await(_git_init_preflight(init_plugin, path=str(tmp_path / "nope")))
+def test_init_preflight_path_missing(tmp_path: Path, plugin: Any) -> None:
+    err, ctx = _await(_git_init_preflight(plugin, path=str(tmp_path / "nope")))
     assert err is not None
     assert ctx is None
     assert err["data"]["reason"] == ReasonCode.PATH_NOT_DIRECTORY
 
 
-def test_init_preflight_path_is_file(tmp_path: Path, init_plugin: Any) -> None:
+def test_init_preflight_path_is_file(tmp_path: Path, plugin: Any) -> None:
     file_path = tmp_path / "f.txt"
     file_path.write_text("x", encoding="utf-8")
-    err, ctx = _await(_git_init_preflight(init_plugin, path=str(file_path)))
+    err, ctx = _await(_git_init_preflight(plugin, path=str(file_path)))
     assert err is not None
     assert ctx is None
     assert err["data"]["reason"] == ReasonCode.PATH_NOT_DIRECTORY
@@ -69,22 +60,22 @@ def test_init_preflight_path_is_file(tmp_path: Path, init_plugin: Any) -> None:
 
 def test_init_preflight_directory_not_empty(
     tmp_path: Path,
-    init_plugin: Any,
+    plugin: Any,
 ) -> None:
     target = tmp_path / "occupied"
     target.mkdir()
     (target / "README.md").write_text("hi", encoding="utf-8")
-    err, ctx = _await(_git_init_preflight(init_plugin, path=str(target)))
+    err, ctx = _await(_git_init_preflight(plugin, path=str(target)))
     assert err is not None
     assert ctx is None
     assert err["data"]["reason"] == ReasonCode.DIRECTORY_NOT_EMPTY
 
 
-def test_init_preflight_already_git_repo(tmp_path: Path, init_plugin: Any) -> None:
+def test_init_preflight_already_git_repo(tmp_path: Path, plugin: Any) -> None:
     target = tmp_path / "already"
     target.mkdir()
     subprocess.run(["git", "init", "-q", str(target)], check=True)
-    err, ctx = _await(_git_init_preflight(init_plugin, path=str(target)))
+    err, ctx = _await(_git_init_preflight(plugin, path=str(target)))
     assert err is not None
     assert ctx is None
     assert err["data"]["reason"] == ReasonCode.ALREADY_A_GIT_REPO
@@ -92,11 +83,11 @@ def test_init_preflight_already_git_repo(tmp_path: Path, init_plugin: Any) -> No
 
 def test_init_preflight_path_unsafe_traversal(
     tmp_path: Path,
-    init_plugin: Any,
+    plugin: Any,
 ) -> None:
     del tmp_path
-    init_plugin._config["file_remove_blacklist"] = ["C:/Windows"]
-    err, ctx = _await(_git_init_preflight(init_plugin, path="../../../etc"))
+    plugin._config["file_remove_blacklist"] = ["C:/Windows"]
+    err, ctx = _await(_git_init_preflight(plugin, path="../../../etc"))
     assert err is not None
     assert ctx is None
     assert err["data"]["reason"] == ReasonCode.PATH_UNSAFE
