@@ -1,7 +1,7 @@
 # tools/webapi/__init__.py
 """Web API endpoint handlers, extracted from main.py.
 
-This package owns the 24 ``/spcode/*`` HTTP endpoints consumed by the
+This package owns the 25 ``/spcode/*`` HTTP endpoints consumed by the
 Dashboard / WebUI:
 
   * ``/spcode/project-status``  (GET)
@@ -18,11 +18,12 @@ Dashboard / WebUI:
   * ``/spcode/git-stage``       (POST)  # v3.7
   * ``/spcode/git-unstage``     (POST)  # v3.7
   * ``/spcode/git-commit``      (POST)  # v3.7
+  * ``/spcode/git-init``        (POST)  # v2.17.0 (2026-07-15) — git init 端点
   * ``/spcode/git-show``        (GET)   # v3.8 (2026-06-25)
   * ``/spcode/git-worktree-add``   (POST)  # v2.14.0 (2026-06-26) — PR-B ADD endpoint
   * ``/spcode/git-worktree-remove`` (POST) # v2.14.0 (2026-06-26) — PR-C REMOVE endpoint
-  * ``/spcode/git-worktree-lock``   (POST) # v2.14.0 (2026-06-26) — PR-D LOCK endpoint
-  * ``/spcode/git-worktree-unlock`` (POST) # v2.14.0 (2026-06-26) — PR-D UNLOCK endpoint
+  * ``/spcode/git-worktree-lock``   (POST)  # v2.14.0 (2026-06-26) — PR-D LOCK endpoint
+  * ``/spcode/git-worktree-unlock`` (POST)  # v2.14.0 (2026-06-26) — PR-D UNLOCK endpoint
   * ``/spcode/codegraph-status``    (GET)  # v2.14.x (2026-06-28)
 
   * ``/spcode/git-file``         (GET)   # spec B (2026-07-11)
@@ -60,6 +61,7 @@ from . import (
     git_commit,
     git_diff,
     git_file,  # spec B (2026-07-11): GET /spcode/git-file
+    git_init,  # v2.17.0 (2026-07-15): POST /spcode/git-init
     git_log,
     git_show,
     git_stage,
@@ -119,6 +121,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["GET"],
         git_show.handle,
         "查看给定 ref 修改的文件列表 (name-status + numstat)",
+    ),
+    (
+        "/spcode/git-init",  # v2.17.0 (2026-07-15)
+        ["POST"],
+        git_init.handle,
+        "在已存在空目录上 git init(独立 preflight,无 umo 解析)",
     ),
     (
         "/spcode/git-stage",
@@ -241,6 +249,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_stage": git_stage.handle,
     "handle_post_git_unstage": git_unstage.handle,
     "handle_post_git_commit": git_commit.handle,
+    "handle_post_git_init": git_init.handle,  # v2.17.0 (2026-07-15)
     "handle_post_git_worktree_add": git_worktree_add.handle,  # v2.14.0 (2026-06-26)
     "handle_post_git_worktree_lock": git_worktree_lock.handle,  # v2.14.0 (2026-06-26)
     "handle_post_git_worktree_remove": git_worktree_remove.handle,  # v2.14.0 (2026-06-26)
@@ -332,7 +341,7 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
 
 def register_webapi_routes(plugin: SPCodeToolkit) -> None:
-    """Register all 24 ``/spcode/*`` routes against ``plugin.context``.
+    """Register all 25 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
     but never raised — a single broken endpoint should not block
@@ -364,6 +373,7 @@ __all__ = [
     "file_search",  # v2.15.0 (2026-07-02)
     "git_diff",
     "git_file",  # spec B (2026-07-11)
+    "git_init",  # v2.17.0 (2026-07-15)
     "git_log",
     "git_show",
     "git_stage",
