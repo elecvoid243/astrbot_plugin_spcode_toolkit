@@ -426,6 +426,7 @@ def _parse_git_worktree_porcelain(text: str) -> list[dict]:
                 "branch": None,
                 "head_sha": "",
                 "is_main": False,
+                "prunable": False,
                 "locked": False,  # v2.14.0+
                 "locked_reason": None,  # v2.14.0+
             }
@@ -464,6 +465,12 @@ def _parse_git_worktree_porcelain(text: str) -> list[dict]:
             multiline_buffer.append(raw_line)
         elif raw_line.startswith("detached"):
             current["branch"] = None
+        elif raw_line.startswith("prunable"):
+            # git 2.25+ emits "prunable" or "prunable <reason>" for
+            # worktrees whose gitdir points to a non-existent location.
+            # Record the flag so the frontend can show a warning badge
+            # on the tab instead of silently hiding the worktree.
+            current["prunable"] = True
         else:
             raise ValueError(f"Unknown porcelain record: {raw_line!r}")
 
