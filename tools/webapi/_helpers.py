@@ -165,11 +165,6 @@ class ReasonCode:
     INVALID_MESSAGE = "invalid_message"  # PR-5: git-commit 统一 message 校验
     INVALID_PARAM = "invalid_param"
 
-    # ── btw 端点专用(v2.20, 2026-07-17) ──
-    NO_PROVIDER = "no_provider"  # 无可用 LLM Provider
-    EMPTY_RESPONSE = "empty_response"  # LLM 返回空文本
-    LLM_ERROR = "llm_error"  # LLM 调用异常(provider.text_chat 抛错)
-
     # ── 文件路径 / 范围类 ──
     PATH_UNSAFE = "path_unsafe"
     NOTHING_STAGED = "nothing_staged"  # legacy alias for NOTHING_TO_COMMIT
