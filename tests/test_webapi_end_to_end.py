@@ -57,6 +57,7 @@ _SKIP_FILE_BROWSER = frozenset(
         "handle_get_git_log",  # PR-2 (2026-06-24)
         "handle_get_git_show",  # v3.8 (2026-06-25)
         "handle_get_git_file",  # spec B (2026-07-11) — uses web.request.query inline
+        "handle_post_btw",  # v2.20 (2026-07-17) — 需要 body 形参(_wrap 注入)
     }
 )
 
@@ -98,6 +99,12 @@ def test_git_show_handler_excluded_from_smoke() -> None:
     assert "handle_get_git_show" not in (set(HANDLERS.keys()) - _SKIP_FILE_BROWSER)
 
 
+def test_btw_handler_excluded_from_smoke() -> None:
+    """v2.20: handle_post_btw 需要 body 形参,smoke parametrize 自动调
+    handler(plugin) 无 body 会触发 TypeError (body is keyword-only)。"""
+    assert "handle_post_btw" not in (set(HANDLERS.keys()) - _SKIP_FILE_BROWSER)
+
+
 def test_routes_table_has_thirty_endpoints() -> None:
     """The route table lists all spcode webapi endpoints.
 
@@ -130,6 +137,8 @@ def test_routes_table_has_thirty_endpoints() -> None:
         "/spcode/git-worktree-lock",  # v2.14.0 (2026-06-26) PR-D
         "/spcode/git-worktree-unlock",  # v2.14.0 (2026-06-26) PR-D
         "/spcode/codegraph-status",  # v2.14.x (2026-06-28)
+        # ── v2.20 (2026-07-17) — POST /spcode/btw ──
+        "/spcode/btw",  # v2.20 btw endpoint (顺便问问)
         "/spcode/file-search",  # v2.15.0 (2026-07-02)
         "/spcode/file-name-search",  # v2.15.0 (2026-07-02)
         "/spcode/git-file",  # spec B (2026-07-11)
@@ -150,7 +159,9 @@ def test_routes_table_has_thirty_endpoints() -> None:
     # 30 entries total: 11 GET + 17 POST + 1 PATCH + 1 DELETE
     methods = [m for entry in ROUTES for m in entry[1]]
     assert methods.count("GET") == 12  # was 11; +1 for git-repo-check
-    assert methods.count("POST") == 17  # was 12; +5 for v2.17.0 POST endpoints
+    # v2.20 (2026-07-17): +1 POST for btw endpoint. 32 entries total:
+    # 13 GET + 18 POST + 1 PATCH + 1 DELETE
+    assert methods.count("POST") == 18  # was 17; +1 for btw endpoint
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
 
@@ -359,16 +370,17 @@ async def test_wrap_get_query_via_web_request(monkeypatch) -> None:
 # === register_webapi_routes ===========================================
 
 
-def test_register_webapi_routes_calls_context_thirty_times() -> None:
+def test_register_webapi_routes_calls_context_thirty_two_times() -> None:
     """``register_webapi_routes`` must call ``register_web_api`` once per route.
 
     v2.17.0 (2026-07-15): route count 24 -> 30(+git-init/branches/create/delete/switch/revert)。
     v2.18.0 (2026-07-16): route count 30 -> 31(+git-repo-check)。
+    v2.20 (2026-07-17): route count 31 -> 32(+btw)。
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    # 31 entries total: 30 base + 1 v2.18.0
-    assert plugin.context.register_web_api.call_count == 31
+    # 32 entries total: 31 + 1 v2.20
+    assert plugin.context.register_web_api.call_count == 32
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -385,9 +397,9 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 31 routes(v2.18.0 totals).
+    # Should not raise; should attempt all 32 routes (v2.20 totals).
     register_webapi_routes(plugin)
-    assert call_count == 31
+    assert call_count == 32
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────
