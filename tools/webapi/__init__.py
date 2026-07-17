@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from main import SPCodeToolkit
 
 from . import (
+    btw,  # v2.20 (2026-07-17) - 一次性独立 LLM 请求(顺便问问)
     codegraph_status,  # v2.14.x (2026-06-28)
     docs_crud,  # spec B (2026-07-11): POST/PATCH/DELETE /spcode/docs
     file_browser,
@@ -250,6 +251,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "获取 codegraph MCP 运行状态(供 dashboard 显示)",
     ),
     (
+        "/spcode/btw",  # v2.20 (2026-07-17)
+        ["POST"],
+        btw.handle,
+        "一次性独立 LLM 请求(顺便问问): 复用当前会话历史(命中 prefix cache),不回写历史,无工具,纯文本输出",
+    ),
+    (
         "/spcode/git-file",  # spec B (2026-07-11)
         ["GET"],
         git_file.handle,
@@ -304,6 +311,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_worktree_remove": git_worktree_remove.handle,  # v2.14.0 (2026-06-26)
     "handle_post_git_worktree_unlock": git_worktree_unlock.handle,  # v2.14.0 (2026-06-26)
     "handle_get_codegraph_status": codegraph_status.handle,  # v2.14.x (2026-06-28)
+    "handle_post_btw": btw.handle,  # v2.20 (2026-07-17)
     "handle_get_git_file": git_file.handle,  # spec B (2026-07-11)
     "handle_post_docs": docs_crud.handle_post_docs,  # spec B (2026-07-11)
     "handle_patch_docs": docs_crud.handle_patch_docs,  # spec B (2026-07-11)
@@ -413,6 +421,7 @@ __all__ = [
     "HANDLERS",
     "_wrap",
     "register_webapi_routes",
+    "btw",  # v2.20 (2026-07-17)
     "codegraph_status",  # v2.14.x (2026-06-28)
     "docs_crud",  # spec B (2026-07-11)
     "file_browser",
