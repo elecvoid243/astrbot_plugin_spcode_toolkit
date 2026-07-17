@@ -110,7 +110,8 @@ def test_routes_table_has_thirty_endpoints() -> None:
 
     v2.17.0 (2026-07-15) 新增 6 个 git 端点(init/branches/create/delete/switch/revert)。
     v2.18.0 (2026-07-16) 新增 1 个 git 端点(repo-check)。
-    端点总数演进:24 (spec B) -> 30 (v2.17.0) -> 31 (v2.18.0)。
+    端点总数演进:24 (spec B) -> 30 (v2.17.0) -> 31 (v2.18.0) -> 32 (v2.20 btw)
+    -> 33 (2026-07-17 file-write)。
     - 24 个之前端点:9 GET + 11 POST + 1 PATCH + 1 DELETE = 22 routes,
       部分端点共享路径(/spcode/docs 用 POST/PATCH/DELETE 三方法)。
     - v2.17.0 新增:1 GET (git-branches) + 5 POST (init/create/delete/switch/revert)。
@@ -151,6 +152,7 @@ def test_routes_table_has_thirty_endpoints() -> None:
         "/spcode/git-branch-switch",  # v2.17.0 PR-F
         "/spcode/git-revert",  # v2.17.0 PR-G
         "/spcode/git-repo-check",  # v2.18.0 (2026-07-16)
+        "/spcode/file-write",  # 2026-07-17 (workspace file editor)
     }
     # Methods sanity:
     # 24 base: 10 GET (含 docs GET?) + 12 POST + 1 PATCH + 1 DELETE = 24 entries
@@ -161,7 +163,8 @@ def test_routes_table_has_thirty_endpoints() -> None:
     assert methods.count("GET") == 12  # was 11; +1 for git-repo-check
     # v2.20 (2026-07-17): +1 POST for btw endpoint. 32 entries total:
     # 13 GET + 18 POST + 1 PATCH + 1 DELETE
-    assert methods.count("POST") == 18  # was 17; +1 for btw endpoint
+    # 2026-07-17: +1 POST for file-write. 33 entries total.
+    assert methods.count("POST") == 19  # was 18; +1 for file-write
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
 
@@ -379,8 +382,8 @@ def test_register_webapi_routes_calls_context_thirty_two_times() -> None:
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    # 32 entries total: 31 + 1 v2.20
-    assert plugin.context.register_web_api.call_count == 32
+    # 33 entries total: 32 + 1 file-write (2026-07-17)
+    assert plugin.context.register_web_api.call_count == 33
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -397,9 +400,9 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 32 routes (v2.20 totals).
+    # Should not raise; should attempt all 33 routes (file-write added).
     register_webapi_routes(plugin)
-    assert call_count == 32
+    assert call_count == 33
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

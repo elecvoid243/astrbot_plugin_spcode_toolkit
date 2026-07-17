@@ -60,6 +60,7 @@ from . import (
     file_name_search,  # v2.15.0 (2026-07-02)
     file_restore,
     file_search,  # v2.15.0 (2026-07-02)
+    file_write,  # 2026-07-17: POST /spcode/file-write(通用文本覆写)
     git_branch_create,  # v2.17.0 (2026-07-16) — PR-D POST endpoint
     git_branch_delete,  # v2.17.0 (2026-07-16) — PR-E POST endpoint
     git_branches,  # v2.17.0 (2026-07-16) — PR-C GET endpoint
@@ -280,6 +281,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         docs_crud.handle_delete_docs,
         "从工作区删除 docs 文件(unlink,不调 git rm)",
     ),
+    (
+        "/spcode/file-write",  # 2026-07-17 — workspace file editor
+        ["POST"],
+        file_write.handle,
+        "覆写已存在的 repo 文本文件(不限扩展名,目标必须已存在)",
+    ),
 ]
 
 # 旧方法名 -> 新模块级 handler (for back-compat / introspection)
@@ -316,6 +323,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_docs": docs_crud.handle_post_docs,  # spec B (2026-07-11)
     "handle_patch_docs": docs_crud.handle_patch_docs,  # spec B (2026-07-11)
     "handle_delete_docs": docs_crud.handle_delete_docs,  # spec B (2026-07-11)
+    "handle_post_file_write": file_write.handle,  # 2026-07-17
 }
 
 
@@ -429,6 +437,7 @@ __all__ = [
     "file_name_search",  # v2.15.0 (2026-07-02)
     "file_restore",
     "file_search",  # v2.15.0 (2026-07-02)
+    "file_write",  # 2026-07-17
     "git_diff",
     "git_file",  # spec B (2026-07-11)
     "git_init",  # v2.17.0 (2026-07-15)
