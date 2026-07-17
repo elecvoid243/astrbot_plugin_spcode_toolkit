@@ -165,6 +165,11 @@ class ReasonCode:
     INVALID_MESSAGE = "invalid_message"  # PR-5: git-commit 统一 message 校验
     INVALID_PARAM = "invalid_param"
 
+    # ── btw 端点专用(v2.20, 2026-07-17) ──
+    NO_PROVIDER = "no_provider"  # 无可用 LLM Provider
+    EMPTY_RESPONSE = "empty_response"  # LLM 返回空文本
+    LLM_ERROR = "llm_error"  # LLM 调用异常(provider.text_chat 抛错)
+
     # ── 文件路径 / 范围类 ──
     PATH_UNSAFE = "path_unsafe"
     NOTHING_STAGED = "nothing_staged"  # legacy alias for NOTHING_TO_COMMIT
@@ -241,6 +246,11 @@ class ReasonCode:
     COMMIT_NOT_FOUND = "commit_not_found"  # revert: <ref>^{commit} 解析失败
     REVERT_CONFLICT = "revert_conflict"  # revert: 反向 patch 与 worktree 冲突
     NOTHING_TO_REVERT = "nothing_to_revert"  # revert: ref 无改动可被反
+
+    # ── /spcode/btw(2026-07-17) ──
+    NO_PROVIDER = "no_provider"  # 无可用 LLM Provider
+    EMPTY_RESPONSE = "empty_response"  # LLM 返回空文本
+    LLM_ERROR = "llm_error"  # LLM 调用异常(provider.text_chat 抛错)
 
 
 # ── git status --porcelain X/Y 列判定(共享常量)────────────────────
