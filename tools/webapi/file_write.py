@@ -1,13 +1,18 @@
-"""POST /spcode/file-write — 覆写已存在的 repo 文本文件(通用文件编辑)。
+"""POST /spcode/file-write — 保存 repo 文本文件(通用文件编辑,upsert)。
 
 2026-07-17: 工作区文件浏览器预览支持编辑任意文本文件。POST /spcode/docs
 按设计仅接受 .md 路径(spec §4.3),不能用于代码文件,故新增本端点。
 
 与 docs POST 的差异:
-  - 不限定扩展名(任意 repo-relative 文本文件);
-  - 目标必须已存在且是文件(本端点是"编辑"而非"新建/upsert"),
-    否则 file_not_found;
-  - 不自动 mkdir 父目录。
+  - 不限定扩展名(任意 repo-relative 文本文件)。
+
+相同点:
+  - upsert 语义: 目标不存在则新建(自动创建父目录),已存在则覆写;
+    响应带 ``created`` 标志区分两种动作(2026-07-17 修复: 原实现仅允许
+    覆写已存在文件,与前端"保存后将新建"提示矛盾)。
+
+边界: 目标已存在但不是常规文件(目录 / 特殊文件)→ file_not_found,
+避免 ``write_text`` 抛 ``IsADirectoryError``。
 
 防御链与 docs POST 一致: `_git_endpoint_preflight`(5 步) +
 `_validate_repo_relative_file`(4 步);UTF-8 写入;content ≤ 2 MB。
@@ -68,7 +73,7 @@ async def handle(
     worktree: str | None = None,
     body: dict | None = None,
 ) -> dict:
-    """POST /spcode/file-write handler — 覆写已存在文件的文本内容。"""
+    """POST /spcode/file-write handler — 保存文本内容(upsert: 不存在则新建)。"""
     t0 = _time.time()
     if body is None or not isinstance(body, dict):
         return _make_envelope(
@@ -127,8 +132,9 @@ async def handle(
             worktree=directory,
         )
 
-    # 仅允许覆写已存在的文件(is_file() 同时排除目录与不存在路径)。
-    if not target.is_file():
+    # 已存在但不是常规文件(目录 / 特殊文件)→ 拒绝,避免 write_text
+    # 抛 IsADirectoryError。reason 沿用 file_not_found(语义: 无可写文件)。
+    if target.exists() and not target.is_file():
         return _make_envelope(
             success=False,
             reason=ReasonCode.FILE_NOT_FOUND,
@@ -140,6 +146,13 @@ async def handle(
             path=path,
         )
 
+    # upsert(2026-07-17): 不存在则新建 — 前端编辑不存在的文件(如仓库
+    # 还没有 .gitignore)时提示"保存后将新建",后端必须兑现该语义。
+    # 自动创建缺失的父目录,与 docs POST 行为一致。
+    created = not target.exists()
+    if created:
+        target.parent.mkdir(parents=True, exist_ok=True)
+
     # newline="": 写盘不做 \n → os.linesep 转换(Windows 上默认会把 LF
     # 内容写成 CRLF)。前端 textarea 已把内容规范为 \n,按字节原样落盘,
     # 与 git 仓库主流的 LF 风格一致。
@@ -150,6 +163,7 @@ async def handle(
         success=True,
         elapsed_ms=_elapsed(t0),
         saved=True,
+        created=created,
         directory=directory,
         umo=effective_umo,
         worktree=directory,

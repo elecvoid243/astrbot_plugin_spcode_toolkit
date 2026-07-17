@@ -285,7 +285,7 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "/spcode/file-write",  # 2026-07-17 — workspace file editor
         ["POST"],
         file_write.handle,
-        "覆写已存在的 repo 文本文件(不限扩展名,目标必须已存在)",
+        "保存 repo 文本文件(不限扩展名,upsert: 不存在则新建,响应带 created)",
     ),
 ]
 

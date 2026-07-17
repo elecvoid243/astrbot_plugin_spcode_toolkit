@@ -256,7 +256,7 @@ astrbot_plugin_spcode_toolkit/
     ├── file_remove.py            # [legacy 入口] 删除业务实现
     ├── todo_list.py              # [legacy 入口] v2.6+ stub，保留兼容
     │
-    └── webapi/                   # Web API 层（32 条路由记录 / 30 个唯一路径，每端点一文件）
+    └── webapi/                   # Web API 层（33 条路由记录 / 31 个唯一路径，每端点一文件）
         ├── __init__.py           #   ROUTES 路由表 + HANDLERS 别名 + _wrap() 适配器 + register_webapi_routes()
         ├── _helpers.py           #   ReasonCode / _make_envelope / _git_endpoint_preflight /
         │                         #   _git_init_preflight / _validate_repo_relative_file /
@@ -290,6 +290,8 @@ astrbot_plugin_spcode_toolkit/
         ├── git_worktree_remove.py#   POST   /spcode/git-worktree-remove (v2.14.0)
         ├── git_worktree_lock.py  #   POST   /spcode/git-worktree-lock   (v2.14.0)
         ├── git_worktree_unlock.py#   POST   /spcode/git-worktree-unlock (v2.14.0)
+        ├── btw.py                #   POST   /spcode/btw                 (v2.20, 一次性独立 LLM 请求)
+        ├── file_write.py         #   POST   /spcode/file-write          (2026-07-17, 通用文本保存 upsert)
         └── docs_crud.py          #   POST/PATCH/DELETE /spcode/docs     (spec B, 三方法复用一路径)
 ```
 
@@ -311,7 +313,7 @@ astrbot_plugin_spcode_toolkit/
    - 顶层 `xxx.py`（如 `code_check.py`、`file_remove.py`）：legacy 业务实现入口，被 `function_tools/` 引用
    - **关键设计**：`main.py` 仅保留插件入口职责，业务逻辑全部下沉到 `tools/*` 子包
 
-3. **Web API 层** `tools/webapi/`（v3.6+ 自 main.py 拆出；当前 32 条路由记录 / 30 个唯一路径）
+3. **Web API 层** `tools/webapi/`（v3.6+ 自 main.py 拆出；当前 33 条路由记录 / 31 个唯一路径）
    - 每个端点一个文件，handler 命名固定为 `async def handle(plugin, ...) -> dict`
      （`docs_crud.py` 例外：一个文件承载 `handle_post_docs` / `handle_patch_docs` / `handle_delete_docs` 三个方法，复用同一 `/spcode/docs` 路径）
    - `__init__.py` 拥有 `ROUTES` 路由表 + `HANDLERS` 别名表 + `_wrap()` 适配器 + `register_webapi_routes()`
@@ -436,7 +438,7 @@ astrbot_plugin_spcode_toolkit/
 
 ## Web API 端点（供 Dashboard 消费）
 
-Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()` 中注册，挂载前缀 `/spcode`。当前共 **32 条路由记录**（30 个唯一路径，`/spcode/docs` 一路径复用 POST/PATCH/DELETE 三方法）：
+Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()` 中注册，挂载前缀 `/spcode`。当前共 **33 条路由记录**（31 个唯一路径，`/spcode/docs` 一路径复用 POST/PATCH/DELETE 三方法）：
 
 | 端点 | 方法 | 用途 | 关键参数 |
 |------|------|------|---------|
@@ -469,6 +471,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/git-worktree-unlock` | POST | 解锁 git worktree，main 允许但 git 自身拒绝 | body: `{path}` |
 | `/spcode/codegraph-status` | GET | codegraph MCP 运行状态 | - |
 | `/spcode/btw` | POST | 一次性独立 LLM 请求（顺便问问）：复用当前会话历史命中 prefix cache，不回写历史，无工具，纯文本输出 | body: `{prompt, umo?}` |
+| `/spcode/file-write` | POST | 保存任意 repo 文本文件（不限扩展名；upsert：不存在则新建并自动建父目录，响应带 `created` 标志；目标是目录时 `file_not_found`） | body: `{path, content, umo?, worktree?}` |
 | `/spcode/docs` | POST | 创建 / 覆盖 docs 文件（upsert 到工作区） | body: `{umo?, worktree?, path, content}` |
 | `/spcode/docs` | PATCH | 重命名 docs 文件（纯文件系统 mv） | body: `{umo?, worktree?, path, new_path}` |
 | `/spcode/docs` | DELETE | 从工作区删除 docs 文件（unlink） | body: `{umo?, worktree?, path}` |

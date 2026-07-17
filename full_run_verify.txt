@@ -1,0 +1,3228 @@
+........................................................................ [  6%]
+........................................................................ [ 12%]
+........................................................................ [ 18%]
+.....................................................................FFF [ 24%]
+F....................................................................... [ 30%]
+..............................................................FFFFFFFFFF [ 36%]
+FFFFFFFFFFFFFFFFFFFFF.......................................FFF......... [ 42%]
+........................................................................ [ 48%]
+........................................................................ [ 54%]
+........................................................................ [ 61%]
+........................................................................ [ 67%]
+........................................................................ [ 73%]
+........F........................ss..................................... [ 79%]
+...............................F.FFFF................................... [ 85%]
+................................................................s.....FF [ 91%]
+FFFFFFFFEEEE.EEEEEE.EEEE............s................................... [ 97%]
+............................                                             [100%]
+=================================== ERRORS ====================================
+_____________ ERROR at setup of test_todo_add_tool_appends_items ______________
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_add_tool_appends_ite0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144BE1DF0>
+
+    @pytest.fixture
+    def tmp_data_dir(tmp_path: Path, monkeypatch):
+        """patch StarTools.get_data_dir → 临时目录,让 TodoStore 落到 tmp_path/todos。"""
+        todos_dir = tmp_path / "todos"
+        todos_dir.mkdir(parents=True, exist_ok=True)
+>       monkeypatch.setattr(
+            "astrbot.api.star.StarTools.get_data_dir",
+            lambda name: tmp_path,
+        )
+
+tests\test_todo_split_tools.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+__________ ERROR at setup of test_todo_add_tool_rejects_empty_items ___________
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_add_tool_rejects_emp0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144BE1100>
+
+    @pytest.fixture
+    def tmp_data_dir(tmp_path: Path, monkeypatch):
+        """patch StarTools.get_data_dir → 临时目录,让 TodoStore 落到 tmp_path/todos。"""
+        todos_dir = tmp_path / "todos"
+        todos_dir.mkdir(parents=True, exist_ok=True)
+>       monkeypatch.setattr(
+            "astrbot.api.star.StarTools.get_data_dir",
+            lambda name: tmp_path,
+        )
+
+tests\test_todo_split_tools.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+___________ ERROR at setup of test_todo_add_tool_rejects_none_items ___________
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_add_tool_rejects_non0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144BE3E00>
+
+    @pytest.fixture
+    def tmp_data_dir(tmp_path: Path, monkeypatch):
+        """patch StarTools.get_data_dir → 临时目录,让 TodoStore 落到 tmp_path/todos。"""
+        todos_dir = tmp_path / "todos"
+        todos_dir.mkdir(parents=True, exist_ok=True)
+>       monkeypatch.setattr(
+            "astrbot.api.star.StarTools.get_data_dir",
+            lambda name: tmp_path,
+        )
+
+tests\test_todo_split_tools.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+__________ ERROR at setup of test_todo_add_tool_rejects_when_no_list __________
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_add_tool_rejects_whe0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144BE19D0>
+
+    @pytest.fixture
+    def tmp_data_dir(tmp_path: Path, monkeypatch):
+        """patch StarTools.get_data_dir → 临时目录,让 TodoStore 落到 tmp_path/todos。"""
+        todos_dir = tmp_path / "todos"
+        todos_dir.mkdir(parents=True, exist_ok=True)
+>       monkeypatch.setattr(
+            "astrbot.api.star.StarTools.get_data_dir",
+            lambda name: tmp_path,
+        )
+
+tests\test_todo_split_tools.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+___________ ERROR at setup of test_todo_update_tool_changes_status ____________
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_update_tool_changes_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144BE25A0>
+
+    @pytest.fixture
+    def tmp_data_dir(tmp_path: Path, monkeypatch):
+        """patch StarTools.get_data_dir → 临时目录,让 TodoStore 落到 tmp_path/todos。"""
+        todos_dir = tmp_path / "todos"
+        todos_dir.mkdir(parents=True, exist_ok=True)
+>       monkeypatch.setattr(
+            "astrbot.api.star.StarTools.get_data_dir",
+            lambda name: tmp_path,
+        )
+
+tests\test_todo_split_tools.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+__________ ERROR at setup of test_todo_update_tool_overwrites_notes ___________
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_update_tool_overwrit0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144BE0E90>
+
+    @pytest.fixture
+    def tmp_data_dir(tmp_path: Path, monkeypatch):
+        """patch StarTools.get_data_dir → 临时目录,让 TodoStore 落到 tmp_path/todos。"""
+        todos_dir = tmp_path / "todos"
+        todos_dir.mkdir(parents=True, exist_ok=True)
+>       monkeypatch.setattr(
+            "astrbot.api.star.StarTools.get_data_dir",
+            lambda name: tmp_path,
+        )
+
+tests\test_todo_split_tools.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+___ ERROR at setup of test_todo_update_tool_clears_notes_with_empty_string ____
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_update_tool_clears_n0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D1447014F0>
+
+    @pytest.fixture
+    def tmp_data_dir(tmp_path: Path, monkeypatch):
+        """patch StarTools.get_data_dir → 临时目录,让 TodoStore 落到 tmp_path/todos。"""
+        todos_dir = tmp_path / "todos"
+        todos_dir.mkdir(parents=True, exist_ok=True)
+>       monkeypatch.setattr(
+            "astrbot.api.star.StarTools.get_data_dir",
+            lambda name: tmp_path,
+        )
+
+tests\test_todo_split_tools.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+______ ERROR at setup of test_todo_update_tool_keeps_notes_when_omitted _______
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_update_tool_keeps_no0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144A2FF20>
+
+    @pytest.fixture
+    def tmp_data_dir(tmp_path: Path, monkeypatch):
+        """patch StarTools.get_data_dir → 临时目录,让 TodoStore 落到 tmp_path/todos。"""
+        todos_dir = tmp_path / "todos"
+        todos_dir.mkdir(parents=True, exist_ok=True)
+>       monkeypatch.setattr(
+            "astrbot.api.star.StarTools.get_data_dir",
+            lambda name: tmp_path,
+        )
+
+tests\test_todo_split_tools.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+______ ERROR at setup of test_todo_update_tool_rejects_missing_item_ids _______
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_update_tool_rejects_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144BF9640>
+
+    @pytest.fixture
+    def tmp_data_dir(tmp_path: Path, monkeypatch):
+        """patch StarTools.get_data_dir → 临时目录,让 TodoStore 落到 tmp_path/todos。"""
+        todos_dir = tmp_path / "todos"
+        todos_dir.mkdir(parents=True, exist_ok=True)
+>       monkeypatch.setattr(
+            "astrbot.api.star.StarTools.get_data_dir",
+            lambda name: tmp_path,
+        )
+
+tests\test_todo_split_tools.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+______ ERROR at setup of test_todo_update_tool_rolls_back_on_missing_id _______
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_update_tool_rolls_ba0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D1449C42F0>
+
+    @pytest.fixture
+    def tmp_data_dir(tmp_path: Path, monkeypatch):
+        """patch StarTools.get_data_dir → 临时目录,让 TodoStore 落到 tmp_path/todos。"""
+        todos_dir = tmp_path / "todos"
+        todos_dir.mkdir(parents=True, exist_ok=True)
+>       monkeypatch.setattr(
+            "astrbot.api.star.StarTools.get_data_dir",
+            lambda name: tmp_path,
+        )
+
+tests\test_todo_split_tools.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+____________ ERROR at setup of test_todo_delete_tool_removes_items ____________
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_delete_tool_removes_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144BFA900>
+
+    @pytest.fixture
+    def tmp_data_dir(tmp_path: Path, monkeypatch):
+        """patch StarTools.get_data_dir → 临时目录,让 TodoStore 落到 tmp_path/todos。"""
+        todos_dir = tmp_path / "todos"
+        todos_dir.mkdir(parents=True, exist_ok=True)
+>       monkeypatch.setattr(
+            "astrbot.api.star.StarTools.get_data_dir",
+            lambda name: tmp_path,
+        )
+
+tests\test_todo_split_tools.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+___________ ERROR at setup of test_todo_delete_tool_rejects_zero_id ___________
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_delete_tool_rejects_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D1446CF770>
+
+    @pytest.fixture
+    def tmp_data_dir(tmp_path: Path, monkeypatch):
+        """patch StarTools.get_data_dir → 临时目录,让 TodoStore 落到 tmp_path/todos。"""
+        todos_dir = tmp_path / "todos"
+        todos_dir.mkdir(parents=True, exist_ok=True)
+>       monkeypatch.setattr(
+            "astrbot.api.star.StarTools.get_data_dir",
+            lambda name: tmp_path,
+        )
+
+tests\test_todo_split_tools.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+________ ERROR at setup of test_todo_delete_tool_rejects_none_item_ids ________
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_delete_tool_rejects_1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144BE29C0>
+
+    @pytest.fixture
+    def tmp_data_dir(tmp_path: Path, monkeypatch):
+        """patch StarTools.get_data_dir → 临时目录,让 TodoStore 落到 tmp_path/todos。"""
+        todos_dir = tmp_path / "todos"
+        todos_dir.mkdir(parents=True, exist_ok=True)
+>       monkeypatch.setattr(
+            "astrbot.api.star.StarTools.get_data_dir",
+            lambda name: tmp_path,
+        )
+
+tests\test_todo_split_tools.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+______ ERROR at setup of test_todo_delete_tool_rolls_back_on_missing_id _______
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_delete_tool_rolls_ba0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D145DA7FE0>
+
+    @pytest.fixture
+    def tmp_data_dir(tmp_path: Path, monkeypatch):
+        """patch StarTools.get_data_dir → 临时目录,让 TodoStore 落到 tmp_path/todos。"""
+        todos_dir = tmp_path / "todos"
+        todos_dir.mkdir(parents=True, exist_ok=True)
+>       monkeypatch.setattr(
+            "astrbot.api.star.StarTools.get_data_dir",
+            lambda name: tmp_path,
+        )
+
+tests\test_todo_split_tools.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+================================== FAILURES ===================================
+______________ test_restore_untracked_file_deletes_worktree_file ______________
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+plugin = <tests.conftest._make_plugin.<locals>.SPCodeToolkit object at 0x000001D14497FB90>
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_restore_untracked_file_de0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144935790>
+
+    async def test_restore_untracked_file_deletes_worktree_file(
+        plugin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """``?? path`` — 撤销新增:从 worktree 直接 unlink 文件。"""
+        _init_git_repo(tmp_path)
+        new_file = tmp_path / "new.py"
+        new_file.write_text("x = 1\n", encoding="utf-8")
+        _load_project(plugin, "u:m", str(tmp_path))
+    
+>       monkeypatch.setattr(
+            "astrbot.api.web.request",
+            _make_request({"file": "new.py", "umo": "u:m"}),
+        )
+
+tests\test_file_restore.py:138: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+___________ test_restore_worktree_deleted_file_recovers_from_index ____________
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+plugin = <tests.conftest._make_plugin.<locals>.SPCodeToolkit object at 0x000001D14497D8B0>
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_restore_worktree_deleted_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144934650>
+
+    async def test_restore_worktree_deleted_file_recovers_from_index(
+        plugin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """`` D path`` — ``git checkout -- <file>``:从 index 重新拉出已删文件。"""
+        _init_git_repo(tmp_path)
+        tracked = tmp_path / "tracked.py"
+        tracked.write_text("y = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "tracked.py"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "commit", "-m", "add", "-q"], cwd=tmp_path, check=True)
+        tracked.unlink()  # 用户手动 rm 工作区文件,但 index 还在记录
+        _load_project(plugin, "u:m", str(tmp_path))
+    
+>       monkeypatch.setattr(
+            "astrbot.api.web.request",
+            _make_request({"file": "tracked.py", "umo": "u:m"}),
+        )
+
+tests\test_file_restore.py:162: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+_____________ test_restore_staged_deleted_file_recovers_from_head _____________
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+plugin = <tests.conftest._make_plugin.<locals>.SPCodeToolkit object at 0x000001D1449C56A0>
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_restore_staged_deleted_fi0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D1449DF0E0>
+
+    async def test_restore_staged_deleted_file_recovers_from_head(
+        plugin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """``D  path`` — ``git checkout HEAD -- <file>``:从 HEAD 重新拉出。"""
+        _init_git_repo(tmp_path)
+        tracked = tmp_path / "staged_del.py"
+        tracked.write_text("z = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "staged_del.py"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "commit", "-m", "add", "-q"], cwd=tmp_path, check=True)
+        # ``git rm`` 同时 staged + 删除 worktree,porcelain 展示为 ``D  path``
+        # (X='D' Y=' ')。我们的 is_truly_staged 分支会跑 checkout HEAD --。
+        subprocess.run(["git", "rm", "staged_del.py"], cwd=tmp_path, check=True, capture_output=True)
+        _load_project(plugin, "u:m", str(tmp_path))
+    
+>       monkeypatch.setattr(
+            "astrbot.api.web.request",
+            _make_request({"file": "staged_del.py", "umo": "u:m"}),
+        )
+
+tests\test_file_restore.py:188: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+_____________ test_restore_modified_worktree_unchanged_after_fix ______________
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+>           obj = getattr(obj, name)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'astrbot' has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:95: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+plugin = <tests.conftest._make_plugin.<locals>.SPCodeToolkit object at 0x000001D1449DEE70>
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_restore_modified_worktree0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144A2BDD0>
+
+    async def test_restore_modified_worktree_unchanged_after_fix(
+        plugin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """回归保护:`` M path``(纯 worktree 改动)恢复行为不变。"""
+        _init_git_repo(tmp_path)
+        f = tmp_path / "mod.py"
+        f.write_text("v1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "mod.py"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "commit", "-m", "v1", "-q"], cwd=tmp_path, check=True)
+        f.write_text("v2 — corrupt me\n", encoding="utf-8")
+        _load_project(plugin, "u:m", str(tmp_path))
+    
+>       monkeypatch.setattr(
+            "astrbot.api.web.request",
+            _make_request({"file": "mod.py", "umo": "u:m"}),
+        )
+
+tests\test_file_restore.py:212: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:107: in derive_importpath
+    target = resolve(module)
+             ^^^^^^^^^^^^^^^
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:89: in resolve
+    found = annotated_getattr(found, part, used)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+obj = <module 'astrbot'>, name = 'api', ann = 'astrbot.api'
+
+    def annotated_getattr(obj: object, name: str, ann: str) -> object:
+        try:
+            obj = getattr(obj, name)
+        except AttributeError as e:
+>           raise AttributeError(
+                f"{type(obj).__name__!r} object at {ann} has no attribute {name!r}"
+            ) from e
+E           AttributeError: 'module' object at astrbot.api has no attribute 'api'
+
+..\..\..\Astrbot\.venv\Lib\site-packages\_pytest\monkeypatch.py:97: AttributeError
+______________________ test_init_empty_dir_default_main _______________________
+
+empty_dir = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_empty_dir_default_ma0/new_repo')
+
+    def test_init_empty_dir_default_main(empty_dir):
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(empty_dir)}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:26: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+______________________ test_init_empty_dir_custom_branch ______________________
+
+empty_dir = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_empty_dir_custom_bra0/new_repo')
+
+    def test_init_empty_dir_custom_branch(empty_dir):
+        plugin = _make_plugin()
+>       result = _run(
+            git_init.handle(
+                plugin, body={"path": str(empty_dir), "initial_branch": "develop"}
+            )
+        )
+
+tests\test_git_init.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_______________________________ test_init_bare ________________________________
+
+empty_dir = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_bare0/new_repo')
+
+    def test_init_bare(empty_dir):
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(empty_dir), "bare": True}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:45: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_____________________________ test_init_body_none _____________________________
+
+empty_dir = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_body_none0/new_repo')
+
+    def test_init_body_none(empty_dir):
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body=None))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+___________________________ test_init_path_missing ____________________________
+
+empty_dir = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_path_missing0/new_repo')
+
+    def test_init_path_missing(empty_dir):
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:62: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+__________________________ test_init_path_not_string __________________________
+
+empty_dir = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_path_not_string0/new_repo')
+
+    def test_init_path_not_string(empty_dir):
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": 123}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:68: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_____________________ test_init_initial_branch_not_string _____________________
+
+empty_dir = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_initial_branch_not_s0/new_repo')
+
+    def test_init_initial_branch_not_string(empty_dir):
+        plugin = _make_plugin()
+>       result = _run(
+            git_init.handle(plugin, body={"path": str(empty_dir), "initial_branch": []})
+        )
+
+tests\test_git_init.py:74: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+__________________________ test_init_path_traversal ___________________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_path_traversal0')
+
+    def test_init_path_traversal(tmp_path):
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": "../../../etc"}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:85: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_________________________ test_init_path_blacklisted __________________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_path_blacklisted0')
+
+    def test_init_path_blacklisted(tmp_path):
+        target = tmp_path / "win"
+        target.mkdir()
+        plugin = _make_plugin()
+        plugin._config["file_remove_blacklist"] = [str(target)]
+>       result = _run(git_init.handle(plugin, body={"path": str(target)}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:94: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_________________________ test_init_path_empty_string _________________________
+
+empty_dir = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_path_empty_string0/new_repo')
+
+    def test_init_path_empty_string(empty_dir):
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": ""}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:100: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+________________________ test_init_path_does_not_exist ________________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_path_does_not_exist0')
+
+    def test_init_path_does_not_exist(tmp_path):
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(tmp_path / "nope")}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:109: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+__________________________ test_init_path_is_a_file ___________________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_path_is_a_file0')
+
+    def test_init_path_is_a_file(tmp_path):
+        f = tmp_path / "f.txt"
+        f.write_text("x")
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(f)}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:117: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+________________________ test_init_directory_not_empty ________________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_directory_not_empty0')
+
+    def test_init_directory_not_empty(tmp_path):
+        target = tmp_path / "occupied"
+        target.mkdir()
+        (target / "x.txt").write_text("x")
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(target)}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:126: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+________________________ test_init_already_a_git_repo _________________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_already_a_git_repo0')
+
+    def test_init_already_a_git_repo(tmp_path):
+        target = tmp_path / "already"
+        target.mkdir()
+        subprocess.run(["git", "init", "-q", str(target)], check=True)
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(target)}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:135: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+______________________ test_init_git_binary_unavailable _______________________
+
+empty_dir = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_git_binary_unavailab0/new_repo')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144C14770>
+
+    def test_init_git_binary_unavailable(empty_dir, monkeypatch):
+        plugin = _make_plugin()
+        plugin._git_binary = lambda: "/nonexistent/git-binary-xyz"
+>       result = _run(git_init.handle(plugin, body={"path": str(empty_dir)}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:145: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_______________________ test_init_subprocess_exception ________________________
+
+empty_dir = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_subprocess_exception0/new_repo')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144BEA7E0>
+
+    def test_init_subprocess_exception(empty_dir, monkeypatch):
+        plugin = _make_plugin()
+        from tools.webapi import _helpers
+    
+        async def fake_run(*args, **kwargs):
+            return {"ok": False, "returncode": 1, "stderr": "fatal: bad", "stdout": ""}
+    
+        monkeypatch.setattr(_helpers, "_run_git_async", fake_run)
+>       result = _run(git_init.handle(plugin, body={"path": str(empty_dir)}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:161: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_______________________ test_init_then_git_status_works _______________________
+
+empty_dir = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_then_git_status_work0/new_repo')
+
+    def test_init_then_git_status_works(empty_dir):
+        """init 后,git status 应能正常工作。"""
+        plugin = _make_plugin()
+>       _run(git_init.handle(plugin, body={"path": str(empty_dir)}))
+
+tests\test_git_init.py:172: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+________________ test_init_then_validate_worktree_param_passes ________________
+
+empty_dir = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_then_validate_worktr0/new_repo')
+
+    def test_init_then_validate_worktree_param_passes(empty_dir):
+        """init 后,_validate_worktree_param 应能接受该路径作为 worktree candidate。
+    
+        WHY:loaded_dir 必须是 candidate 所属 git repo 的根(否则
+        `_resolve_git_common_dir(loaded_dir)` 找不到 .git,直接抛异常,
+        step 6 校验会以 worktree_invalid 拒绝 candidate)。
+        """
+        plugin = _make_plugin()
+>       _run(git_init.handle(plugin, body={"path": str(empty_dir)}))
+
+tests\test_git_init.py:189: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_________________ test_init_force_true_nonempty_dir_with_file _________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_force_true_nonempty_0')
+
+    def test_init_force_true_nonempty_dir_with_file(tmp_path):
+        """force=true + 非空目录(含文件) -> 成功 init,文件保留 untracked。"""
+        target = tmp_path / "occupied"
+        target.mkdir()
+        (target / "README.md").write_text("hello", encoding="utf-8")
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(target), "force": True}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:206: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_____________ test_init_force_true_nonempty_dir_with_subdirectory _____________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_force_true_nonempty_1')
+
+    def test_init_force_true_nonempty_dir_with_subdirectory(tmp_path):
+        """force=true + 非空目录(含子目录) -> 成功 init。"""
+        target = tmp_path / "occupied"
+        target.mkdir()
+        (target / "src").mkdir()
+        (target / "src" / "main.py").write_text("print('hi')", encoding="utf-8")
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(target), "force": True}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:221: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_____________ test_init_force_true_still_rejects_already_git_repo _____________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_force_true_still_rej0')
+
+    def test_init_force_true_still_rejects_already_git_repo(tmp_path):
+        """force=true + 已有 .git -> 仍返回 already_a_git_repo(hard-ban)。"""
+        target = tmp_path / "already"
+        target.mkdir()
+        subprocess.run(["git", "init", "-q", str(target)], check=True)
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(target), "force": True}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:232: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+____________ test_init_force_true_still_rejects_path_not_directory ____________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_force_true_still_rej1')
+
+    def test_init_force_true_still_rejects_path_not_directory(tmp_path):
+        """force=true + 不存在路径 -> 仍返回 path_not_directory。"""
+        plugin = _make_plugin()
+>       result = _run(
+            git_init.handle(plugin, body={"path": str(tmp_path / "nope"), "force": True})
+        )
+
+tests\test_git_init.py:240: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_______________ test_init_force_true_still_rejects_path_unsafe ________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_force_true_still_rej2')
+
+    def test_init_force_true_still_rejects_path_unsafe(tmp_path):
+        """force=true + 含 .. 路径 -> 仍返回 path_unsafe。"""
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": "../../../etc", "force": True}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:249: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_________________ test_init_force_true_bare_true_nonempty_dir _________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_force_true_bare_true0')
+
+    def test_init_force_true_bare_true_nonempty_dir(tmp_path):
+        """force=true + bare=true + 非空目录 -> 成功 init bare repo。"""
+        target = tmp_path / "occupied"
+        target.mkdir()
+        (target / "README.md").write_text("hello", encoding="utf-8")
+        plugin = _make_plugin()
+>       result = _run(
+            git_init.handle(plugin, body={"path": str(target), "force": True, "bare": True})
+        )
+
+tests\test_git_init.py:259: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_________________ test_init_force_true_empty_dir_still_works __________________
+
+empty_dir = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_force_true_empty_dir0/new_repo')
+
+    def test_init_force_true_empty_dir_still_works(empty_dir):
+        """force=true + 空目录 -> 成功 init(与 force=false 一致)。"""
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(empty_dir), "force": True}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:270: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_______________ test_init_force_default_false_rejects_nonempty ________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_force_default_false_0')
+
+    def test_init_force_default_false_rejects_nonempty(tmp_path):
+        """不传 force(默认 false) -> 非空目录仍被拒绝 - 向后兼容验证。"""
+        target = tmp_path / "occupied"
+        target.mkdir()
+        (target / "README.md").write_text("hello", encoding="utf-8")
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(target)}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:281: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_______________ test_init_force_explicit_false_rejects_nonempty _______________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_force_explicit_false0')
+
+    def test_init_force_explicit_false_rejects_nonempty(tmp_path):
+        """显式 force=false -> 非空目录仍被拒绝。"""
+        target = tmp_path / "occupied"
+        target.mkdir()
+        (target / "README.md").write_text("hello", encoding="utf-8")
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(target), "force": False}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:291: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+____________________ test_init_force_string_type_rejected _____________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_force_string_type_re0')
+
+    def test_init_force_string_type_rejected(tmp_path):
+        """force='true'(字符串) -> invalid_param。"""
+        target = tmp_path / "occupied"
+        target.mkdir()
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(target), "force": "true"}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:300: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+______________________ test_init_force_int_type_rejected ______________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_force_int_type_rejec0')
+
+    def test_init_force_int_type_rejected(tmp_path):
+        """force=1(int) -> invalid_param。"""
+        target = tmp_path / "occupied"
+        target.mkdir()
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(target), "force": 1}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:309: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_____________________ test_init_force_null_type_rejected ______________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_force_null_type_reje0')
+
+    def test_init_force_null_type_rejected(tmp_path):
+        """force=null(None) -> invalid_param(严格 bool 校验)。"""
+        target = tmp_path / "occupied"
+        target.mkdir()
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(target), "force": None}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:318: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+_________________ test_init_force_true_response_echoes_force __________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_init_force_true_response_0')
+
+    def test_init_force_true_response_echoes_force(tmp_path):
+        """成功响应必须回显 force 字段(便于前端审计)。"""
+        target = tmp_path / "occupied"
+        target.mkdir()
+        (target / "x.txt").write_text("x", encoding="utf-8")
+        plugin = _make_plugin()
+>       result = _run(git_init.handle(plugin, body={"path": str(target), "force": True}))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_git_init.py:328: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_git_init.py:18: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <asyncio.windows_events.WindowsProactorEventLoopPolicy object at 0x000001D1448E6CF0>
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            stacklevel = 2
+            try:
+                f = sys._getframe(1)
+            except AttributeError:
+                pass
+            else:
+                # Move up the call stack so that the warning is attached
+                # to the line outside asyncio itself.
+                while f:
+                    module = f.f_globals.get('__name__')
+                    if not (module == 'asyncio' or module.startswith('asyncio.')):
+                        break
+                    f = f.f_back
+                    stacklevel += 1
+            import warnings
+            warnings.warn('There is no current event loop',
+                          DeprecationWarning, stacklevel=stacklevel)
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+>           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\events.py:702: RuntimeError
+______________ test_log_etag_changes_when_author_filter_changes _______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D145D6C1A0>
+plugin = <tests.conftest._make_plugin.<locals>.SPCodeToolkit object at 0x000001D145D6CFB0>
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_log_etag_changes_when_aut0')
+
+    async def test_log_etag_changes_when_author_filter_changes(
+        monkeypatch, plugin, tmp_path: Path
+    ):
+        """author filter 变 → ETag 必须变(否则重置 filter 会拿到 304 空 body)。
+    
+        设置 TTL=0 强制每次重算,清空 in-memory cache 避免跨测试污染。
+        """
+        from tools.webapi import git_log as _m
+        from astrbot.api import web
+    
+        _init_git_repo(tmp_path, n_commits=2)
+        _load_project(plugin, "u:m", str(tmp_path))
+    
+        _m._LOG_ETAG_CACHE.clear()
+        monkeypatch.setattr(_m, "_LOG_ETAG_TTL", 0.0)
+    
+        # 1) 初次: 不带 author
+        monkeypatch.setattr(web, "request", make_web_request_mock(query={}))
+        r1 = await _gl.handle(plugin)
+        etag_default = r1.headers.get("etag")
+>       assert etag_default, f"first response missing ETag: {dict(r1.headers)}"
+E       AssertionError: first response missing ETag: {'Cache-Control': 'private, must-revalidate', 'Vary': 'Cookie', 'ETag': 'W/"e2bcee5d69453ec3927d59c0443af8d834ce043e-1784305883-1784305883-HEAD|20||||"'}
+E       assert None
+
+tests\test_git_log.py:388: AssertionError
+_______________ test_log_etag_changes_when_path_filter_changes ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D145D6E4B0>
+plugin = <tests.conftest._make_plugin.<locals>.SPCodeToolkit object at 0x000001D145D6F800>
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_log_etag_changes_when_pat0')
+
+    async def test_log_etag_changes_when_path_filter_changes(
+        monkeypatch, plugin, tmp_path: Path
+    ):
+        """path filter 变 → ETag 必须变。"""
+        from tools.webapi import git_log as _m
+        from astrbot.api import web
+    
+        _init_git_repo(tmp_path, n_commits=3)
+        _load_project(plugin, "u:m", str(tmp_path))
+    
+        _m._LOG_ETAG_CACHE.clear()
+        monkeypatch.setattr(_m, "_LOG_ETAG_TTL", 0.0)
+    
+        monkeypatch.setattr(web, "request", make_web_request_mock(query={}))
+        r1 = await _gl.handle(plugin)
+        etag_default = r1.headers.get("etag")
+    
+        monkeypatch.setattr(
+            web, "request", make_web_request_mock(query={"path": "file0.txt"})
+        )
+        r2 = await _gl.handle(plugin)
+        etag_path = r2.headers.get("etag")
+    
+>       assert etag_path != etag_default, (
+            f"ETag must differ when path filter changes: "
+            f"default={etag_default!r}, path=file0.txt={etag_path!r}"
+        )
+E       AssertionError: ETag must differ when path filter changes: default=None, path=file0.txt=None
+E       assert None != None
+
+tests\test_git_log.py:426: AssertionError
+________________ test_log_etag_changes_when_ref_filter_changes ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144BF88F0>
+plugin = <tests.conftest._make_plugin.<locals>.SPCodeToolkit object at 0x000001D145D85520>
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_log_etag_changes_when_ref0')
+
+    async def test_log_etag_changes_when_ref_filter_changes(
+        monkeypatch, plugin, tmp_path: Path
+    ):
+        """ref 变 (HEAD → HEAD~2) → ETag 必须变。"""
+        from tools.webapi import git_log as _m
+        from astrbot.api import web
+    
+        _init_git_repo(tmp_path, n_commits=3)
+        _load_project(plugin, "u:m", str(tmp_path))
+    
+        _m._LOG_ETAG_CACHE.clear()
+        monkeypatch.setattr(_m, "_LOG_ETAG_TTL", 0.0)
+    
+        monkeypatch.setattr(web, "request", make_web_request_mock(query={"ref": "HEAD"}))
+        r1 = await _gl.handle(plugin)
+        etag_head = r1.headers.get("etag")
+    
+        monkeypatch.setattr(web, "request", make_web_request_mock(query={"ref": "HEAD~2"}))
+        r2 = await _gl.handle(plugin)
+        etag_head2 = r2.headers.get("etag")
+    
+>       assert etag_head != etag_head2, (
+            f"ETag must differ when ref filter changes: "
+            f"HEAD={etag_head!r}, HEAD~2={etag_head2!r}"
+        )
+E       AssertionError: ETag must differ when ref filter changes: HEAD=None, HEAD~2=None
+E       assert None != None
+
+tests\test_git_log.py:453: AssertionError
+______________________ test_workspace_root_returns_path _______________________
+
+    def test_workspace_root_returns_path():
+>       p = workspace_root("test:session")
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_inta_shell.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tools\inta_shell\paths.py:28: in workspace_root
+    return (Path(get_astrbot_workspaces_path()) / normalized_umo).resolve(strict=False)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\pathlib.py:1162: in __init__
+    super().__init__(*args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <[AttributeError("'WindowsPath' object has no attribute '_raw_paths'") raised in repr()] WindowsPath object at 0x1d145e26730>
+args = (<conftest.get_astrbot_workspaces_path object at 0x000001D145DBC770>,)
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg._flavour is ntpath and self._flavour is posixpath:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.extend(path.replace('\\', '/') for path in arg._raw_paths)
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'get_astrbot_workspaces_path'
+
+C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\pathlib.py:373: TypeError
+_________________ test_filter_request_plan_mode_filters_tools _________________
+
+    def test_filter_request_plan_mode_filters_tools():
+        """plan 模式:从 req.func_tool 过滤 blocked_tools 集合。"""
+        cfg = {"plan_mode_blocked_tools": ["astrbot_file_remove"]}
+        c = PlanModeController(get_config=lambda: cfg)
+        c.activate("umo-1")
+        event = _make_event("umo-1")
+    
+        # 模拟 ToolSet 替换
+        from astrbot.core.agent.tool import ToolSet
+    
+        ts = ToolSet()
+        for name in ["astrbot_file_remove", "es_search", "code_check"]:
+            t = MagicMock()
+            t.name = name
+>           ts.add_tool(t)
+            ^^^^^^^^^^^
+E           AttributeError: 'ToolSet' object has no attribute 'add_tool'
+
+tests\test_security_plan_mode.py:127: AttributeError
+_______________ test_filter_request_injects_reminder_first_time _______________
+
+    def test_filter_request_injects_reminder_first_time():
+        """plan 模式首轮:在 user message 末尾追加 reminder。"""
+        cfg = {
+            "plan_mode_blocked_tools": ["astrbot_file_remove"],
+            "plan_mode_reminder": "你处于 plan 模式,被禁用:{blocked}",
+        }
+        c = PlanModeController(get_config=lambda: cfg)
+        c.activate("umo-1")
+        event = _make_event("umo-1")
+>       req = _make_req_with_toolset()
+              ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_security_plan_mode.py:180: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _make_req_with_toolset():
+        """构造一个 func_tool 非空的 req(让 reminder 注入路径能跑通)。"""
+        from astrbot.core.agent.tool import ToolSet
+    
+        req = MagicMock()
+        req.contexts = []
+        ts = ToolSet()
+        t = MagicMock()
+        t.name = "es_search"
+>       ts.add_tool(t)
+        ^^^^^^^^^^^
+E       AttributeError: 'ToolSet' object has no attribute 'add_tool'
+
+tests\test_security_plan_mode.py:166: AttributeError
+_____________ test_filter_request_does_not_inject_reminder_twice ______________
+
+    def test_filter_request_does_not_inject_reminder_twice():
+        """plan 模式第二轮:reminder 不再注入(reminded=True 后跳过)。"""
+        cfg = {
+            "plan_mode_blocked_tools": ["astrbot_file_remove"],
+            "plan_mode_reminder": "你处于 plan 模式",
+        }
+        c = PlanModeController(get_config=lambda: cfg)
+        c.activate("umo-1")
+        c._plan_reminded["umo-1"] = True  # 标记为已注入
+        event = _make_event("umo-1")
+>       req = _make_req_with_toolset()
+              ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_security_plan_mode.py:200: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _make_req_with_toolset():
+        """构造一个 func_tool 非空的 req(让 reminder 注入路径能跑通)。"""
+        from astrbot.core.agent.tool import ToolSet
+    
+        req = MagicMock()
+        req.contexts = []
+        ts = ToolSet()
+        t = MagicMock()
+        t.name = "es_search"
+>       ts.add_tool(t)
+        ^^^^^^^^^^^
+E       AttributeError: 'ToolSet' object has no attribute 'add_tool'
+
+tests\test_security_plan_mode.py:166: AttributeError
+_________ test_filter_request_empty_reminder_template_marks_reminded __________
+
+    def test_filter_request_empty_reminder_template_marks_reminded():
+        """配置中 reminder 为空 → 标记为已注入(避免每轮检查)。"""
+        cfg = {"plan_mode_blocked_tools": ["x"], "plan_mode_reminder": ""}
+        c = PlanModeController(get_config=lambda: cfg)
+        c.activate("umo-1")
+        event = _make_event("umo-1")
+>       req = _make_req_with_toolset()
+              ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_security_plan_mode.py:214: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _make_req_with_toolset():
+        """构造一个 func_tool 非空的 req(让 reminder 注入路径能跑通)。"""
+        from astrbot.core.agent.tool import ToolSet
+    
+        req = MagicMock()
+        req.contexts = []
+        ts = ToolSet()
+        t = MagicMock()
+        t.name = "es_search"
+>       ts.add_tool(t)
+        ^^^^^^^^^^^
+E       AttributeError: 'ToolSet' object has no attribute 'add_tool'
+
+tests\test_security_plan_mode.py:166: AttributeError
+_________ test_filter_request_reminder_appended_to_last_user_message __________
+
+    def test_filter_request_reminder_appended_to_last_user_message():
+        """reminder 追加到最后一条 user 消息(不是 system / assistant)。"""
+        cfg = {
+            "plan_mode_blocked_tools": ["x"],
+            "plan_mode_reminder": "PLAN_REMINDER_TEXT",
+        }
+        c = PlanModeController(get_config=lambda: cfg)
+        c.activate("umo-1")
+        event = _make_event("umo-1")
+>       req = _make_req_with_toolset()
+              ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_security_plan_mode.py:231: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _make_req_with_toolset():
+        """构造一个 func_tool 非空的 req(让 reminder 注入路径能跑通)。"""
+        from astrbot.core.agent.tool import ToolSet
+    
+        req = MagicMock()
+        req.contexts = []
+        ts = ToolSet()
+        t = MagicMock()
+        t.name = "es_search"
+>       ts.add_tool(t)
+        ^^^^^^^^^^^
+E       AttributeError: 'ToolSet' object has no attribute 'add_tool'
+
+tests\test_security_plan_mode.py:166: AttributeError
+_________________ test_todo_create_tool_from_path_happy_path __________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_create_tool_from_pat0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144A2F260>
+
+    def test_todo_create_tool_from_path_happy_path(tmp_path: Path, monkeypatch):
+        """from_path 正常 → 落盘文件存在,文件名前缀是 mock umo 清洗后的字符串。"""
+        # 把 StarTools.get_data_dir 引导到 tmp_path,避免污染真实 data_dir
+>       monkeypatch.setattr(
+            main_mod.StarTools,
+            "get_data_dir",
+            classmethod(lambda cls, plugin_name=None: str(tmp_path)),
+        )
+E       AttributeError: <class 'conftest.StarTools'> has no attribute 'get_data_dir'
+
+tests\test_todo_list.py:1568: AttributeError
+______ test_todo_create_tool_from_path_and_items_both_returns_xor_error _______
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_create_tool_from_pat1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144A2E930>
+
+    def test_todo_create_tool_from_path_and_items_both_returns_xor_error(
+        tmp_path: Path, monkeypatch
+    ):
+        """from_path + items 同时传 → XOR error。"""
+>       monkeypatch.setattr(
+            main_mod.StarTools,
+            "get_data_dir",
+            classmethod(lambda cls, plugin_name=None: str(tmp_path)),
+        )
+E       AttributeError: <class 'conftest.StarTools'> has no attribute 'get_data_dir'
+
+tests\test_todo_list.py:1591: AttributeError
+_____ test_todo_create_tool_neither_from_path_nor_items_returns_xor_error _____
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_create_tool_neither_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D145DA74A0>
+
+    def test_todo_create_tool_neither_from_path_nor_items_returns_xor_error(
+        tmp_path: Path, monkeypatch
+    ):
+        """from_path 与 items 都缺(None) → XOR error。"""
+>       monkeypatch.setattr(
+            main_mod.StarTools,
+            "get_data_dir",
+            classmethod(lambda cls, plugin_name=None: str(tmp_path)),
+        )
+E       AttributeError: <class 'conftest.StarTools'> has no attribute 'get_data_dir'
+
+tests\test_todo_list.py:1609: AttributeError
+_______________ test_todo_create_tool_from_path_title_override ________________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_create_tool_from_pat2')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D145DA6A20>
+
+    def test_todo_create_tool_from_path_title_override(tmp_path: Path, monkeypatch):
+        """from_path + title="X" → 落盘 title == "X" (覆盖文件中的 title)。"""
+>       monkeypatch.setattr(
+            main_mod.StarTools,
+            "get_data_dir",
+            classmethod(lambda cls, plugin_name=None: str(tmp_path)),
+        )
+E       AttributeError: <class 'conftest.StarTools'> has no attribute 'get_data_dir'
+
+tests\test_todo_list.py:1624: AttributeError
+______________ test_todo_create_tool_from_path_title_passthrough ______________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_create_tool_from_pat3')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D1446CE9C0>
+
+    def test_todo_create_tool_from_path_title_passthrough(tmp_path: Path, monkeypatch):
+        """from_path 无 title → 保留文件中的 title。"""
+>       monkeypatch.setattr(
+            main_mod.StarTools,
+            "get_data_dir",
+            classmethod(lambda cls, plugin_name=None: str(tmp_path)),
+        )
+E       AttributeError: <class 'conftest.StarTools'> has no attribute 'get_data_dir'
+
+tests\test_todo_list.py:1645: AttributeError
+______________ test_todo_create_tool_from_path_cross_user_adopt _______________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_create_tool_from_pat4')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144A2C4A0>
+
+    def test_todo_create_tool_from_path_cross_user_adopt(tmp_path: Path, monkeypatch):
+        """跨用户: 导入 webchat fixture → 新文件前缀是 mock 用户的 qq_official。"""
+>       monkeypatch.setattr(
+            main_mod.StarTools,
+            "get_data_dir",
+            classmethod(lambda cls, plugin_name=None: str(tmp_path)),
+        )
+E       AttributeError: <class 'conftest.StarTools'> has no attribute 'get_data_dir'
+
+tests\test_todo_list.py:1662: AttributeError
+_______________ test_todo_create_tool_from_path_file_not_exists _______________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_create_tool_from_pat5')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144701520>
+
+    def test_todo_create_tool_from_path_file_not_exists(tmp_path: Path, monkeypatch):
+        """from_path 指向不存在的文件 → ok=False + error 含 '文件不存在'。"""
+>       monkeypatch.setattr(
+            main_mod.StarTools,
+            "get_data_dir",
+            classmethod(lambda cls, plugin_name=None: str(tmp_path)),
+        )
+E       AttributeError: <class 'conftest.StarTools'> has no attribute 'get_data_dir'
+
+tests\test_todo_list.py:1684: AttributeError
+_________ test_todo_create_tool_from_path_end_to_end_preserves_status _________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_create_tool_from_pat6')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144A2C5F0>
+
+    def test_todo_create_tool_from_path_end_to_end_preserves_status(
+        tmp_path: Path, monkeypatch
+    ):
+        """端到端: 导入 fixture → IDs 从 1 重排,status 保留(cancelled 仍是 cancelled)。"""
+>       monkeypatch.setattr(
+            main_mod.StarTools,
+            "get_data_dir",
+            classmethod(lambda cls, plugin_name=None: str(tmp_path)),
+        )
+E       AttributeError: <class 'conftest.StarTools'> has no attribute 'get_data_dir'
+
+tests\test_todo_list.py:1702: AttributeError
+___________ test_todo_create_tool_from_path_none_returns_xor_error ____________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_create_tool_from_pat7')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144A57440>
+
+    def test_todo_create_tool_from_path_none_returns_xor_error(tmp_path: Path, monkeypatch):
+        """from_path=None (LLM 传 JSON null) → XOR 防御性触发,error 含 '必须二选一'。"""
+>       monkeypatch.setattr(
+            main_mod.StarTools,
+            "get_data_dir",
+            classmethod(lambda cls, plugin_name=None: str(tmp_path)),
+        )
+E       AttributeError: <class 'conftest.StarTools'> has no attribute 'get_data_dir'
+
+tests\test_todo_list.py:1735: AttributeError
+___________ test_todo_create_tool_from_path_relative_path_rejected ____________
+
+tmp_path = WindowsPath('C:/Users/80423/AppData/Local/Temp/pytest-of-80423/pytest-182/test_todo_create_tool_from_pat8')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D144902E10>
+
+    def test_todo_create_tool_from_path_relative_path_rejected(tmp_path: Path, monkeypatch):
+        """from_path 相对路径 → ok=False + error 含 '路径必须是绝对路径'。"""
+>       monkeypatch.setattr(
+            main_mod.StarTools,
+            "get_data_dir",
+            classmethod(lambda cls, plugin_name=None: str(tmp_path)),
+        )
+E       AttributeError: <class 'conftest.StarTools'> has no attribute 'get_data_dir'
+
+tests\test_todo_list.py:1751: AttributeError
+============================== warnings summary ===============================
+tests/test_agentsmd_subsystem.py::test_agents_state_construction
+  tests\test_agentsmd_subsystem.py:43: PytestWarning: The test <Function test_agents_state_construction> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_agents_state_construction():
+
+tests/test_agentsmd_subsystem.py::test_agents_state_update_content
+  tests\test_agentsmd_subsystem.py:56: PytestWarning: The test <Function test_agents_state_update_content> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_agents_state_update_content():
+
+tests/test_agentsmd_subsystem.py::test_manager_empty
+  tests\test_agentsmd_subsystem.py:66: PytestWarning: The test <Function test_manager_empty> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_manager_empty():
+
+tests/test_agentsmd_subsystem.py::test_manager_set_get_contains
+  tests\test_agentsmd_subsystem.py:73: PytestWarning: The test <Function test_manager_set_get_contains> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_manager_set_get_contains():
+
+tests/test_agentsmd_subsystem.py::test_manager_pop_returns_state_then_missing
+  tests\test_agentsmd_subsystem.py:82: PytestWarning: The test <Function test_manager_pop_returns_state_then_missing> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_manager_pop_returns_state_then_missing():
+
+tests/test_agentsmd_subsystem.py::test_manager_iter_umos
+  tests\test_agentsmd_subsystem.py:91: PytestWarning: The test <Function test_manager_iter_umos> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_manager_iter_umos():
+
+tests/test_agentsmd_subsystem.py::test_manager_clear
+  tests\test_agentsmd_subsystem.py:98: PytestWarning: The test <Function test_manager_clear> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_manager_clear():
+
+tests/test_agentsmd_subsystem.py::test_subsystem_construction
+  tests\test_agentsmd_subsystem.py:109: PytestWarning: The test <Function test_subsystem_construction> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_subsystem_construction():
+
+tests/test_agentsmd_subsystem.py::test_subsystem_state_property_returns_manager
+  tests\test_agentsmd_subsystem.py:121: PytestWarning: The test <Function test_subsystem_state_property_returns_manager> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_subsystem_state_property_returns_manager():
+
+tests/test_agentsmd_subsystem.py::test_subsystem_clear_empties_state
+  tests\test_agentsmd_subsystem.py:130: PytestWarning: The test <Function test_subsystem_clear_empties_state> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_subsystem_clear_empties_state():
+
+tests/test_agentsmd_subsystem.py::test_unload_when_no_state_returns_info
+  tests\test_agentsmd_subsystem.py:152: PytestWarning: The test <Function test_unload_when_no_state_returns_info> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_unload_when_no_state_returns_info():
+
+tests/test_agentsmd_subsystem.py::test_unload_removes_state_and_returns_path
+  tests\test_agentsmd_subsystem.py:166: PytestWarning: The test <Function test_unload_removes_state_and_returns_path> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_unload_removes_state_and_returns_path():
+
+tests/test_agentsmd_subsystem.py::test_package_exposes_all_expected_symbols
+  tests\test_agentsmd_subsystem.py:476: PytestWarning: The test <Function test_package_exposes_all_expected_symbols> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_package_exposes_all_expected_symbols():
+
+tests/test_file_browser.py::test_build_error_response_has_required_fields
+  tests\test_file_browser.py:15: PytestWarning: The test <Function test_build_error_response_has_required_fields> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_build_error_response_has_required_fields():
+
+tests/test_file_browser.py::test_make_304_response_is_json_response_compat
+  tests\test_file_browser.py:23: PytestWarning: The test <Function test_make_304_response_is_json_response_compat> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_make_304_response_is_json_response_compat():
+
+tests/test_file_browser.py::test_common_cache_headers_includes_etag
+  tests\test_file_browser.py:34: PytestWarning: The test <Function test_common_cache_headers_includes_etag> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_common_cache_headers_includes_etag():
+
+tests/test_file_browser.py::test_file_response_utf8_chinese
+  tests\test_file_browser.py:74: PytestWarning: The test <Function test_file_response_utf8_chinese> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_file_response_utf8_chinese(tmp_path):
+
+tests/test_file_browser.py::test_file_response_gbk_chinese
+  tests\test_file_browser.py:90: PytestWarning: The test <Function test_file_response_gbk_chinese> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_file_response_gbk_chinese(tmp_path):
+
+tests/test_file_browser.py::test_file_response_utf8_bom
+  tests\test_file_browser.py:114: PytestWarning: The test <Function test_file_response_utf8_bom> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_file_response_utf8_bom(tmp_path):
+
+tests/test_file_browser.py::test_file_response_gb18030
+  tests\test_file_browser.py:131: PytestWarning: The test <Function test_file_response_gb18030> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_file_response_gb18030(tmp_path):
+
+tests/test_file_browser.py::test_file_response_binary_nul_still_binary
+  tests\test_file_browser.py:151: PytestWarning: The test <Function test_file_response_binary_nul_still_binary> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_file_response_binary_nul_still_binary(tmp_path):
+
+tests/test_file_browser.py::test_file_response_latin1_not_binary
+  tests\test_file_browser.py:168: PytestWarning: The test <Function test_file_response_latin1_not_binary> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_file_response_latin1_not_binary(tmp_path):
+
+tests/test_file_browser.py::test_file_response_gbk_line_endings_normalized
+  tests\test_file_browser.py:192: PytestWarning: The test <Function test_file_response_gbk_line_endings_normalized> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_file_response_gbk_line_endings_normalized(tmp_path):
+
+tests/test_file_browser.py::test_file_response_empty
+  tests\test_file_browser.py:209: PytestWarning: The test <Function test_file_response_empty> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_file_response_empty(tmp_path):
+
+tests/test_file_restore.py::test_make_file_restore_empty_envelope_has_required_fields
+  tests\test_file_restore.py:59: PytestWarning: The test <Function test_make_file_restore_empty_envelope_has_required_fields> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_make_file_restore_empty_envelope_has_required_fields():
+
+tests/test_file_restore.py::test_make_file_restore_success_envelope_has_restored_true
+  tests\test_file_restore.py:73: PytestWarning: The test <Function test_make_file_restore_success_envelope_has_restored_true> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_make_file_restore_success_envelope_has_restored_true():
+
+tests/test_file_restore.py::test_validate_restore_file_rejects_absolute_path
+  tests\test_file_restore.py:85: PytestWarning: The test <Function test_validate_restore_file_rejects_absolute_path> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_validate_restore_file_rejects_absolute_path():
+
+tests/test_file_restore.py::test_validate_restore_file_rejects_parent_traversal
+  tests\test_file_restore.py:94: PytestWarning: The test <Function test_validate_restore_file_rejects_parent_traversal> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_validate_restore_file_rejects_parent_traversal():
+
+tests/test_file_restore.py::test_validate_restore_file_rejects_dot_git
+  tests\test_file_restore.py:103: PytestWarning: The test <Function test_validate_restore_file_rejects_dot_git> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_validate_restore_file_rejects_dot_git():
+
+tests/test_git_log.py::test_log_path_filter
+  C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\asyncio\coroutines.py:13: RuntimeWarning: coroutine 'handle' was never awaited
+    bool(os.environ.get('PYTHONASYNCIODEBUG')))
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_git_log.py::test_log_etag_changes_when_author_filter_changes
+  C:\Users\80423\AppData\Roaming\uv\python\cpython-3.12.7-windows-x86_64-none\Lib\unittest\mock.py:769: RuntimeWarning: coroutine 'handle' was never awaited
+    def __setattr__(self, name, value):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_file_restore.py::test_restore_untracked_file_deletes_worktree_file
+FAILED tests/test_file_restore.py::test_restore_worktree_deleted_file_recovers_from_index
+FAILED tests/test_file_restore.py::test_restore_staged_deleted_file_recovers_from_head
+FAILED tests/test_file_restore.py::test_restore_modified_worktree_unchanged_after_fix
+FAILED tests/test_git_init.py::test_init_empty_dir_default_main - RuntimeErro...
+FAILED tests/test_git_init.py::test_init_empty_dir_custom_branch - RuntimeErr...
+FAILED tests/test_git_init.py::test_init_bare - RuntimeError: There is no cur...
+FAILED tests/test_git_init.py::test_init_body_none - RuntimeError: There is n...
+FAILED tests/test_git_init.py::test_init_path_missing - RuntimeError: There i...
+FAILED tests/test_git_init.py::test_init_path_not_string - RuntimeError: Ther...
+FAILED tests/test_git_init.py::test_init_initial_branch_not_string - RuntimeE...
+FAILED tests/test_git_init.py::test_init_path_traversal - RuntimeError: There...
+FAILED tests/test_git_init.py::test_init_path_blacklisted - RuntimeError: The...
+FAILED tests/test_git_init.py::test_init_path_empty_string - RuntimeError: Th...
+FAILED tests/test_git_init.py::test_init_path_does_not_exist - RuntimeError: ...
+FAILED tests/test_git_init.py::test_init_path_is_a_file - RuntimeError: There...
+FAILED tests/test_git_init.py::test_init_directory_not_empty - RuntimeError: ...
+FAILED tests/test_git_init.py::test_init_already_a_git_repo - RuntimeError: T...
+FAILED tests/test_git_init.py::test_init_git_binary_unavailable - RuntimeErro...
+FAILED tests/test_git_init.py::test_init_subprocess_exception - RuntimeError:...
+FAILED tests/test_git_init.py::test_init_then_git_status_works - RuntimeError...
+FAILED tests/test_git_init.py::test_init_then_validate_worktree_param_passes
+FAILED tests/test_git_init.py::test_init_force_true_nonempty_dir_with_file - ...
+FAILED tests/test_git_init.py::test_init_force_true_nonempty_dir_with_subdirectory
+FAILED tests/test_git_init.py::test_init_force_true_still_rejects_already_git_repo
+FAILED tests/test_git_init.py::test_init_force_true_still_rejects_path_not_directory
+FAILED tests/test_git_init.py::test_init_force_true_still_rejects_path_unsafe
+FAILED tests/test_git_init.py::test_init_force_true_bare_true_nonempty_dir - ...
+FAILED tests/test_git_init.py::test_init_force_true_empty_dir_still_works - R...
+FAILED tests/test_git_init.py::test_init_force_default_false_rejects_nonempty
+FAILED tests/test_git_init.py::test_init_force_explicit_false_rejects_nonempty
+FAILED tests/test_git_init.py::test_init_force_string_type_rejected - Runtime...
+FAILED tests/test_git_init.py::test_init_force_int_type_rejected - RuntimeErr...
+FAILED tests/test_git_init.py::test_init_force_null_type_rejected - RuntimeEr...
+FAILED tests/test_git_init.py::test_init_force_true_response_echoes_force - R...
+FAILED tests/test_git_log.py::test_log_etag_changes_when_author_filter_changes
+FAILED tests/test_git_log.py::test_log_etag_changes_when_path_filter_changes
+FAILED tests/test_git_log.py::test_log_etag_changes_when_ref_filter_changes
+FAILED tests/test_inta_shell.py::test_workspace_root_returns_path - TypeError...
+FAILED tests/test_security_plan_mode.py::test_filter_request_plan_mode_filters_tools
+FAILED tests/test_security_plan_mode.py::test_filter_request_injects_reminder_first_time
+FAILED tests/test_security_plan_mode.py::test_filter_request_does_not_inject_reminder_twice
+FAILED tests/test_security_plan_mode.py::test_filter_request_empty_reminder_template_marks_reminded
+FAILED tests/test_security_plan_mode.py::test_filter_request_reminder_appended_to_last_user_message
+FAILED tests/test_todo_list.py::test_todo_create_tool_from_path_happy_path - ...
+FAILED tests/test_todo_list.py::test_todo_create_tool_from_path_and_items_both_returns_xor_error
+FAILED tests/test_todo_list.py::test_todo_create_tool_neither_from_path_nor_items_returns_xor_error
+FAILED tests/test_todo_list.py::test_todo_create_tool_from_path_title_override
+FAILED tests/test_todo_list.py::test_todo_create_tool_from_path_title_passthrough
+FAILED tests/test_todo_list.py::test_todo_create_tool_from_path_cross_user_adopt
+FAILED tests/test_todo_list.py::test_todo_create_tool_from_path_file_not_exists
+FAILED tests/test_todo_list.py::test_todo_create_tool_from_path_end_to_end_preserves_status
+FAILED tests/test_todo_list.py::test_todo_create_tool_from_path_none_returns_xor_error
+FAILED tests/test_todo_list.py::test_todo_create_tool_from_path_relative_path_rejected
+ERROR tests/test_todo_split_tools.py::test_todo_add_tool_appends_items - Attr...
+ERROR tests/test_todo_split_tools.py::test_todo_add_tool_rejects_empty_items
+ERROR tests/test_todo_split_tools.py::test_todo_add_tool_rejects_none_items
+ERROR tests/test_todo_split_tools.py::test_todo_add_tool_rejects_when_no_list
+ERROR tests/test_todo_split_tools.py::test_todo_update_tool_changes_status - ...
+ERROR tests/test_todo_split_tools.py::test_todo_update_tool_overwrites_notes
+ERROR tests/test_todo_split_tools.py::test_todo_update_tool_clears_notes_with_empty_string
+ERROR tests/test_todo_split_tools.py::test_todo_update_tool_keeps_notes_when_omitted
+ERROR tests/test_todo_split_tools.py::test_todo_update_tool_rejects_missing_item_ids
+ERROR tests/test_todo_split_tools.py::test_todo_update_tool_rolls_back_on_missing_id
+ERROR tests/test_todo_split_tools.py::test_todo_delete_tool_removes_items - A...
+ERROR tests/test_todo_split_tools.py::test_todo_delete_tool_rejects_zero_id
+ERROR tests/test_todo_split_tools.py::test_todo_delete_tool_rejects_none_item_ids
+ERROR tests/test_todo_split_tools.py::test_todo_delete_tool_rolls_back_on_missing_id
+54 failed, 1108 passed, 4 skipped, 31 warnings, 14 errors in 337.06s (0:05:37)

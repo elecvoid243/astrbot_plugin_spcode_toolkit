@@ -55,6 +55,7 @@ async def test_overwrites_existing_code_file(plugin: Any, tmp_path: Path) -> Non
     )
 
     assert result["data"]["saved"] is True
+    assert result["data"]["created"] is False
     assert result["data"]["path"] == "src/main.py"
     assert result["data"]["size"] == len("print('new')\n".encode("utf-8"))
     assert (tmp_path / "src" / "main.py").read_text(encoding="utf-8") == (
@@ -78,23 +79,49 @@ async def test_backslash_path_normalized(plugin: Any, tmp_path: Path) -> None:
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "new"
 
 
-# ── target must exist (edit, not create) ─────────────────────────
+# ── upsert: 不存在则创建(前端"保存后将新建"语义) ──────────────
 
 
-async def test_missing_file_rejected_and_not_created(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_creates_missing_file(plugin: Any, tmp_path: Path) -> None:
+    """目标文件不存在时新建(upsert),响应带 created=True。
+
+    回归测试: 2026-07-17 前端保存不存在的 .gitignore 返回
+    file_not_found,与 UI 提示"仓库还没有,保存后将新建"矛盾。
+    """
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))
 
     result = await _fw.handle(
         plugin,
         umo="u:m",
-        body={"path": "ghost.txt", "content": "x"},
+        body={"path": ".gitignore", "content": ".codegraph/\n"},
     )
 
-    assert result["data"]["reason"] == "file_not_found"
-    assert not (tmp_path / "ghost.txt").exists()
+    assert result["data"]["reason"] is None
+    assert result["data"]["saved"] is True
+    assert result["data"]["created"] is True
+    assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == ".codegraph/\n"
+
+
+async def test_creates_parent_directories_for_new_file(
+    plugin: Any, tmp_path: Path
+) -> None:
+    """新建嵌套路径时自动创建缺失的父目录(与 docs POST 行为一致)。"""
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _fw.handle(
+        plugin,
+        umo="u:m",
+        body={"path": ".github/workflows/ci.yml", "content": "on: push\n"},
+    )
+
+    assert result["data"]["reason"] is None
+    assert result["data"]["saved"] is True
+    assert result["data"]["created"] is True
+    assert (tmp_path / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    ) == "on: push\n"
 
 
 async def test_directory_target_rejected(plugin: Any, tmp_path: Path) -> None:
