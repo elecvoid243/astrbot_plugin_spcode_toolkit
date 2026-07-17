@@ -292,6 +292,8 @@ astrbot_plugin_spcode_toolkit/
         ├── git_worktree_unlock.py#   POST   /spcode/git-worktree-unlock (v2.14.0)
         ├── btw.py                #   POST   /spcode/btw                 (v2.20, 一次性独立 LLM 请求)
         ├── file_write.py         #   POST   /spcode/file-write          (2026-07-17, 通用文本保存 upsert)
+        ├── file_rename.py        #   POST   /spcode/file-rename         (2026-07-18, 同目录重命名)
+        ├── file_remove.py        #   POST   /spcode/file-remove         (2026-07-18, 删除文件)
         └── docs_crud.py          #   POST/PATCH/DELETE /spcode/docs     (spec B, 三方法复用一路径)
 ```
 
@@ -472,6 +474,8 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/codegraph-status` | GET | codegraph MCP 运行状态 | - |
 | `/spcode/btw` | POST | 一次性独立 LLM 请求（顺便问问）：复用当前会话历史命中 prefix cache，不回写历史，无工具，纯文本输出 | body: `{prompt, umo?}` |
 | `/spcode/file-write` | POST | 保存任意 repo 文本文件（不限扩展名；upsert：不存在则新建并自动建父目录，响应带 `created` 标志；目标是目录时 `file_not_found`） | body: `{path, content, umo?, worktree?}` |
+| `/spcode/file-rename` | POST | 同目录重命名任意 repo 文件（不限扩展名；`new_name` 须为纯文件名；目标已存在 `file_exists`，源缺失 `file_not_found`） | body: `{path, new_name, umo?, worktree?}` |
+| `/spcode/file-remove` | POST | 删除任意 repo 文件（不限扩展名；仅文件，目录拒绝 `git_error`；源缺失 `file_not_found`） | body: `{path, umo?, worktree?}` |
 | `/spcode/docs` | POST | 创建 / 覆盖 docs 文件（upsert 到工作区） | body: `{umo?, worktree?, path, content}` |
 | `/spcode/docs` | PATCH | 重命名 docs 文件（纯文件系统 mv） | body: `{umo?, worktree?, path, new_path}` |
 | `/spcode/docs` | DELETE | 从工作区删除 docs 文件（unlink） | body: `{umo?, worktree?, path}` |

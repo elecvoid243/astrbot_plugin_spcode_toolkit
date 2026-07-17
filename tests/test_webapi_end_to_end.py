@@ -153,6 +153,8 @@ def test_routes_table_has_thirty_endpoints() -> None:
         "/spcode/git-revert",  # v2.17.0 PR-G
         "/spcode/git-repo-check",  # v2.18.0 (2026-07-16)
         "/spcode/file-write",  # 2026-07-17 (workspace file editor)
+        "/spcode/file-rename",  # 2026-07-18 (workspace file editor)
+        "/spcode/file-remove",  # 2026-07-18 (workspace file editor)
     }
     # Methods sanity:
     # 24 base: 10 GET (含 docs GET?) + 12 POST + 1 PATCH + 1 DELETE = 24 entries
@@ -164,7 +166,8 @@ def test_routes_table_has_thirty_endpoints() -> None:
     # v2.20 (2026-07-17): +1 POST for btw endpoint. 32 entries total:
     # 13 GET + 18 POST + 1 PATCH + 1 DELETE
     # 2026-07-17: +1 POST for file-write. 33 entries total.
-    assert methods.count("POST") == 19  # was 18; +1 for file-write
+    # 2026-07-18: +2 POST for file-rename/file-remove. 35 entries total.
+    assert methods.count("POST") == 21  # was 19; +2 for file-rename/remove
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
 
@@ -382,8 +385,8 @@ def test_register_webapi_routes_calls_context_thirty_two_times() -> None:
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    # 33 entries total: 32 + 1 file-write (2026-07-17)
-    assert plugin.context.register_web_api.call_count == 33
+    # 35 entries total: 33 + 2 file-rename/file-remove (2026-07-18)
+    assert plugin.context.register_web_api.call_count == 35
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -400,9 +403,9 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 33 routes (file-write added).
+    # Should not raise; should attempt all 35 routes (file-rename/remove added).
     register_webapi_routes(plugin)
-    assert call_count == 33
+    assert call_count == 35
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

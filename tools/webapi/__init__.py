@@ -61,6 +61,8 @@ from . import (
     file_restore,
     file_search,  # v2.15.0 (2026-07-02)
     file_write,  # 2026-07-17: POST /spcode/file-write(通用文本覆写)
+    file_rename,  # 2026-07-18: POST /spcode/file-rename(同目录重命名)
+    file_remove,  # 2026-07-18: POST /spcode/file-remove(删除文件)
     git_branch_create,  # v2.17.0 (2026-07-16) — PR-D POST endpoint
     git_branch_delete,  # v2.17.0 (2026-07-16) — PR-E POST endpoint
     git_branches,  # v2.17.0 (2026-07-16) — PR-C GET endpoint
@@ -287,6 +289,18 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         file_write.handle,
         "保存 repo 文本文件(不限扩展名,upsert: 不存在则新建,响应带 created)",
     ),
+    (
+        "/spcode/file-rename",  # 2026-07-18 — workspace file editor
+        ["POST"],
+        file_rename.handle,
+        "同目录重命名 repo 文件(不限扩展名,new_name 为纯文件名)",
+    ),
+    (
+        "/spcode/file-remove",  # 2026-07-18 — workspace file editor
+        ["POST"],
+        file_remove.handle,
+        "删除 repo 文件(不限扩展名,仅文件,目录拒绝)",
+    ),
 ]
 
 # 旧方法名 -> 新模块级 handler (for back-compat / introspection)
@@ -324,6 +338,8 @@ HANDLERS: dict[str, Callable] = {
     "handle_patch_docs": docs_crud.handle_patch_docs,  # spec B (2026-07-11)
     "handle_delete_docs": docs_crud.handle_delete_docs,  # spec B (2026-07-11)
     "handle_post_file_write": file_write.handle,  # 2026-07-17
+    "handle_post_file_rename": file_rename.handle,  # 2026-07-18
+    "handle_post_file_remove": file_remove.handle,  # 2026-07-18
 }
 
 
@@ -438,6 +454,8 @@ __all__ = [
     "file_restore",
     "file_search",  # v2.15.0 (2026-07-02)
     "file_write",  # 2026-07-17
+    "file_rename",  # 2026-07-18
+    "file_remove",  # 2026-07-18
     "git_diff",
     "git_file",  # spec B (2026-07-11)
     "git_init",  # v2.17.0 (2026-07-15)
