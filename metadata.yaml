@@ -1,7 +1,7 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: v2.17.0
+version: v2.20
 description: |
   spcode 开发工具箱 — 16 个工具，5 个命令组。
   code_check / es_search / file_remove / file_compare / inta_shell_*(5个)
@@ -50,4 +50,11 @@ description: |
     conflict) 与 summary 计数;空仓库、detached HEAD、无 upstream 等边界均
     安全降级为 null / 0。前端契约见 docs/webapi-git-workflow-api.md §5.1
     (含 scope 分类规则表 + 边界场景表 + 与 git-diff 的关系)。
+  v2.20 新增 POST /spcode/btw 端点(2026-07-17) — 一次性独立 LLM 请求
+    ("顺便问问")。复用当前会话历史 + persona system_prompt 命中 prefix cache,
+    但不写入历史(绝不调 update_conversation),无工具(func_tool=None),
+    仅返回 completion_text 纯文本输出。umo 可选:不传或会话不存在时
+    回退为无上下文请求。data 返回 {reply, has_context};失败时返回
+    reason in {no_provider, empty_response, llm_error, invalid_body}。
+    典型场景:Dashboard 非 chat 页面(如 git commit 自动生成消息)的辅助按钮。
 repo: https://github.com/elecvoid243/astrbot_plugin_spcode_toolkit

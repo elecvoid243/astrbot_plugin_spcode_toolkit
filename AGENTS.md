@@ -256,7 +256,7 @@ astrbot_plugin_spcode_toolkit/
     ├── file_remove.py            # [legacy 入口] 删除业务实现
     ├── todo_list.py              # [legacy 入口] v2.6+ stub，保留兼容
     │
-    └── webapi/                   # Web API 层（31 条路由记录 / 28 个唯一端点，每端点一文件）
+    └── webapi/                   # Web API 层（32 条路由记录 / 30 个唯一路径，每端点一文件）
         ├── __init__.py           #   ROUTES 路由表 + HANDLERS 别名 + _wrap() 适配器 + register_webapi_routes()
         ├── _helpers.py           #   ReasonCode / _make_envelope / _git_endpoint_preflight /
         │                         #   _git_init_preflight / _validate_repo_relative_file /
@@ -311,7 +311,7 @@ astrbot_plugin_spcode_toolkit/
    - 顶层 `xxx.py`（如 `code_check.py`、`file_remove.py`）：legacy 业务实现入口，被 `function_tools/` 引用
    - **关键设计**：`main.py` 仅保留插件入口职责，业务逻辑全部下沉到 `tools/*` 子包
 
-3. **Web API 层** `tools/webapi/`（v3.6+ 自 main.py 拆出；当前 31 条路由记录 / 29 个唯一路径）
+3. **Web API 层** `tools/webapi/`（v3.6+ 自 main.py 拆出；当前 32 条路由记录 / 30 个唯一路径）
    - 每个端点一个文件，handler 命名固定为 `async def handle(plugin, ...) -> dict`
      （`docs_crud.py` 例外：一个文件承载 `handle_post_docs` / `handle_patch_docs` / `handle_delete_docs` 三个方法，复用同一 `/spcode/docs` 路径）
    - `__init__.py` 拥有 `ROUTES` 路由表 + `HANDLERS` 别名表 + `_wrap()` 适配器 + `register_webapi_routes()`
@@ -436,7 +436,7 @@ astrbot_plugin_spcode_toolkit/
 
 ## Web API 端点（供 Dashboard 消费）
 
-Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()` 中注册，挂载前缀 `/spcode`。当前共 **31 条路由记录**（29 个唯一路径，`/spcode/docs` 一路径复用 POST/PATCH/DELETE 三方法）：
+Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()` 中注册，挂载前缀 `/spcode`。当前共 **32 条路由记录**（30 个唯一路径，`/spcode/docs` 一路径复用 POST/PATCH/DELETE 三方法）：
 
 | 端点 | 方法 | 用途 | 关键参数 |
 |------|------|------|---------|
@@ -468,6 +468,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/git-worktree-lock` | POST | 锁定 git worktree（可选 `--reason`），main 允许但 git 自身拒绝 | body: `{path, reason?}` |
 | `/spcode/git-worktree-unlock` | POST | 解锁 git worktree，main 允许但 git 自身拒绝 | body: `{path}` |
 | `/spcode/codegraph-status` | GET | codegraph MCP 运行状态 | - |
+| `/spcode/btw` | POST | 一次性独立 LLM 请求（顺便问问）：复用当前会话历史命中 prefix cache，不回写历史，无工具，纯文本输出 | body: `{prompt, umo?}` |
 | `/spcode/docs` | POST | 创建 / 覆盖 docs 文件（upsert 到工作区） | body: `{umo?, worktree?, path, content}` |
 | `/spcode/docs` | PATCH | 重命名 docs 文件（纯文件系统 mv） | body: `{umo?, worktree?, path, new_path}` |
 | `/spcode/docs` | DELETE | 从工作区删除 docs 文件（unlink） | body: `{umo?, worktree?, path}` |
@@ -499,6 +500,9 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | 业务结果 | `nothing_to_commit` / `nothing_staged`(legacy) | 无 staged 改动 |
 | 业务结果 | `hook_rejected` / `pre_commit_hook_failed`(legacy) | pre-commit / commit-msg 失败 |
 | 业务结果 | `identity_not_set` | user.email/name 未设 |
+| 业务结果 | `no_provider` | btw 端点专用：无可用 LLM Provider（v2.20） |
+| 业务结果 | `empty_response` | btw 端点专用：LLM 返回空文本（v2.20） |
+| 业务结果 | `llm_error` | btw 端点专用：LLM 调用异常（v2.20） |
 | 参数校验 | `invalid_param` | ref / max_files / content 等通用参数非法 |
 | ref/仓库 | `empty_repository` / `ref_not_found` / `commit_too_large` | 空仓库 / ref 不存在 / 输出超上限（git-show/git-file） |
 | file-search | `invalid_pattern` / `pattern_too_long` / `path_unsafe_filter` | pattern 非法 / >256 / path_filter 越界 |

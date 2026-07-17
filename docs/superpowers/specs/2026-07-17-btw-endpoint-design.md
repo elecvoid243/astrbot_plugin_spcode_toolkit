@@ -42,33 +42,28 @@ Content-Type: application/json
 
 ### 3.2 响应
 
-成功：
+envelope 结构（沿用 `_make_envelope`）：
 ```json
 {
-  "success": true,
-  "reason": null,
-  "elapsed_ms": 1234,
+  "status": "ok",
   "data": {
     "reply": "<LLM 纯文本输出>",
-    "has_context": true
+    "has_context": true,
+    "reason": null,
+    "stderr": "",
+    "elapsed_ms": 1234
   }
 }
 ```
 
-失败：
-```json
-{
-  "success": false,
-  "reason": "<ReasonCode>",
-  "elapsed_ms": 0,
-  "data": null
-}
-```
+失败时 `"reason"` 是 ReasonCode 字符串，`reply`/`has_context` 字段缺失。
 
 | data 字段 | 类型 | 说明 |
 |-----------|------|------|
-| `reply` | string | LLM 的纯文本输出（`completion_text`） |
+| `reply` | string | LLM 的纯文本输出（`completion_text`）。失败时该字段缺失 |
 | `has_context` | bool | 是否复用了会话历史。`umo` 传入且会话存在为 true，否则 false。前端据此判断是否命中缓存 |
+| `reason` | string \| null | 失败原因（ReasonCode 字符串）；成功时为 null |
+| `elapsed_ms` | int | handler 端到端耗时（毫秒） |
 
 ### 3.3 新增 ReasonCode
 
