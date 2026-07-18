@@ -1,208 +1,199 @@
-# Task 2 Report — POST /spcode/git-init (v2.17.0 PR-B)
+# Task 2 Report — NEEDS_CONTEXT
 
-**Implementer:** claude-sonnet-4-5 (agent run)
-**Date:** 2026-07-16 10:00 (CST)
-**Status:** DONE_WITH_CONCERNS
-**Commit:** `14b3f2f`
-**Branch:** `v2.17.0-git-init-branch-revert`
+## Status: NEEDS_CONTEXT (brief internal inconsistency — STOPPED)
+
+I followed the brief through Step 1 (tests appended, file syntax valid)
+and Step 2 (RED confirmed: `AttributeError: module
+'tools.webapi.git_stats' has no attribute 'handle'`). I then appended the
+verbatim handler code from the brief (Step 3) — file syntax still valid.
+
+At Step 5 (run new tests), I encountered a hard contradiction within the
+brief itself and stopped per the system prompt's Rule 7 ("If
+requirements are unclear, dependencies are missing, or you feel stuck:
+STOP and report BLOCKED or NEEDS_CONTEXT with specifics. Never guess.").
 
 ---
 
-## What was implemented
+## The contradiction
 
-| File | Status | Purpose |
-| --- | --- | --- |
-| `tools/webapi/git_init.py` | **created** (174 lines) | POST `/spcode/git-init` handler with 7-step defense chain |
-| `tests/test_git_init.py` | **created** (181 lines) | 18 unit tests across happy / body / path / preflight / subprocess / integration |
-| `tools/webapi/__init__.py` | **modified** | Register git_init in imports, ROUTES, HANDLERS, __all__ (route count 24→25) |
-| `conftest.py` (worktree root) | **modified** | Extend runtime stub for `get_astrbot_workspaces_path` + fix LazyMainLoader recursion + replace quart.Response stub |
+The brief's verbatim `_ISO_PARAM_RE` regex **rejects** the brief's
+verbatim test data for `test_handle_since_until_passthrough`.
 
-## TDD Flow
-
-1. ✅ Created `tests/test_git_init.py` (18 tests verbatim from plan)
-2. ✅ RED: `pytest tests/test_git_init.py` → 0 collected, `ImportError: cannot import name 'git_init' from 'tools.webapi'`
-3. ✅ Implemented `tools/webapi/git_init.py` (7-step defense chain)
-4. ✅ GREEN: 17/18 PASSED; 1 test fails due to plan-design flaw (see Concerns)
-5. ✅ Registered route in `__init__.py` → ROUTES count = 25, HANDLERS alias `handle_post_git_init` present
-6. ✅ Lint: `ruff check tools/webapi/git_init.py tools/webapi/__init__.py tests/test_git_init.py conftest.py` → `All checks passed!`
-7. ✅ Commit `14b3f2f`
-
-## Concerns
-
-### Concern 1 — `_LazyMainLoader` recursion on ModuleType internal access
-
-**Problem:** When `from astrbot_plugin_spcode_toolkit.main import SPCodeToolkit` triggered
-`_LazyMainLoader.__getattr__` → `_spec.loader.exec_module(self)`, Python's import
-machinery internally accessed `self.__file__` / `self.__spec__` / `self.__cached__`,
-which re-triggered `__getattr__`, forming infinite recursion.
-
-**Fix:** Pre-populate `__spec__` / `__loader__` / `__file__` / `__cached__` in
-`_LazyMainLoader.__init__` and add a guard list (`{__path__, __package__,
-__loader__, __spec__, __file__, __cached__, _loaded, __builtins__, __doc__,
-__name__}`) that raises `AttributeError` to let Python's normal module machinery
-handle internal access without triggering exec.
-
-### Concern 2 — `_JSONResponseCompat.__init__` failed against stubbed `quart.Response`
-
-**Problem:** The original conftest stub used
-`from quart import Response as _QuartResponse; _astbot_web.JSONResponse = _QuartResponse`,
-but `_JSONResponseCompat(JSONResponse).__init__(content, status_code=200, headers=None)`
-calls `super().__init__(content, status_code=status_code, headers=headers)` —
-`quart.Response.__init__` accepts `status=` (positional) but not `status_code=` (keyword).
-
-**Fix:** Define `_StubJSONResponse` class with signature
-`__init__(self, content, status_code=200, headers=None)` matching the project's
-JSONResponse subclass convention. Drop the quart import.
-
-### Concern 3 — Missing `get_astrbot_workspaces_path` stub
-
-**Problem:** `tools/inta_shell/paths.py:16` does
-`from astrbot.core.utils.astrbot_path import get_astrbot_workspaces_path`.
-Newer AstrBot releases removed this function. When the lazy main loader executed
-main.py, the full import chain (`main.py → tools.webapi → tools.function_tools →
-tools.inta_shell_list → tools.inta_shell.tools → tools.inta_shell.paths`) crashed
-with `ImportError`. This blocked 6 Task 1 preflight tests + all 18 Task 2 tests.
-
-**Fix:** Add stub for `astrbot.core.utils.astrbot_path.get_astrbot_workspaces_path`
-in `_stub_missing_runtime_modules()`. Returns `_WORKTREE_ROOT/data/workspaces`.
-Falls back to creating the module shell if `astrbot.core.utils` itself doesn't
-exist (handles truly minimal AstrBot install).
-
-### Concern 4 — `path=""` returns `invalid_param` per plan verbatim, but tests expect `path_unsafe`
-
-**Plan verbatim (Step 2.2):**
+### Brief regex (verbatim, in Step 3 code block)
 ```python
-if not isinstance(path, str) or not path.strip():
-    return _make_envelope(
-        success=False,
-        reason=ReasonCode.INVALID_PARAM,
-        ...
-    )
+_ISO_PARAM_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}([+-]\d{2}:?\d{2}|Z))?$"
+)
 ```
 
-**Plan test verbatim (Step 2.1):**
+### Brief test data (verbatim, in Step 1 code block)
 ```python
-def test_init_path_empty_string(empty_dir):
-    plugin = _make_plugin()
-    result = _run(git_init.handle(plugin, body={"path": ""}))
-    assert result["data"]["reason"] == ReasonCode.PATH_UNSAFE
+query={"since": "2026-07-11T00:00:00", "until": "2026-07-11T23:59:59"},
 ```
 
-**Resolution:** Followed test expectation (deviation noted in commit message).
-Empty path is unambiguously unsafe — there is no meaningful interpretation of
-"initialize at the empty path" — so `path_unsafe` is the correct reason.
+### Behaviour I verified
+| Input | Brief regex | Should pass per brief test? |
+|---|---|---|
+| `2026-07-11T00:00:00` | **No match** | **Yes** (since param) |
+| `2026-07-11T23:59:59` | **No match** | **Yes** (until param) |
+| `not-a-date` | No match | No (correct) |
+| `2026/07/10` | No match | No (correct) |
 
-### Concern 5 — `_git_supports_init_b` raises `FileNotFoundError` on bad git binary
+Root cause: the inner group `([+-]\d{2}:?\d{2}|Z)` is **required**
+(though the outer `T…` group is optional). So when the input ends after
+the seconds and there is no timezone suffix, the optional `T…` group
+backtracks to "not taken" and the trailing chars fail `$`.
 
-**Plan verbatim:** `subprocess.run([git_bin, "--version"], ...)` — no exception handling.
-Test `test_init_git_binary_unavailable` sets `plugin._git_binary = lambda: "/nonexistent/..."`
-and expects the handler to return `init_failed` / `git_unavailable`, but the
-`FileNotFoundError` from subprocess propagates out of the handler.
+The spec (`docs/superpowers/specs/2026-07-18-git-stats-endpoint-design.md`
+§3.1) only requires "ISO 日期/时间" — no mention of mandatory timezone.
 
-**Resolution:** Wrapped `subprocess.run` in `try/except (FileNotFoundError, OSError)`
-returning `False`. Caller falls through to fallback symbolic-ref path.
-
-### Concern 6 — `_run_git_async` monkeypatch not effective with `from ._helpers import _run_git_async`
-
-**Plan verbatim:** `from ._helpers import _run_git_async`, then `await _run_git_async(...)`.
-When tests do `monkeypatch.setattr(tools.webapi._helpers, "_run_git_async", fake_run)`,
-the local name `_run_git_async` in `tools.webapi.git_init` is still bound to the
-original function — the patched module attribute is never consulted.
-
-**Resolution:** Changed to `from . import _helpers as _helpers_module`, then
-`await _helpers_module._run_git_async(...)`. Every call performs attribute
-lookup on the module, picking up the monkeypatched replacement.
-
-### Concern 7 — `test_init_then_validate_worktree_param_passes` has plan-design flaw
-
-The test calls `_validate_worktree_param("git", empty_dir.parent, empty_dir)`
-after initing `empty_dir` as a new repo. Step 6 of `_validate_worktree_param`
-requires `git rev-parse --git-common-dir` of candidate and loaded_dir to match.
-- `empty_dir.parent` (`tmp_path`) is NOT a git repo → git-common-dir resolves
-  to its nonexistent `.git/` (absolute path under `tmp_path`).
-- `empty_dir` (`tmp_path/new_repo`) IS a git repo → git-common-dir resolves
-  to `tmp_path/new_repo/.git`.
-- The two paths differ → `worktree_invalid`.
-
-This is unfixable at the handler level without changing the contract of
-`_validate_worktree_param` (which would break all 24 existing endpoints).
-The test is verbatim from plan. **Recommendation:** Update the test to use
-`empty_dir` as both loaded_dir and candidate (init it, then validate that
-init result is its own valid worktree), OR remove this test in Task 8 cleanup.
-
-## Test Summary
-
-```
-$ pytest tests/test_git_init.py -v --no-header
-collected 18 items
-tests/test_git_init.py::test_init_empty_dir_default_main PASSED       [  5%]
-tests/test_git_init.py::test_init_empty_dir_custom_branch PASSED      [ 11%]
-tests/test_git_init.py::test_init_bare PASSED                         [ 16%]
-tests/test_git_init.py::test_init_body_none PASSED                    [ 22%]
-tests/test_git_init.py::test_init_path_missing PASSED                 [ 27%]
-tests/test_git_init.py::test_init_path_not_string PASSED              [ 33%]
-tests/test_git_init.py::test_init_initial_branch_not_string PASSED    [ 38%]
-tests/test_git_init.py::test_init_path_traversal PASSED               [ 44%]
-tests/test_git_init.py::test_init_path_blacklisted PASSED             [ 50%]
-tests/test_git_init.py::test_init_path_empty_string PASSED            [ 55%]
-tests/test_git_init.py::test_init_path_does_not_exist PASSED          [ 61%]
-tests/test_git_init.py::test_init_path_is_a_file PASSED               [ 66%]
-tests/test_git_init.py::test_init_directory_not_empty PASSED          [ 72%]
-tests/test_git_init.py::test_init_already_a_git_repo PASSED           [ 77%]
-tests/test_git_init.py::test_init_git_binary_unavailable PASSED       [ 83%]
-tests/test_git_init.py::test_init_subprocess_exception PASSED         [ 88%]
-tests/test_git_init.py::test_init_then_git_status_works PASSED        [ 94%]
-tests/test_git_init.py::test_init_then_validate_worktree_param_passes FAILED [100%]
-
-================= 17 passed, 1 failed in 4.10s =================
+### Verified via direct execution
+```python
+import re
+_ISO_PARAM_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}([+-]\d{2}:?\d{2}|Z))?$"
+)
+assert _ISO_PARAM_RE.match("2026-07-10")               # True
+assert _ISO_PARAM_RE.match("2026-07-11T00:00:00+08:00")  # True
+assert _ISO_PARAM_RE.match("2026-07-11T00:00:00Z")     # True
+assert _ISO_PARAM_RE.match("2026-07-11T00:00:00")      # False ← conflict
 ```
 
+---
+
+## Why I'm not just patching it
+
+The dispatcher explicitly forbids guessing. The brief says "use exact
+values verbatim", but its two verbatim pieces of code contradict each
+other. I cannot satisfy "verbatim regex" AND "verbatim passing test"
+simultaneously without picking one over the other.
+
+I have NOT committed anything in Task 2 yet. My working tree currently
+has:
+- `tests/test_git_stats.py` — 11 handler tests appended (RED confirmed
+  via the `AttributeError`, all collection clean)
+- `tools/webapi/git_stats.py` — handler + ETag helper appended from the
+  brief verbatim (still uncommitted, syntax-valid)
+- No changes to `tools/webapi/__init__.py` (route not registered)
+- No changes to `tests/test_webapi_end_to_end.py` (count not bumped)
+
+I am stopping here per the dispatcher rules. The planner should decide.
+
+---
+
+## Plausible minimal fix (FOR PLANNER REVIEW ONLY)
+
+A single-character edit makes both the regex AND the test agree:
+
+```python
+# Make inner tz group ALSO optional
+_ISO_PARAM_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}([+-]\d{2}:?\d{2}|Z)?)?$"
+)
+#                                          ^ added one ?
 ```
-$ ruff check tools/webapi/git_init.py tools/webapi/__init__.py tests/test_git_init.py conftest.py
+
+Verified against all cases above — all 5 valid forms pass, all 3 invalid
+forms still reject.
+
+If the planner confirms this intent, I can:
+1. Apply the 1-char fix to the regex.
+2. Re-run `pytest tests/test_git_stats.py -q` (expect 18 pass).
+3. Proceed with Steps 4-7 (route registration, end-to-end count bump,
+   full regression, ruff, commit).
+
+If the planner's intent is different (e.g. tests should use
+`+08:00`-suffixed times, or the spec actually requires a tz), the
+planner should say so and I'll adjust accordingly.
+
+---
+
+## What is currently in the working tree (uncommitted)
+
+```
+$ git status --short
+ M .superpowers/sdd/progress.md
+ M .superpowers/sdd/task-1-brief.md
+ M .superpowers/sdd/task-2-brief.md
+ M tests/test_git_stats.py       (Task 1 + 11 Task 2 handler tests appended)
+ M tools/webapi/git_stats.py     (Task 1 + handler + ETag helper appended)
+```
+
+No route registration, no end-to-end count bump. All Task 1 files
+(commit `eb16800`) are clean.
+
+## Test status
+
+- RED (Step 2) — confirmed via single failing handler test:
+  `AttributeError: module 'tools.webapi.git_stats' has no attribute 'handle'`
+- After Step 3 (handler appended): 17 pass, 1 fails
+  (`test_handle_since_until_passthrough` — fails on the regex mismatch
+  above; same data, same code, same root cause as before).
+
+## Commits
+
+None for Task 2. Task 1 commit `eb16800` is the only one on top of
+`785fee1`.
+
+
+---
+
+## Fix applied — spcode_backend_fixer (2026-07-18 14:34 CST)
+
+Applied the human-selected Option A relaxation to both `_ISO_PARAM_RE` in
+`tools/webapi/git_stats.py` and the local `iso_date_re` in
+`tools/webapi/git_log.py`. Bare `YYYY-MM-DDTHH:MM:SS` values are now accepted
+while malformed values such as `not-a-date` and `2026/07/10` remain rejected.
+Appended the git-log bare-datetime regression test, registered
+`GET /spcode/git-stats`, and updated the route table expectations from 35 to 36.
+
+### Verification
+
+All commands were run from the worktree root with the required AstrBot
+virtual-environment interpreter.
+
+Focused regression command:
+
+```text
+F:\github\Astrbot\.venv\Scripts\python.exe -m pytest tests/test_git_stats.py tests/test_git_log.py -q
+39 passed, 2 warnings in 33.67s
+```
+
+Endpoint and route coverage:
+
+```text
+F:\github\Astrbot\.venv\Scripts\python.exe -m pytest tests/test_git_stats.py tests/test_webapi_end_to_end.py -q
+78 passed, 2 warnings in 24.02s
+```
+
+Full-suite command:
+
+```text
+F:\github\Astrbot\.venv\Scripts\python.exe -m pytest tests/ -q
+1337 passed, 5 skipped, 2 warnings in 423.99s (0:07:03)
+```
+
+The two test warnings are the pre-existing AstrBot-core `audioop`
+DeprecationWarning and the pre-existing `register_star` decorator
+DeprecationWarning from `main.py:105`.
+
+Ruff commands and outputs:
+
+```text
+F:\github\Astrbot\.venv\Scripts\python.exe -m ruff format tools/webapi/git_stats.py tests/test_git_stats.py tools/webapi/__init__.py tests/test_webapi_end_to_end.py tools/webapi/git_log.py tests/test_git_log.py
+3 files reformatted, 3 files left unchanged
+
+F:\github\Astrbot\.venv\Scripts\python.exe -m ruff check tools/webapi/git_stats.py tests/test_git_stats.py tools/webapi/__init__.py tests/test_webapi_end_to_end.py tools/webapi/git_log.py tests/test_git_log.py
 All checks passed!
 ```
 
-```
-$ pytest tests/test_webapi_end_to_end.py -v --no-header
-... 41 PASSED, 3 FAILED (route count assertions: 24 → 25 expected by Task 8)
+### Commits
 
-FAILURES:
-- test_routes_table_has_twenty_endpoints (asserts 22 routes; v2.17.0 adds git-init → 25)
-- test_register_webapi_routes_calls_context_twenty_four_times (24 → 25)
-- test_register_webapi_routes_continues_on_failure (24 → 25)
+- `5464c7b feat: add GET /spcode/git-stats endpoint with server-side aggregation`
+- `8804544 fix: accept bare ISO datetimes in git-log since/until validation`
 
-These are EXPECTED failures (plan §6.5: Task 8 updates these assertions to 30
-after all 6 new endpoints are registered). Pre-registration they're lagging
-indicators of progress.
-```
+### Concerns
 
-## Cross-cutting Concerns
-
-1. **conftest.py changes affect all worktree tests** — any prior `git worktree`
-   that imported the original conftest stub set will need to re-resolve. The
-   stub module set is additive (only adds; never removes), so existing tests
-   should continue to pass.
-
-2. **Task 1's 6 setup errors are now resolved** — previously `test_git_init_preflight.py`
-   had 6 ERRORs at setup. After this commit's conftest fix, those should now
-   pass too. Recommend re-running `pytest tests/test_git_init_preflight.py -v`
-   in Task 3 to confirm.
-
-3. **The `test_init_then_validate_worktree_param_passes` concern applies to
-   future Tasks 3-7 as well** — any new endpoint that writes to a path will
-   hit the same git-common-dir mismatch in worktree validation tests. Pattern
-   should be: when testing init-then-validate, use the same path as both
-   loaded_dir and candidate, OR use a pre-existing worktree fixture.
-
-## File Touch Summary
-
-```
-conftest.py                          | 50 +++++++++++++++--------
-tools/webapi/__init__.py             | 13 ++++++++-
-tools/webapi/git_init.py             | 174 +++++++++++++++++++++++++++++++++++++++++++++++ (new)
-tests/test_git_init.py               | 181 +++++++++++++++++++++++++++++++++++++++++++++++++ (new)
-```
-
----
-
-**END OF REPORT**
+The pre-existing `register_star` DeprecationWarning remains in addition to the
+explicitly tolerated `audioop` warning; no unrelated production/test-harness
+change was made to suppress it.
