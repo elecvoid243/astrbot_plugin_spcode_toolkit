@@ -444,7 +444,7 @@ async def handle(
 
     # ISO date 校验
     iso_date_re = re.compile(
-        r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}([+-]\d{2}:?\d{2}|Z))?$"
+        r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}([+-]\d{2}:?\d{2}|Z)?)?$"
     )
     for name, val in (("since", since), ("until", until)):
         if val and not iso_date_re.match(val):

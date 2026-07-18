@@ -534,3 +534,34 @@ async def test_log_shortstat_values_nonzero_for_simple_repo(
             f"commit {i} ({c['sha_short']}) additions should be >= 1, "
             f"got {c['shortstat']} — shortstat alignment regression"
         )
+
+
+async def test_log_since_until_bare_datetime_accepted(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """Bare `YYYY-MM-DDTHH:MM:SS` (no timezone) must pass validation.
+
+    2026-07-18 relaxation (Option A): the inner tz group of iso_date_re
+    became optional so the stats panel's day-click filter (which sends
+    local-time strings without offset) is not rejected with invalid_param.
+    Git parses bare datetimes as local time.
+    """
+    _init_git_repo(tmp_path, n_commits=2)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    from astrbot.api import web
+
+    monkeypatch.setattr(
+        web,
+        "request",
+        make_web_request_mock(
+            query={
+                "since": "2026-07-11T00:00:00",
+                "until": "2026-07-11T23:59:59",
+            }
+        ),
+    )
+    result = await _gl.handle(plugin)
+    # Must NOT be invalid_param; repo has commits so a normal 200 flow
+    # (possibly with 0 matching commits) is expected.
+    assert result["data"]["reason"] != "invalid_param"
