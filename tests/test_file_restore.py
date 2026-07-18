@@ -56,7 +56,7 @@ def _make_request(body: dict[str, Any] | None) -> MagicMock:
     return request_mock
 
 
-def test_make_file_restore_empty_envelope_has_required_fields():
+async def test_make_file_restore_empty_envelope_has_required_fields():
     """空 envelope 必须含 restored=False + reason 字段。"""
     env = file_restore._make_file_restore_empty_envelope(
         umo="test-umo", file="foo.py", reason="invalid_body", elapsed_ms=3
@@ -70,7 +70,7 @@ def test_make_file_restore_empty_envelope_has_required_fields():
     assert env["data"]["elapsed_ms"] == 3
 
 
-def test_make_file_restore_success_envelope_has_restored_true():
+async def test_make_file_restore_success_envelope_has_restored_true():
     """success envelope: restored=True, reason=None, scope 回显。"""
     env = file_restore._make_file_restore_success_envelope(
         umo="test-umo", file="bar.py", directory="/tmp/x", elapsed_ms=10, scope="staged"
@@ -82,7 +82,7 @@ def test_make_file_restore_success_envelope_has_restored_true():
     assert env["data"]["worktree"] == "/tmp/x"
 
 
-def test_validate_restore_file_rejects_absolute_path():
+async def test_validate_restore_file_rejects_absolute_path():
     """绝对路径被 _validate_restore_file 拒绝。"""
     from pathlib import Path
 
@@ -91,7 +91,7 @@ def test_validate_restore_file_rejects_absolute_path():
     assert err == "path_unsafe"
 
 
-def test_validate_restore_file_rejects_parent_traversal():
+async def test_validate_restore_file_rejects_parent_traversal():
     """.. 段被拒绝。"""
     from pathlib import Path
 
@@ -100,7 +100,7 @@ def test_validate_restore_file_rejects_parent_traversal():
     assert err == "path_unsafe"
 
 
-def test_validate_restore_file_rejects_dot_git():
+async def test_validate_restore_file_rejects_dot_git():
     """含 .git 段的路径被拒绝。"""
     from pathlib import Path
 

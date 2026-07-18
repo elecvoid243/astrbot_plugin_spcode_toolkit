@@ -83,7 +83,9 @@ def test_inject_when_todo_create_enabled():
     assert TODO_GUIDANCE_MARKER in req.system_prompt, "marker 应在"
     # 关键句断言(Anthropic 强约束措辞至少出现一条)
     assert "VERY frequently" in req.system_prompt
-    assert "Do NOT batch" in req.system_prompt
+    # v2.12 起 todo_add/todo_update/todo_delete 支持批量(item_ids 为列表),
+    # 旧版 "Do NOT batch" 文案已移除;改为断言当前的防遗忘强约束句。
+    assert "unacceptable" in req.system_prompt
     # 工具名提示(让 LLM 知道调哪个)
     assert "todo_create" in req.system_prompt
     assert "todo_update" in req.system_prompt

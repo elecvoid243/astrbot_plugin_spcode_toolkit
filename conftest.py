@@ -76,149 +76,200 @@ class _StubModule(types.ModuleType):
 
 
 def _stub_missing_runtime_modules() -> None:
-    """注入 v2.17.0 standalone 测试需要的最小 stub。"""
+    """注入 v2.17.0 standalone 测试需要的最小 stub。
+
+    v2.21 (2026-07-18, elecvoid243) 修复: **优先使用真实 astrbot 包**。
+    旧实现无条件用 meta_path finder 拦截所有 ``astrbot.*`` 导入并替换为
+    万能 stub。但 stub 的 ``filter.command_group`` 返回普通 function,
+    没有 ``.command()`` 方法,导致 main.py 类体中 ``@project.command(...)``
+    等子指令注册抛 ``AttributeError: 'function' object has no attribute
+    'command'``,7 个测试文件收集失败;同时 ``isinstance(x,
+    RegisteringCommandable)`` 等断言在 stub 环境下也不可能成立。
+
+    现在: 真实 astrbot 可导入时(开发机/CI 装好 AstrBot 后),完全跳过
+    astrbot stub;仅在 astrbot 缺失(极简 CI)时才启用 stub 兜底。
+    python_ripgrep / send2trash / get_astrbot_workspaces_path 的
+    fallback 保持按需(各自 ImportError 时才注入),不受此开关影响。
+    """
     import logging as _logging
 
-    # ── 通用 astrbot.* stub 工厂 ──
-    # WHY: 项目内 tools/* 模块在 import 时会触发大量 astrbot.* 导入链
-    # (astrbot.api.event / astrbot.core.agent.run_context / ...)。
-    # 逐一创建 stub 维护成本高,改用 meta_path finder 拦截所有
-    # ``astrbot.*`` 导入并自动创建空模块 stub。关键模块的特定属性
-    # (如 logger / AstrMessageEvent) 在下面手动注入。
-    if "astrbot" not in sys.modules:
-        _ast = types.ModuleType("astrbot")
-        _ast.__path__ = []  # type: ignore[attr-defined]
-        _ast.logger = _logging.getLogger("astrbot")
-        sys.modules["astrbot"] = _ast
-    else:
-        # 若已被前面的代码注册,补 logger
-        _ap_ast = sys.modules["astrbot"]
-        if not hasattr(_ap_ast, "__path__"):
-            _ap_ast.__path__ = []  # type: ignore[attr-defined]
-        if not hasattr(_ap_ast, "logger"):
-            _ap_ast.logger = _logging.getLogger("astrbot")  # type: ignore[attr-defined]
+    # ── 真实 astrbot 探测:可用则跳过全部 astrbot.* stub ──
+    # WHY: 测试(如 test_project_cmd.py)断言
+    # ``isinstance(SPCodeToolkit.project, RegisteringCommandable)``,
+    # 只有真实 ``filter.command_group`` 装饰结果才能满足。
+    try:
+        import astrbot as _real_astrbot  # noqa: F401
+        import astrbot.api  # noqa: F401
+        import astrbot.api.event  # noqa: F401
+        from astrbot.core.star.register.star_handler import (  # noqa: F401
+            RegisteringCommandable as _RealRC,
+        )
 
-    class _StubLoader:
-        """空 loader:不做任何事,模块已在 sys.modules 中。"""
+        _astrbot_real_available = True
+    except ImportError:
+        _astrbot_real_available = False
 
-        def create_module(self, spec):
-            return sys.modules.get(spec.name)
+    if not _astrbot_real_available:
+        # ── 通用 astrbot.* stub 工厂 ──
+        # WHY: 项目内 tools/* 模块在 import 时会触发大量 astrbot.* 导入链
+        # (astrbot.api.event / astrbot.core.agent.run_context / ...)。
+        # 逐一创建 stub 维护成本高,改用 meta_path finder 拦截所有
+        # ``astrbot.*`` 导入并自动创建空模块 stub。关键模块的特定属性
+        # (如 logger / AstrMessageEvent) 在下面手动注入。
+        if "astrbot" not in sys.modules:
+            _ast = types.ModuleType("astrbot")
+            _ast.__path__ = []  # type: ignore[attr-defined]
+            _ast.logger = _logging.getLogger("astrbot")
+            sys.modules["astrbot"] = _ast
+        else:
+            # 若已被前面的代码注册,补 logger
+            _ap_ast = sys.modules["astrbot"]
+            if not hasattr(_ap_ast, "__path__"):
+                _ap_ast.__path__ = []  # type: ignore[attr-defined]
+            if not hasattr(_ap_ast, "logger"):
+                _ap_ast.logger = _logging.getLogger("astrbot")  # type: ignore[attr-defined]
 
-        def exec_module(self, module):
-            pass
+        class _StubLoader:
+            """空 loader:不做任何事,模块已在 sys.modules 中。"""
 
-    class _AstrBotStubFinder:
-        """meta_path finder:拦截所有 ``astrbot.*`` 导入并创建万能 stub 模块。
+            def create_module(self, spec):
+                return sys.modules.get(spec.name)
 
-        每个 stub 模块的任意属性访问都返回一个 stub type,
-        确保 ``from astrbot.core.agent.tool import ToolExecResult``
-        这样的语句不会因为属性缺失而失败。
-        """
+            def exec_module(self, module):
+                pass
 
-        @staticmethod
-        def find_spec(fullname, path, target=None):
-            if not fullname.startswith("astrbot."):
-                return None
-            if fullname in sys.modules:
-                # 确保已存在的 stub 也是 package
-                existing = sys.modules[fullname]
-                if not hasattr(existing, "__path__"):
-                    existing.__path__ = []  # type: ignore[attr-defined]
-                return None
-            # 万能 stub
-            stub = _StubModule(fullname)
-            stub.__path__ = []  # type: ignore[attr-defined]
-            parts = fullname.split(".")
-            if len(parts) >= 2:
-                parent = ".".join(parts[:-1])
-                if parent not in sys.modules:
-                    _AstrBotStubFinder._ensure_parent(parent)
-            sys.modules[fullname] = stub
-            return importlib.util.spec_from_loader(
-                fullname,
-                loader=_StubLoader(),
-                origin="stub",
-            )
+        class _AstrBotStubFinder:
+            """meta_path finder:拦截所有 ``astrbot.*`` 导入并创建万能 stub 模块。
 
-        @staticmethod
-        def _ensure_parent(parent_name: str) -> None:
-            if parent_name in sys.modules:
-                pkg = sys.modules[parent_name]
-                # 确保是 package(有 __path__)
-                if not hasattr(pkg, "__path__"):
-                    pkg.__path__ = []  # type: ignore[attr-defined]
-                return
-            parts = parent_name.split(".")
-            if len(parts) >= 2:
-                _AstrBotStubFinder._ensure_parent(".".join(parts[:-1]))
-            pkg = _StubModule(parent_name)
-            pkg.__path__ = []  # type: ignore[attr-defined]
-            sys.modules[parent_name] = pkg
+            每个 stub 模块的任意属性访问都返回一个 stub type,
+            确保 ``from astrbot.core.agent.tool import ToolExecResult``
+            这样的语句不会因为属性缺失而失败。
+            """
 
-    sys.meta_path.insert(0, _AstrBotStubFinder)
+            @staticmethod
+            def find_spec(fullname, path, target=None):
+                if not fullname.startswith("astrbot."):
+                    return None
+                if fullname in sys.modules:
+                    # 确保已存在的 stub 也是 package
+                    existing = sys.modules[fullname]
+                    if not hasattr(existing, "__path__"):
+                        existing.__path__ = []  # type: ignore[attr-defined]
+                    return None
+                # 万能 stub
+                stub = _StubModule(fullname)
+                stub.__path__ = []  # type: ignore[attr-defined]
+                parts = fullname.split(".")
+                if len(parts) >= 2:
+                    parent = ".".join(parts[:-1])
+                    if parent not in sys.modules:
+                        _AstrBotStubFinder._ensure_parent(parent)
+                sys.modules[fullname] = stub
+                return importlib.util.spec_from_loader(
+                    fullname,
+                    loader=_StubLoader(),
+                    origin="stub",
+                )
 
-    # ── 关键 stub — 必须带特定属性(main.py import 语句直接引用这些名字) ──
-    # astrbot.api
-    _api = types.ModuleType("astrbot.api")
-    _api.__path__ = []  # type: ignore[attr-defined]
-    _api.logger = _logging.getLogger("astrbot.api")
+            @staticmethod
+            def _ensure_parent(parent_name: str) -> None:
+                if parent_name in sys.modules:
+                    pkg = sys.modules[parent_name]
+                    # 确保是 package(有 __path__)
+                    if not hasattr(pkg, "__path__"):
+                        pkg.__path__ = []  # type: ignore[attr-defined]
+                    return
+                parts = parent_name.split(".")
+                if len(parts) >= 2:
+                    _AstrBotStubFinder._ensure_parent(".".join(parts[:-1]))
+                pkg = _StubModule(parent_name)
+                pkg.__path__ = []  # type: ignore[attr-defined]
+                sys.modules[parent_name] = pkg
 
-    class _StubStar:
-        """``star`` stub:提供 Star 基类 + filter 命名空间。"""
-        Star = type("Star", (), {})
-        filter = type("filter", (), {})
+        sys.meta_path.insert(0, _AstrBotStubFinder)
 
-    _api.star = _StubStar()
-    _api.FunctionTool = type("FunctionTool", (), {})
-    sys.modules["astrbot.api"] = _api
-    # astrbot.api.event
-    _api_event = types.ModuleType("astrbot.api.event")
-    _api_event.AstrMessageEvent = type("AstrMessageEvent", (), {})
+        # ── 关键 stub — 必须带特定属性(main.py import 语句直接引用这些名字) ──
+        # astrbot.api
+        _api = types.ModuleType("astrbot.api")
+        _api.__path__ = []  # type: ignore[attr-defined]
+        _api.logger = _logging.getLogger("astrbot.api")
 
-    class _StubFilter:
-        """``filter`` stub:接受任意装饰器调用(如 command_group)。"""
+        class _StubStar:
+            """``star`` stub:提供 Star 基类 + filter 命名空间。"""
+            Star = type("Star", (), {})
+            filter = type("filter", (), {})
 
-        @staticmethod
-        def event_message_type(_cls: type) -> type:
-            return _cls
+        _api.star = _StubStar()
+        _api.FunctionTool = type("FunctionTool", (), {})
+        sys.modules["astrbot.api"] = _api
+        # astrbot.api.event
+        _api_event = types.ModuleType("astrbot.api.event")
+        _api_event.AstrMessageEvent = type("AstrMessageEvent", (), {})
 
-        @staticmethod
-        def command_group(*args, **kwargs):
-            """``@filter.command_group(...)`` stub:返回空装饰器。"""
-            def decorator(fn):
-                return fn
+        class _StubFilter:
+            """``filter`` stub:接受任意装饰器调用(如 command_group)。"""
+
+            @staticmethod
+            def event_message_type(_cls: type) -> type:
+                return _cls
+
+            @staticmethod
+            def command_group(*args, **kwargs):
+                """``@filter.command_group(...)`` stub:返回带 ``.command()`` 的对象。
+
+                模拟真实 AstrBot ``RegisteringCommandable`` 的最小接口:
+                main.py 类体中 ``@project.command("load")`` 等子指令注册
+                要求 command_group 装饰结果暴露 ``.command(name)`` 装饰器。
+                """
+
+                class _StubCommandGroup:
+                    def __init__(self, fn):
+                        self._fn = fn
+
+                    def command(self, *c_args, **c_kwargs):
+                        def decorator(fn):
+                            return fn
+                        return decorator
+
+                    def __call__(self, *c_args, **c_kwargs):
+                        if self._fn is not None:
+                            return self._fn(*c_args, **c_kwargs)
+                        return None
+
+                def decorator(fn):
+                    return _StubCommandGroup(fn)
+                return decorator
+
+            def __getattr__(self, name):
+                """任意属性访问返回空装饰器。"""
+                def decorator(*args, **kwargs):
+                    def inner(fn):
+                        return fn
+                    return inner
+                return decorator
+        _api_event.filter = _StubFilter()
+        sys.modules["astrbot.api.event"] = _api_event
+        # astrbot.api.provider
+        _api_provider = types.ModuleType("astrbot.api.provider")
+        _api_provider.ProviderRequest = type("ProviderRequest", (), {})
+        sys.modules["astrbot.api.provider"] = _api_provider
+        # astrbot.api.star
+        _api_star = types.ModuleType("astrbot.api.star")
+
+        def _stub_register(*args, **kwargs):
+            """``@register(...)`` decorator stub:返回一个空装饰器。"""
+            def decorator(cls):
+                return cls
             return decorator
 
-        def __getattr__(self, name):
-            """任意属性访问返回空装饰器。"""
-            def decorator(*args, **kwargs):
-                def inner(fn):
-                    return fn
-                return inner
-            return decorator
-    _api_event.filter = _StubFilter()
-    sys.modules["astrbot.api.event"] = _api_event
-    # astrbot.api.provider
-    _api_provider = types.ModuleType("astrbot.api.provider")
-    _api_provider.ProviderRequest = type("ProviderRequest", (), {})
-    sys.modules["astrbot.api.provider"] = _api_provider
-    # astrbot.api.star
-    _api_star = types.ModuleType("astrbot.api.star")
-
-    def _stub_register(*args, **kwargs):
-        """``@register(...)`` decorator stub:返回一个空装饰器。"""
-        def decorator(cls):
-            return cls
-        return decorator
-
-    _api_star.StarTools = type("StarTools", (), {})
-    _api_star.register = _stub_register
-    sys.modules["astrbot.api.star"] = _api_star
-    # astrbot.api.web
-    _astbot_web = types.ModuleType("astrbot.api.web")
-    _astbot_web.JSONResponse = _StubJSONResponse
-    _astbot_web.request = None
-    sys.modules["astrbot.api.web"] = _astbot_web
+        _api_star.StarTools = type("StarTools", (), {})
+        _api_star.register = _stub_register
+        sys.modules["astrbot.api.star"] = _api_star
+        # astrbot.api.web
+        _astbot_web = types.ModuleType("astrbot.api.web")
+        _astbot_web.JSONResponse = _StubJSONResponse
+        _astbot_web.request = None
+        sys.modules["astrbot.api.web"] = _astbot_web
 
     # ── python_ripgrep ──
     try:

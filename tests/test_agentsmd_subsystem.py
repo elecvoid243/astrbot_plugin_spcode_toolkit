@@ -40,7 +40,7 @@ pytestmark = pytest.mark.asyncio
 # ── AgentsState ─────────────────────────────────────
 
 
-def test_agents_state_construction():
+async def test_agents_state_construction():
     st = AgentsState(
         path="/tmp/x/AGENTS.md",
         directory="/tmp/x",
@@ -53,7 +53,7 @@ def test_agents_state_construction():
     assert st.mtime == 1.23
 
 
-def test_agents_state_update_content():
+async def test_agents_state_update_content():
     st = AgentsState(path="p", directory="d", last_content="v1", mtime=1.0)
     st.update_content("v2", 2.0)
     assert st.last_content == "v2"
@@ -63,14 +63,14 @@ def test_agents_state_update_content():
 # ── AgentsStateManager ──────────────────────────────
 
 
-def test_manager_empty():
+async def test_manager_empty():
     mgr = AgentsStateManager()
     assert len(mgr) == 0
     assert mgr.get("any") is None
     assert "any" not in mgr
 
 
-def test_manager_set_get_contains():
+async def test_manager_set_get_contains():
     mgr = AgentsStateManager()
     s = AgentsState(path="p", directory="d", last_content="c", mtime=1.0)
     mgr.set("umo1", s)
@@ -79,7 +79,7 @@ def test_manager_set_get_contains():
     assert len(mgr) == 1
 
 
-def test_manager_pop_returns_state_then_missing():
+async def test_manager_pop_returns_state_then_missing():
     mgr = AgentsStateManager()
     s = AgentsState(path="p", directory="d", last_content="c", mtime=1.0)
     mgr.set("umo1", s)
@@ -88,14 +88,14 @@ def test_manager_pop_returns_state_then_missing():
     assert "umo1" not in mgr
 
 
-def test_manager_iter_umos():
+async def test_manager_iter_umos():
     mgr = AgentsStateManager()
     mgr.set("a", AgentsState("p", "d", "c", 1.0))
     mgr.set("b", AgentsState("p", "d", "c", 1.0))
     assert set(mgr.iter_umos()) == {"a", "b"}
 
 
-def test_manager_clear():
+async def test_manager_clear():
     mgr = AgentsStateManager()
     mgr.set("a", AgentsState("p", "d", "c", 1.0))
     mgr.clear()
@@ -106,7 +106,7 @@ def test_manager_clear():
 # ── AgentsmdSubsystem 构造 ──────────────────────────
 
 
-def test_subsystem_construction():
+async def test_subsystem_construction():
     """subsystem 创建时 state 空,handlers 已就绪。"""
     fake_plugin = MagicMock()
     fake_plugin._config = {}
@@ -118,7 +118,7 @@ def test_subsystem_construction():
     assert isinstance(sub._handlers, AgentsmdHandlers)
 
 
-def test_subsystem_state_property_returns_manager():
+async def test_subsystem_state_property_returns_manager():
     fake_plugin = MagicMock()
     fake_plugin._config = {}
     sub = AgentsmdSubsystem(
@@ -127,7 +127,7 @@ def test_subsystem_state_property_returns_manager():
     assert sub.state is sub._state  # same instance
 
 
-def test_subsystem_clear_empties_state():
+async def test_subsystem_clear_empties_state():
     fake_plugin = MagicMock()
     fake_plugin._config = {}
     sub = AgentsmdSubsystem(
@@ -149,7 +149,7 @@ def _make_event(umo: str = "umo-1") -> MagicMock:
     return ev
 
 
-def test_unload_when_no_state_returns_info():
+async def test_unload_when_no_state_returns_info():
     fake_plugin = MagicMock()
     fake_plugin._config = {}
     mgr = AgentsStateManager()
@@ -163,7 +163,7 @@ def test_unload_when_no_state_returns_info():
     assert "未加载任何 AGENTS.md" in result
 
 
-def test_unload_removes_state_and_returns_path():
+async def test_unload_removes_state_and_returns_path():
     fake_plugin = MagicMock()
     fake_plugin._config = {}
     mgr = AgentsStateManager()
@@ -473,7 +473,7 @@ async def test_update_no_provider_yields_error(tmp_path: Path):
 # ── 导出符号完整性 ──────────────────────────────────
 
 
-def test_package_exposes_all_expected_symbols():
+async def test_package_exposes_all_expected_symbols():
     """tools.agentsmd 必须对外暴露完整 API。"""
     import tools.agentsmd as pkg
 

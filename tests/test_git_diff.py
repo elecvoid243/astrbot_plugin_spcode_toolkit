@@ -24,6 +24,9 @@ from tests.conftest import make_web_request_mock  # noqa: F401
 # 启用 pytest-asyncio:让所有 `async def` 测试函数在 strict 模式下也能运行。
 # (项目用 strict 模式,不在 pytest 配置里改全局,避免影响其他测试文件。)
 pytestmark = pytest.mark.asyncio
+# NOTE(2026-07-18, elecvoid243): 本文件内的纯同步解析器测试也统一写成
+# ``async def``,以满足 strict 模式下的全局 mark(消除 PytestWarning)。
+# 参照 test_git_path_schema_field_exists 的既有约定。
 
 # main.py 用相对导入,需把项目父目录加到 sys.path 然后以包形式导入。
 # 同时让 `from tools import _helpers` 和 `import main` 这种绝对导入也能工作
@@ -727,7 +730,7 @@ async def test_handle_git_diff_scope_case_insensitive(plugin, tmp_path, monkeypa
 # ── 纯函数: _parse_diff_status_map ──
 
 
-def test_parse_diff_status_map_modified():
+async def test_parse_diff_status_map_modified():
     """modify 的 `git diff` 输出 → 状态 'M'。"""
     diff = (
         "diff --git a/file.txt b/file.txt\n"
@@ -742,7 +745,7 @@ def test_parse_diff_status_map_modified():
     assert _gd._parse_diff_status_map(diff) == {"file.txt": "M"}
 
 
-def test_parse_diff_status_map_added():
+async def test_parse_diff_status_map_added():
     """add(intent-to-add)的 `git diff` 输出 → 状态 'A'。"""
     diff = (
         "diff --git a/new.py b/new.py\n"
@@ -757,7 +760,7 @@ def test_parse_diff_status_map_added():
     assert _gd._parse_diff_status_map(diff) == {"new.py": "A"}
 
 
-def test_parse_diff_status_map_deleted():
+async def test_parse_diff_status_map_deleted():
     """delete 的 `git diff` 输出 → 状态 'D'。"""
     diff = (
         "diff --git a/old.py b/old.py\n"
@@ -771,7 +774,7 @@ def test_parse_diff_status_map_deleted():
     assert _gd._parse_diff_status_map(diff) == {"old.py": "D"}
 
 
-def test_parse_diff_status_map_renamed():
+async def test_parse_diff_status_map_renamed():
     """rename 的 `git diff` 输出 → 状态 'R',key 是新路径。"""
     diff = (
         "diff --git a/old.py b/new.py\n"
@@ -782,7 +785,7 @@ def test_parse_diff_status_map_renamed():
     assert _gd._parse_diff_status_map(diff) == {"new.py": "R"}
 
 
-def test_parse_diff_status_map_skips_hunk_body():
+async def test_parse_diff_status_map_skips_hunk_body():
     """hunk body 内的 +/- 行不影响 status(只检查 header 区域)。"""
     # 即使 hunk body 有"new file mode"字面文本(极端情况),也不会误判
     diff = (
@@ -796,7 +799,7 @@ def test_parse_diff_status_map_skips_hunk_body():
     assert _gd._parse_diff_status_map(diff) == {"x": "A"}
 
 
-def test_parse_diff_status_map_multiple_files():
+async def test_parse_diff_status_map_multiple_files():
     """多文件的 status 映射按 diff 顺序。"""
     diff = (
         "diff --git a/a.txt b/a.txt\n"
@@ -819,7 +822,7 @@ def test_parse_diff_status_map_multiple_files():
 # ── 纯函数: _parse_numstat_counts ──
 
 
-def test_parse_numstat_counts_simple():
+async def test_parse_numstat_counts_simple():
     """基本 add/modify 的 numstat 解析。"""
     out = "5\t2\tfile.txt\n3\t0\tnew.py\n"
     assert _gd._parse_numstat_counts(out) == {
@@ -828,13 +831,13 @@ def test_parse_numstat_counts_simple():
     }
 
 
-def test_parse_numstat_counts_binary():
+async def test_parse_numstat_counts_binary():
     """Binary 文件的 numstat 是 `-` `-` → (0, 0)。"""
     out = "-\t-\tbinary.dat\n"
     assert _gd._parse_numstat_counts(out) == {"binary.dat": (0, 0)}
 
 
-def test_parse_numstat_counts_rename_arrow():
+async def test_parse_numstat_counts_rename_arrow():
     """rename/copy 的 numstat 格式 `<old> => <new>`,用 new path 作 key。
 
     旧实现有 bug:用整个 `<old> => <new>` 串作 key,导致 join 时永远 miss,
@@ -844,7 +847,7 @@ def test_parse_numstat_counts_rename_arrow():
     assert _gd._parse_numstat_counts(out) == {"new.py": (0, 0)}
 
 
-def test_parse_numstat_counts_skips_blank():
+async def test_parse_numstat_counts_skips_blank():
     """空行 / 少于 3 字段的行 → 跳过。"""
     out = "\n5\t2\tfile.txt\nbad_line\n1\t2\n"
     assert _gd._parse_numstat_counts(out) == {"file.txt": (5, 2)}
@@ -853,12 +856,12 @@ def test_parse_numstat_counts_skips_blank():
 # ── 纯函数: _build_stat_text ──
 
 
-def test_build_stat_text_empty():
+async def test_build_stat_text_empty():
     """空列表 → 空字符串。"""
     assert _gd._build_stat_text([]) == ""
 
 
-def test_build_stat_text_single_file():
+async def test_build_stat_text_single_file():
     """单文件 summary 用单数 '1 file changed';insertions/deletions 永远复数。"""
     files = [{"path": "x.py", "status": "M", "additions": 3, "deletions": 1}]
     text = _gd._build_stat_text(files)
@@ -869,7 +872,7 @@ def test_build_stat_text_single_file():
     assert "1 deletions(-)" in text
 
 
-def test_build_stat_text_multiple_files():
+async def test_build_stat_text_multiple_files():
     """多文件 summary 用复数 'N files changed'。"""
     files = [
         {"path": "a.py", "status": "M", "additions": 5, "deletions": 2},

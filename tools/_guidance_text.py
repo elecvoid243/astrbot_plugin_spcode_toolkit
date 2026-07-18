@@ -36,7 +36,9 @@ Priority use 'astrbot_file_remove' for file or directory deletion. DO NOT use sh
 # 6 个 todo_* 工具启用时注入到 system_prompt 末尾的约束。
 # 设计目标:让 LLM 在 multi-step 任务中"先建 list、再动手、逐条标 done",
 # 仿照 OpenCode anthropic.txt "Task Management" 段 + todowrite.txt 模板。
-# 措辞刻意用 "VERY frequently" / 粗体强调 / Do NOT batch 提升触发率与单步粒度。
+# 措辞刻意用 "VERY frequently" / 粗体强调 / 防遗忘结尾句提升触发率。
+# 注: v2.12 起 todo_add/todo_update/todo_delete 支持批量(item_ids 列表),
+# 旧版 "Do NOT batch" 文案已移除(批量现在是官方推荐用法)。
 TODO_GUIDANCE_MARKER: str = "# Use `todo_*` to record tasks"
 
 TODO_GUIDANCE: str = f"""

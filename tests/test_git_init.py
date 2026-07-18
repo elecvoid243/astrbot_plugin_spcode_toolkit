@@ -14,8 +14,16 @@ from tests.conftest import _make_plugin  # noqa: F401 (re-export for clarity)
 
 
 def _run(coro):
-    """Sync wrapper for async handler calls."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    """Sync wrapper for async handler calls.
+
+    使用 ``asyncio.run()`` 而非 ``asyncio.get_event_loop().run_until_complete()``:
+    Python 3.10+ 主线程无 loop 时 ``get_event_loop()`` 抛 RuntimeError。
+    套件内其他测试一旦调过 ``asyncio.run()``(结束后 ``set_event_loop(None)``),
+    本文件若仍走 ``get_event_loop()`` 会在全量运行时整文件失败
+    (单独运行不受影响,属典型的测试间事件循环污染)。
+    2026-07-18 (elecvoid243) 修复:与 test_git_branches.py 等文件对齐。
+    """
+    return asyncio.run(coro)
 
 
 # ── happy path ──────────────────────────────────────────────

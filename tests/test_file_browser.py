@@ -12,7 +12,7 @@ from tools.webapi import file_browser
 pytestmark = pytest.mark.asyncio
 
 
-def test_build_error_response_has_required_fields():
+async def test_build_error_response_has_required_fields():
     """_build_error_response 返回 type=None + path + reason。"""
     resp = file_browser._build_error_response("/tmp/x", "not_found")
     assert resp["type"] is None
@@ -20,7 +20,7 @@ def test_build_error_response_has_required_fields():
     assert resp["reason"] == "not_found"
 
 
-def test_make_304_response_is_json_response_compat():
+async def test_make_304_response_is_json_response_compat():
     """_make_304_response 返回 _JSONResponseCompat 且 status_code == 304。"""
     from tools.webapi._helpers import _JSONResponseCompat
 
@@ -31,7 +31,7 @@ def test_make_304_response_is_json_response_compat():
     assert resp.get("status_code") is None
 
 
-def test_common_cache_headers_includes_etag():
+async def test_common_cache_headers_includes_etag():
     """_common_cache_headers 返回的 dict 含 ETag 字段。"""
     headers = file_browser._common_cache_headers("etag123")
     assert "ETag" in headers
@@ -71,7 +71,7 @@ async def test_classify_entry_handles_missing_path():
 # unit tests; the tests here are the file_browser integration layer.
 
 
-def test_file_response_utf8_chinese(tmp_path):
+async def test_file_response_utf8_chinese(tmp_path):
     """纯 UTF-8 中文文件应被正确解码,encoding='utf-8', is_binary=False。"""
 
     p = tmp_path / "utf8_中文.py"
@@ -87,7 +87,7 @@ def test_file_response_utf8_chinese(tmp_path):
     assert resp["reason"] is None
 
 
-def test_file_response_gbk_chinese(tmp_path):
+async def test_file_response_gbk_chinese(tmp_path):
     """GBK 中文文件(中文 Windows ANSI 默认)应被正确解码,encoding='cp936'。
 
     这是 PR 的核心修复点:旧版会把 GBK 文件错判为 binary_file。
@@ -111,7 +111,7 @@ def test_file_response_gbk_chinese(tmp_path):
     assert resp["reason"] is None
 
 
-def test_file_response_utf8_bom(tmp_path):
+async def test_file_response_utf8_bom(tmp_path):
     """带 UTF-8 BOM 的文件应剥离 BOM 头部,encoding='utf-8-sig'。"""
 
     p = tmp_path / "bom_file.md"
@@ -128,7 +128,7 @@ def test_file_response_utf8_bom(tmp_path):
     assert "\ufeff" not in resp["content"]
 
 
-def test_file_response_gb18030(tmp_path):
+async def test_file_response_gb18030(tmp_path):
     """GB18030 文件(超集 GBK,含扩展字符)应被解码。
 
     GB18030 是中国国家标准,Windows 中文系统也用它作为 ANSI 代码页。
@@ -148,7 +148,7 @@ def test_file_response_gb18030(tmp_path):
     assert resp["encoding"] in ("cp936", "gbk", "gb18030")
 
 
-def test_file_response_binary_nul_still_binary(tmp_path):
+async def test_file_response_binary_nul_still_binary(tmp_path):
     """真二进制(含 NUL 字节)仍应被判为 binary,保持旧行为。"""
 
     p = tmp_path / "fake.png"
@@ -165,7 +165,7 @@ def test_file_response_binary_nul_still_binary(tmp_path):
     assert resp["encoding"] is None
 
 
-def test_file_response_latin1_not_binary(tmp_path):
+async def test_file_response_latin1_not_binary(tmp_path):
     """纯 latin-1 字节(0xA0-0xFF)应被 latin-1 兜底解码,不再判为二进制。
 
     旧版对所有非 UTF-8 文件统一返回 binary_file,这导致许多西欧语言
@@ -189,7 +189,7 @@ def test_file_response_latin1_not_binary(tmp_path):
     assert resp["encoding"] == "latin-1"
 
 
-def test_file_response_gbk_line_endings_normalized(tmp_path):
+async def test_file_response_gbk_line_endings_normalized(tmp_path):
     """GBK 文件的 \\r\\n 应与 UTF-8 一样被规范化为 \\n。
 
     行为与现有 UTF-8 路径一致(对齐 _build_file_response 的 docstring)。
@@ -206,7 +206,7 @@ def test_file_response_gbk_line_endings_normalized(tmp_path):
     assert "\r" not in resp["content"]
 
 
-def test_file_response_empty(tmp_path):
+async def test_file_response_empty(tmp_path):
     """空文件应被识别为 UTF-8 文本(空字符串),而非二进制。"""
 
     p = tmp_path / "empty.txt"
