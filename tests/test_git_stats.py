@@ -83,12 +83,7 @@ async def _call_with_query(
 
 
 async def test_parse_single_commit_two_files():
-    raw = (
-        "@@STATS@@\x002026-07-10T10:00:00+08:00\n"
-        "5\t2\tsrc/a.py\n"
-        "3\t0\tREADME.md\n"
-        "\n"
-    )
+    raw = "@@STATS@@\x002026-07-10T10:00:00+08:00\n5\t2\tsrc/a.py\n3\t0\tREADME.md\n\n"
     commits = _gs._parse_stats_log_output(raw)
     assert commits == [
         {
@@ -112,17 +107,13 @@ async def test_parse_merge_commit_has_no_numstat_lines():
     assert len(commits) == 2
     assert commits[0]["date"] == "2026-07-11"
     assert commits[0]["files"] == []
-    assert commits[1]["files"] == [
-        {"path": "a.py", "additions": 1, "deletions": 1}
-    ]
+    assert commits[1]["files"] == [{"path": "a.py", "additions": 1, "deletions": 1}]
 
 
 async def test_parse_binary_file_counts_touch_with_zero_lines():
     raw = "@@STATS@@\x002026-07-10T10:00:00+08:00\n-\t-\tlogo.png\n"
     commits = _gs._parse_stats_log_output(raw)
-    assert commits[0]["files"] == [
-        {"path": "logo.png", "additions": 0, "deletions": 0}
-    ]
+    assert commits[0]["files"] == [{"path": "logo.png", "additions": 0, "deletions": 0}]
 
 
 async def test_parse_skips_malformed_block():
@@ -195,3 +186,205 @@ async def test_aggregate_hot_files_sort_and_truncation():
     assert [f["path"] for f in out["hot_files"]] == ["y.py", "z.py"]
     # files_changed 是截断前的完整去重数
     assert out["totals"]["files_changed"] == 3
+
+
+# ── Task 2: handler e2e tests (real git) ──
+
+
+async def test_handle_aggregation_e2e(monkeypatch, plugin, tmp_path: Path):
+    """2 commits across 2 days → days/totals/hot_files/range 精确匹配。"""
+    _init_git_repo(tmp_path)
+    _commit(tmp_path, {"a.py": "1\n2\n"}, "2026-07-10T10:00:00+08:00")
+    _commit(
+        tmp_path,
+        {"a.py": "1\n2\n3\n", "b.md": "x\n"},
+        "2026-07-11T10:00:00+08:00",
+    )
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin)
+    data = result["data"]
+    assert data["reason"] is None
+    assert data["loaded"] is True
+    assert data["totals"] == {
+        "commits": 2,
+        "additions": 4,
+        "deletions": 0,
+        "files_changed": 2,
+    }
+    assert data["days"] == [
+        {"date": "2026-07-10", "commits": 1, "additions": 2, "deletions": 0},
+        {"date": "2026-07-11", "commits": 1, "additions": 2, "deletions": 0},
+    ]
+    assert data["hot_files"][0] == {
+        "path": "a.py",
+        "commits": 2,
+        "additions": 3,
+        "deletions": 0,
+    }
+    assert data["range"] == {"first": "2026-07-10", "last": "2026-07-11"}
+    assert data["truncated"] is False
+    assert data["max_commits"] == 5000
+
+
+async def test_handle_merge_commit_counted_with_zero_lines(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """merge commit 计入 commits、行数为 0(关键不变量:无 numstat 行)。"""
+    _init_git_repo(tmp_path)
+    _commit(tmp_path, {"a.py": "base\n"}, "2026-07-10T10:00:00+08:00")
+    _git(tmp_path, "checkout", "-q", "-b", "feat")
+    _commit(tmp_path, {"b.py": "x\n"}, "2026-07-11T10:00:00+08:00", message="feat")
+    _git(tmp_path, "checkout", "-q", "main")
+    _commit(tmp_path, {"c.py": "y\n"}, "2026-07-12T10:00:00+08:00", message="main-work")
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_DATE": "2026-07-13T10:00:00+08:00",
+        "GIT_COMMITTER_DATE": "2026-07-13T10:00:00+08:00",
+    }
+    _git(tmp_path, "merge", "--no-ff", "-m", "merge feat", "feat", env=env)
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin)
+    data = result["data"]
+    assert data["totals"]["commits"] == 4  # base + feat + main-work + merge
+    day_0713 = next(d for d in data["days"] if d["date"] == "2026-07-13")
+    assert day_0713["commits"] == 1
+    assert day_0713["additions"] == 0
+    assert day_0713["deletions"] == 0
+
+
+async def test_handle_binary_file_zero_lines(monkeypatch, plugin, tmp_path: Path):
+    _init_git_repo(tmp_path)
+    (tmp_path / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 32)
+    _git(tmp_path, "add", ".")
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_DATE": "2026-07-10T10:00:00+08:00",
+        "GIT_COMMITTER_DATE": "2026-07-10T10:00:00+08:00",
+    }
+    _git(tmp_path, "commit", "-q", "-m", "bin", env=env)
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin)
+    data = result["data"]
+    assert data["totals"]["commits"] == 1
+    assert data["totals"]["additions"] == 0
+    assert data["totals"]["deletions"] == 0
+    assert data["hot_files"] == [
+        {"path": "logo.png", "commits": 1, "additions": 0, "deletions": 0}
+    ]
+
+
+async def test_handle_rename_counted_as_delete_add(monkeypatch, plugin, tmp_path: Path):
+    """--no-renames 下 rename 按删旧+增新计入(旧路径 del、新路径 add)。"""
+    _init_git_repo(tmp_path)
+    _commit(tmp_path, {"old.py": "1\n2\n3\n"}, "2026-07-10T10:00:00+08:00")
+    _git(tmp_path, "mv", "old.py", "new.py")
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_DATE": "2026-07-11T10:00:00+08:00",
+        "GIT_COMMITTER_DATE": "2026-07-11T10:00:00+08:00",
+    }
+    _git(tmp_path, "commit", "-q", "-m", "rename", env=env)
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin)
+    data = result["data"]
+    by_path = {f["path"]: f for f in data["hot_files"]}
+    # 新路径: rename commit 的 +3;旧路径: 初始 +3 与 rename 的 -3
+    assert by_path["new.py"]["additions"] == 3
+    assert by_path["old.py"]["deletions"] == 3
+
+
+async def test_handle_max_commits_truncation(monkeypatch, plugin, tmp_path: Path):
+    """max_commits=2 对 3 commits → truncated=true,只统计最新 2 条。"""
+    _init_git_repo(tmp_path)
+    for i in range(3):
+        _commit(tmp_path, {"f.py": f"{i}\n"}, f"2026-07-{10 + i}T10:00:00+08:00")
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin, query={"max_commits": "2"})
+    data = result["data"]
+    assert data["truncated"] is True
+    assert data["max_commits"] == 2
+    assert data["totals"]["commits"] == 2
+    assert data["range"]["first"] == "2026-07-11"  # 最老一条被丢弃
+
+
+async def test_handle_since_until_passthrough(monkeypatch, plugin, tmp_path: Path):
+    _init_git_repo(tmp_path)
+    for i in range(3):
+        _commit(tmp_path, {"f.py": f"{i}\n"}, f"2026-07-{10 + i}T10:00:00+08:00")
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    result = await _call_with_query(
+        monkeypatch,
+        plugin,
+        query={"since": "2026-07-11T00:00:00", "until": "2026-07-11T23:59:59"},
+    )
+    data = result["data"]
+    assert data["totals"]["commits"] == 1
+    # 07-11 的 commit 把 f.py 从 "0\n" 改写为 "1\n": 一行删+一行增
+    assert data["days"] == [
+        {"date": "2026-07-11", "commits": 1, "additions": 1, "deletions": 1}
+    ]
+
+
+async def test_handle_invalid_params(monkeypatch, plugin, tmp_path: Path):
+    _init_git_repo(tmp_path)
+    _commit(tmp_path, {"a.py": "1\n"}, "2026-07-10T10:00:00+08:00")
+    _load_project(plugin, "test:umo", str(tmp_path))
+
+    for query in (
+        {"max_commits": "abc"},
+        {"max_commits": "0"},
+        {"max_commits": "20001"},
+        {"top_files": "0"},
+        {"top_files": "51"},
+        {"top_files": "x"},
+        {"ref": "-n"},  # 选项注入防御
+        {"since": "not-a-date"},
+        {"until": "2026/07/10"},
+    ):
+        result = await _call_with_query(monkeypatch, plugin, query=query)
+        assert result["data"]["reason"] == "invalid_param", (
+            f"query={query} should be invalid_param, got {result['data']}"
+        )
+
+
+async def test_handle_no_project_loaded(monkeypatch, plugin):
+    result = await _call_with_query(monkeypatch, plugin, umo="ghost:umo")
+    assert result["data"]["reason"] == "no_project_loaded"
+
+
+async def test_handle_not_a_git_repo(monkeypatch, plugin, tmp_path: Path):
+    non_git = tmp_path / "plain"
+    non_git.mkdir()
+    _load_project(plugin, "test:umo", str(non_git))
+    result = await _call_with_query(monkeypatch, plugin)
+    assert result["data"]["reason"] == "not_a_git_repo"
+
+
+async def test_handle_empty_repository(monkeypatch, plugin, tmp_path: Path):
+    _init_git_repo(tmp_path)  # 无 commit
+    _load_project(plugin, "test:umo", str(tmp_path))
+    result = await _call_with_query(monkeypatch, plugin)
+    assert result["data"]["reason"] == "empty_repository"
+
+
+async def test_handle_etag_304_short_circuit(monkeypatch, plugin, tmp_path: Path):
+    """同 key 二次请求带 If-None-Match → 304;TTL=0 强制重算。"""
+    _init_git_repo(tmp_path)
+    _commit(tmp_path, {"a.py": "1\n"}, "2026-07-10T10:00:00+08:00")
+    _load_project(plugin, "test:umo", str(tmp_path))
+    _gs._STATS_ETAG_CACHE.clear()
+    monkeypatch.setattr(_gs, "_STATS_ETAG_TTL", 0.0)
+
+    r1 = await _call_with_query(monkeypatch, plugin)
+    assert r1.status_code == 200
+    etag = r1.headers.get("etag")
+    assert etag, f"first response missing ETag: {dict(r1.headers)}"
+
+    r2 = await _call_with_query(monkeypatch, plugin, headers={"If-None-Match": etag})
+    assert r2.status_code == 304

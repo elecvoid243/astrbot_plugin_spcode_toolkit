@@ -21,6 +21,7 @@ Dashboard / WebUI:
   * ``/spcode/git-init``        (POST)  # v2.17.0 (2026-07-15) — git init 端点
   * ``/spcode/git-repo-check``   (GET)   # v2.18.0 (2026-07-16) - git 仓库探测
   * ``/spcode/git-show``        (GET)   # v3.8 (2026-06-25)
+  * ``/spcode/git-stats``       (GET)   # v2.21 (2026-07-18)
   * ``/spcode/git-worktree-add``   (POST)  # v2.14.0 (2026-06-26) — PR-B ADD endpoint
   * ``/spcode/git-worktree-remove`` (POST) # v2.14.0 (2026-06-26) — PR-C REMOVE endpoint
   * ``/spcode/git-worktree-lock``   (POST)  # v2.14.0 (2026-06-26) — PR-D LOCK endpoint
@@ -75,6 +76,7 @@ from . import (
     git_repo_check,  # v2.18.0 (2026-07-16) - GET git 仓库探测
     git_revert,  # v2.17.0 (2026-07-16) - PR-G POST endpoint
     git_show,
+    git_stats,
     git_stage,
     git_status,
     git_unstage,
@@ -168,6 +170,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["GET"],
         git_show.handle,
         "查看给定 ref 修改的文件列表 (name-status + numstat)",
+    ),
+    (
+        "/spcode/git-stats",  # v2.21 (2026-07-18)
+        ["GET"],
+        git_stats.handle,
+        "获取已加载项目的变更统计(按日聚合 + 热点文件,供 stats 面板调用)",
     ),
     (
         "/spcode/git-init",  # v2.17.0 (2026-07-15)

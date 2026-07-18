@@ -127,6 +127,7 @@ def test_routes_table_has_thirty_endpoints() -> None:
         "/spcode/git-status",  # v2.13 (2026-06-24)
         "/spcode/git-log",  # PR-2 (2026-06-24)
         "/spcode/git-show",  # v3.8 (2026-06-25)
+        "/spcode/git-stats",  # v2.21 (2026-07-18)
         "/spcode/git-stage",  # PR-3 (2026-06-24)
         "/spcode/git-unstage",  # PR-4 (2026-06-24)
         "/spcode/git-commit",  # PR-5 (2026-06-24)
@@ -162,7 +163,7 @@ def test_routes_table_has_thirty_endpoints() -> None:
     # v2.17.0 +1 GET (git-branches) + 5 POST = 6 entries
     # 30 entries total: 11 GET + 17 POST + 1 PATCH + 1 DELETE
     methods = [m for entry in ROUTES for m in entry[1]]
-    assert methods.count("GET") == 12  # was 11; +1 for git-repo-check
+    assert methods.count("GET") == 13  # +1 for git-stats
     # v2.20 (2026-07-17): +1 POST for btw endpoint. 32 entries total:
     # 13 GET + 18 POST + 1 PATCH + 1 DELETE
     # 2026-07-17: +1 POST for file-write. 33 entries total.
@@ -183,36 +184,43 @@ class TestV217NewEndpointsSmoke:
     @staticmethod
     def _route_paths() -> set[str]:
         from tools.webapi import ROUTES
+
         return {r[0] for r in ROUTES}
 
     def test_git_init_route_registered(self) -> None:
         from tools.webapi import git_init
         from tools.webapi import ROUTES  # noqa: F401  (consistency)
+
         assert git_init.handle is not None
         assert "/spcode/git-init" in self._route_paths()
 
     def test_git_branches_route_registered(self) -> None:
         from tools.webapi import git_branches
+
         assert git_branches.handle is not None
         assert "/spcode/git-branches" in self._route_paths()
 
     def test_git_branch_create_route_registered(self) -> None:
         from tools.webapi import git_branch_create
+
         assert git_branch_create.handle is not None
         assert "/spcode/git-branch-create" in self._route_paths()
 
     def test_git_branch_delete_route_registered(self) -> None:
         from tools.webapi import git_branch_delete
+
         assert git_branch_delete.handle is not None
         assert "/spcode/git-branch-delete" in self._route_paths()
 
     def test_git_branch_switch_route_registered(self) -> None:
         from tools.webapi import git_branch_switch
+
         assert git_branch_switch.handle is not None
         assert "/spcode/git-branch-switch" in self._route_paths()
 
     def test_git_revert_route_registered(self) -> None:
         from tools.webapi import git_revert
+
         assert git_revert.handle is not None
         assert "/spcode/git-revert" in self._route_paths()
 
@@ -385,8 +393,8 @@ def test_register_webapi_routes_calls_context_thirty_two_times() -> None:
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    # 35 entries total: 33 + 2 file-rename/file-remove (2026-07-18)
-    assert plugin.context.register_web_api.call_count == 35
+    # 36 entries total: 35 + git-stats (2026-07-18)
+    assert plugin.context.register_web_api.call_count == 36
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -403,9 +411,9 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 35 routes (file-rename/remove added).
+    # Should not raise; should attempt all 36 routes (git-stats added).
     register_webapi_routes(plugin)
-    assert call_count == 35
+    assert call_count == 36
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────
