@@ -40,6 +40,10 @@ class PlanModeController:
         self._get_config = get_config
         self._plan_mode: dict[str, bool] = {}
         self._plan_reminded: dict[str, bool] = {}
+        # Per-UMO snapshot of the original ToolSet captured at the first plan-mode
+        # filter call. Used to restore the full tool list on the next request
+        # after /build clears plan mode. Cleared on restore and on deactivate.
+        self._original_tool_sets: dict[str, object] = {}
 
     # ── 状态查询 ─────────────────────────────────────
 
@@ -87,14 +91,28 @@ class PlanModeController:
         """
         umo = event.unified_msg_origin
         if not self._plan_mode.get(umo, False):
-            return  # build 模式(默认):不做事
+            # build 模式(默认):如果之前 plan 阶段替换过 ToolSet,在下一次
+            # 请求时把它还原回去,然后清掉快照。这样 /build 之后第一次 LLM
+            # 请求即可看到完整工具集(包括 todo_create 等被过滤的写工具)。
+            original = self._original_tool_sets.pop(umo, None)
+            if original is not None:
+                req.func_tool = original
+                logger.debug(
+                    f"[plan] 会话 {umo}: 已从 plan 模式恢复原始 ToolSet"
+                )
+            return
         if not req.func_tool:
             return
 
         blocked_tools = self._get_config().get("plan_mode_blocked_tools") or []
         if blocked_tools:
             blocked_set = set(blocked_tools)
-            removed_count = self._filter_func_tool(req, blocked_set)
+            removed_count = self._filter_func_tool(
+                req,
+                blocked_set,
+                umo,
+                capture=self._capture_original_toolset,
+            )
             if removed_count > 0:
                 logger.debug(
                     f"[plan] 会话 {umo}: 从工具列表过滤 {removed_count} 个写工具"
@@ -138,8 +156,24 @@ class PlanModeController:
         self._plan_reminded[umo] = True
         logger.debug(f"[plan] 会话 {umo}: 已注入 plan 模式 reminder 到 user message")
 
+    def _capture_original_toolset(self, req: "ProviderRequest", umo: str) -> None:
+        """Record the original ToolSet for this UMO if we have not yet captured one.
+
+        Called only on the first actual filter (kept != all). Subsequent plan-mode
+        requests keep the original captured snapshot, so the build-mode restore
+        sees the very first ToolSet the session saw.
+        """
+        if umo in self._original_tool_sets:
+            return
+        self._original_tool_sets[umo] = req.func_tool
+
     @staticmethod
-    def _filter_func_tool(req: "ProviderRequest", blocked: set[str]) -> int:
+    def _filter_func_tool(
+        req: "ProviderRequest",
+        blocked: set[str],
+        umo: str,
+        capture: Callable[["ProviderRequest", str], None] | None = None,
+    ) -> int:
         """从 req.func_tool 中过滤掉 blocked 集合里的工具名,返回被过滤的数量。
 
         设计要点(参考 opencode plan 模式):
@@ -148,6 +182,7 @@ class PlanModeController:
         2. 被过滤的工具**完全从 LLM 工具列表消失**(schema 不序列化)
            —— LLM 看不到也调不到,比"调用时拒绝"更干净
         3. 不存在的工具名静默跳过——配置可写"计划中"的工具名
+        4. 在替换前按 umo 保存原始 ToolSet 引用,供 build 模式首次请求时恢复
         """
         if not req.func_tool or not blocked:
             return 0
@@ -157,6 +192,11 @@ class PlanModeController:
             return 0
         try:
             from astrbot.core.agent.tool import ToolSet
+
+            # 只在第一次发生实际过滤时记录快照;之后 plan 模式内的请求
+            # 不应重复覆盖原始引用。
+            if capture is not None:
+                capture(req, umo)
 
             new_set: "ToolSet" = ToolSet()
             for t in kept:

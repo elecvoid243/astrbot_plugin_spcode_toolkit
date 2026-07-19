@@ -21,6 +21,18 @@ def _make_event(umo: str = "test:umo"):
     return ev
 
 
+def _make_tool_set(names: list[str]):
+    """Construct a real ToolSet containing named test tools."""
+    from astrbot.core.agent.tool import ToolSet
+
+    tool_set = ToolSet()
+    for name in names:
+        tool = MagicMock()
+        tool.name = name
+        tool_set.add_tool(tool)
+    return tool_set
+
+
 # ── 状态查询 ─────────────────────────────────────────────
 
 
@@ -105,6 +117,58 @@ def test_filter_request_build_mode_is_noop():
     c.filter_request(event, req)
     # tool list 未被修改(仍是原 list)
     assert len(req.func_tool.tools) == 1
+
+
+def test_filter_request_restores_tools_after_leaving_plan_mode():
+    """plan → build restores the original ToolSet on the next request."""
+    cfg = {"plan_mode_blocked_tools": ["todo_create"]}
+    c = PlanModeController(get_config=lambda: cfg)
+    event = _make_event("umo-restore")
+    req = _make_req()
+    original = _make_tool_set(["todo_create", "todo_query"])
+    req.func_tool = original
+
+    c.activate("umo-restore")
+    c.filter_request(event, req)
+    assert [tool.name for tool in req.func_tool.tools] == ["todo_query"]
+    assert req.func_tool is not original
+
+    c.deactivate("umo-restore")
+    c.filter_request(event, req)
+    assert req.func_tool is original
+    assert [tool.name for tool in req.func_tool.tools] == [
+        "todo_create",
+        "todo_query",
+    ]
+    assert "umo-restore" not in c._original_tool_sets
+
+
+def test_toolset_restore_isolated_per_umo():
+    """Restoration uses the snapshot belonging to the current session only."""
+    cfg = {"plan_mode_blocked_tools": ["todo_create"]}
+    c = PlanModeController(get_config=lambda: cfg)
+    event_a = _make_event("umo-a")
+    event_b = _make_event("umo-b")
+    req_a = _make_req()
+    req_b = _make_req()
+    original_a = _make_tool_set(["todo_create", "todo_query"])
+    original_b = _make_tool_set(["todo_create", "todo_query"])
+    req_a.func_tool = original_a
+    req_b.func_tool = original_b
+
+    c.activate("umo-a")
+    c.filter_request(event_a, req_a)
+    c.filter_request(event_b, req_b)
+
+    c.deactivate("umo-a")
+    c.filter_request(event_a, req_a)
+
+    assert req_a.func_tool is original_a
+    assert req_b.func_tool is original_b
+    assert [tool.name for tool in req_b.func_tool.tools] == [
+        "todo_create",
+        "todo_query",
+    ]
 
 
 # ── filter_request: plan 模式过滤 ─────────────────────────
