@@ -70,9 +70,7 @@ class TestParsePatchHeader:
 
     def test_no_hunk_header_returns_patch_malformed(self) -> None:
         patch = (
-            "diff --git a/x.py b/x.py\n"
-            "--- a/x.py\n"
-            "+++ b/x.py\n"
+            "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n"
             # intentionally no @@
         )
         meta = file_discard_hunk._parse_patch_header(patch, expected_file="x.py")
@@ -125,7 +123,9 @@ class TestParsePatchHeader:
             "+++ b//etc/passwd\n"
             "@@ -1 +1 @@\n-x\n+X\n"
         )
-        meta = file_discard_hunk._parse_patch_header(patch, expected_file="//etc/passwd")
+        meta = file_discard_hunk._parse_patch_header(
+            patch, expected_file="//etc/passwd"
+        )
         assert meta.err == "patch_unsafe_path"
 
     def test_dot_git_in_diff_header_returns_patch_unsafe_path(self) -> None:
@@ -147,12 +147,7 @@ class TestParsePatchHeader:
         assert meta.err == "patch_binary"
 
     def test_garbled_hunk_header_returns_patch_malformed(self) -> None:
-        patch = (
-            "diff --git a/x.py b/x.py\n"
-            "--- a/x.py\n"
-            "+++ b/x.py\n"
-            "@@ -abc +def @@\n"
-        )
+        patch = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -abc +def @@\n"
         meta = file_discard_hunk._parse_patch_header(patch, expected_file="x.py")
         assert meta.err == "patch_malformed"
 
@@ -178,8 +173,13 @@ class TestEnvelopes:
 
     def test_success_envelope_has_discarded_true(self) -> None:
         env = file_discard_hunk._make_file_discard_hunk_success_envelope(
-            umo="u1", file="f.py", directory="/tmp/r", elapsed_ms=10,
-            scope="staged", hunks=3, patch_sha="abc12345",
+            umo="u1",
+            file="f.py",
+            directory="/tmp/r",
+            elapsed_ms=10,
+            scope="staged",
+            hunks=3,
+            patch_sha="abc12345",
         )
         assert env["data"]["discarded"] is True
         assert env["data"]["reason"] is None
@@ -222,6 +222,7 @@ class TestHandlerBodyValidation:
                 @staticmethod
                 async def json(default=None):
                     return body
+
             monkeypatch.setattr(web, "request", _Req)
 
         return _patch
@@ -236,42 +237,32 @@ class TestHandlerBodyValidation:
         assert result["data"]["reason"] == "invalid_body"
 
     @pytest.mark.asyncio
-    async def test_missing_file_field(
-        self, mock_plugin, patch_web_request
-    ) -> None:
+    async def test_missing_file_field(self, mock_plugin, patch_web_request) -> None:
         patch_web_request({"umo": "x", "patch_text": "diff --git a/x b/x"})
         result = await file_discard_hunk.handle(mock_plugin)
         assert result["data"]["discarded"] is False
         assert result["data"]["reason"] == "missing_file"
 
     @pytest.mark.asyncio
-    async def test_empty_file_field(
-        self, mock_plugin, patch_web_request
-    ) -> None:
+    async def test_empty_file_field(self, mock_plugin, patch_web_request) -> None:
         patch_web_request({"file": "  ", "patch_text": "x"})
         result = await file_discard_hunk.handle(mock_plugin)
         assert result["data"]["reason"] == "missing_file"
 
     @pytest.mark.asyncio
-    async def test_patch_text_not_string(
-        self, mock_plugin, patch_web_request
-    ) -> None:
+    async def test_patch_text_not_string(self, mock_plugin, patch_web_request) -> None:
         patch_web_request({"file": "x.py", "patch_text": 123})
         result = await file_discard_hunk.handle(mock_plugin)
         assert result["data"]["reason"] == "invalid_body"
 
     @pytest.mark.asyncio
-    async def test_empty_patch_text(
-        self, mock_plugin, patch_web_request
-    ) -> None:
+    async def test_empty_patch_text(self, mock_plugin, patch_web_request) -> None:
         patch_web_request({"file": "x.py", "patch_text": ""})
         result = await file_discard_hunk.handle(mock_plugin)
         assert result["data"]["reason"] == "patch_empty"
 
     @pytest.mark.asyncio
-    async def test_patch_too_large(
-        self, mock_plugin, patch_web_request
-    ) -> None:
+    async def test_patch_too_large(self, mock_plugin, patch_web_request) -> None:
         big_patch = "x" * (256 * 1024 + 1)
         patch_web_request({"file": "x.py", "patch_text": big_patch})
         result = await file_discard_hunk.handle(mock_plugin)
@@ -282,7 +273,12 @@ class TestHandlerBodyValidation:
         self, mock_plugin, patch_web_request, monkeypatch
     ) -> None:
         mock_plugin._config["agentsmd_enabled"] = False
-        patch_web_request({"file": "x.py", "patch_text": "diff --git a/x.py b/x.py\n@@ -1 +1 @@\n-a\n+A\n"})
+        patch_web_request(
+            {
+                "file": "x.py",
+                "patch_text": "diff --git a/x.py b/x.py\n@@ -1 +1 @@\n-a\n+A\n",
+            }
+        )
         result = await file_discard_hunk.handle(mock_plugin)
         assert result["data"]["reason"] == "feature_disabled"
 
@@ -291,8 +287,14 @@ class TestHandlerBodyValidation:
         self, mock_plugin, patch_web_request, monkeypatch
     ) -> None:
         from tools.project import state as _proj_state
+
         _proj_state.reset()
-        patch_web_request({"file": "x.py", "patch_text": "diff --git a/x.py b/x.py\n@@ -1 +1 @@\n-a\n+A\n"})
+        patch_web_request(
+            {
+                "file": "x.py",
+                "patch_text": "diff --git a/x.py b/x.py\n@@ -1 +1 @@\n-a\n+A\n",
+            }
+        )
         result = await file_discard_hunk.handle(mock_plugin)
         assert result["data"]["reason"] == "no_project_loaded"
 
@@ -335,9 +337,7 @@ class TestHandlerFileSafety:
         from tests.conftest import _make_plugin
 
         plugin = _make_plugin()
-        _proj_state.put(
-            "test-umo", {"directory": str(git_repo), "loaded_at": 0}
-        )
+        _proj_state.put("test-umo", {"directory": str(git_repo), "loaded_at": 0})
         return plugin
 
     @pytest.fixture
@@ -349,6 +349,7 @@ class TestHandlerFileSafety:
                 @staticmethod
                 async def json(default=None):
                     return body
+
             monkeypatch.setattr(web, "request", _Req)
 
         return _post
@@ -365,9 +366,7 @@ class TestHandlerFileSafety:
         )
 
     @pytest.mark.asyncio
-    async def test_directory_missing(
-        self, mock_plugin_with_repo, post_body
-    ) -> None:
+    async def test_directory_missing(self, mock_plugin_with_repo, post_body) -> None:
         """Loaded project was deleted externally → directory_missing.
 
         不依赖 ``shutil.rmtree`` 物理删除:Windows 上 ``.git/objects/XX/YY``
@@ -409,12 +408,7 @@ class TestHandlerFileSafety:
             async def json(default=None):
                 return {
                     "file": "x.txt",
-                    "patch_text": (
-                        "diff --git a/x.txt b/x.txt\n"
-                        "@@ -1 +1 @@\n"
-                        "-x\n"
-                        "+X\n"
-                    ),
+                    "patch_text": ("diff --git a/x.txt b/x.txt\n@@ -1 +1 @@\n-x\n+X\n"),
                 }
 
         monkeypatch.setattr(web, "request", _Req)
@@ -422,9 +416,7 @@ class TestHandlerFileSafety:
         assert result["data"]["reason"] == "not_a_git_repo"
 
     @pytest.mark.asyncio
-    async def test_path_unsafe_absolute(
-        self, mock_plugin_with_repo, post_body
-    ) -> None:
+    async def test_path_unsafe_absolute(self, mock_plugin_with_repo, post_body) -> None:
         post_body({"file": "/etc/passwd", "patch_text": "x"})
         result = await file_discard_hunk.handle(mock_plugin_with_repo)
         assert result["data"]["reason"] == "path_unsafe"
@@ -438,24 +430,18 @@ class TestHandlerFileSafety:
         assert result["data"]["reason"] == "path_unsafe"
 
     @pytest.mark.asyncio
-    async def test_path_unsafe_dot_git(
-        self, mock_plugin_with_repo, post_body
-    ) -> None:
+    async def test_path_unsafe_dot_git(self, mock_plugin_with_repo, post_body) -> None:
         post_body({"file": ".git/config", "patch_text": "x"})
         result = await file_discard_hunk.handle(mock_plugin_with_repo)
         assert result["data"]["reason"] == "path_unsafe"
 
     @pytest.mark.asyncio
-    async def test_file_not_found(
-        self, mock_plugin_with_repo, post_body
-    ) -> None:
+    async def test_file_not_found(self, mock_plugin_with_repo, post_body) -> None:
         post_body(
             {
                 "file": "no_such.py",
                 "patch_text": (
-                    "diff --git a/no_such.py b/no_such.py\n"
-                    "@@ -1 +1 @@\n"
-                    "-x\n+X\n"
+                    "diff --git a/no_such.py b/no_such.py\n@@ -1 +1 @@\n-x\n+X\n"
                 ),
             }
         )
@@ -469,25 +455,19 @@ class TestHandlerFileSafety:
         """All 6 attack vectors on worktree= should be rejected."""
         # Body patch 选用仅 1 个 hunk 的 minimal valid patch —— 即使 worktree 校验
         # 通过,patch 也会被 step 8-11 解析失败,但我们先确认 worktree 校验能拦下。
-        body_patch = (
-            "diff --git a/main.py b/main.py\n"
-            "@@ -1 +1 @@\n"
-            "-x\n+X\n"
-        )
+        body_patch = "diff --git a/main.py b/main.py\n@@ -1 +1 @@\n-x\n+X\n"
         attack_vectors = [
-            "../escape",         # 1. .. 段
-            "/etc/passwd",       # 2. 绝对路径
-            "C:\\Windows",       # 3. Windows 绝对路径
-            ".git/HEAD",         # 4. 隐藏目录组件
+            "../escape",  # 1. .. 段
+            "/etc/passwd",  # 2. 绝对路径
+            "C:\\Windows",  # 3. Windows 绝对路径
+            ".git/HEAD",  # 4. 隐藏目录组件
             "non/existent/dir",  # 5. 不存在
             # 6. git-common-dir 不匹配 — 需要 mock `_validate_worktree_param` 自身,
             #    见 patch_check_failed 类比;此处省略(生产代码已覆盖,见
             #    tools/_helpers.py _validate_worktree_param step 6)。
         ]
         for vector in attack_vectors:
-            post_body(
-                {"file": "main.py", "worktree": vector, "patch_text": body_patch}
-            )
+            post_body({"file": "main.py", "worktree": vector, "patch_text": body_patch})
             result = await file_discard_hunk.handle(mock_plugin_with_repo)
             assert result["data"]["reason"] in (
                 "worktree_invalid",
@@ -542,10 +522,14 @@ class TestHandlerGitOps:
         import subprocess
 
         env = os.environ.copy()
-        env.update({
-            "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e",
-            "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e",
-        })
+        env.update(
+            {
+                "GIT_AUTHOR_NAME": "T",
+                "GIT_AUTHOR_EMAIL": "t@e",
+                "GIT_COMMITTER_NAME": "T",
+                "GIT_COMMITTER_EMAIL": "t@e",
+            }
+        )
         repo = tmp_path / "repo"
         repo.mkdir()
         (repo / "main.py").write_text("original line\n", encoding="utf-8")
@@ -586,6 +570,7 @@ class TestHandlerGitOps:
                 @staticmethod
                 async def json(default=None):
                     return body
+
             monkeypatch.setattr(web, "request", _Req)
 
         return _post
@@ -621,10 +606,12 @@ class TestHandlerGitOps:
     ) -> None:
         """git add 后,patch 应用用 --cached。"""
         import subprocess
+
         # Stage the modification
         subprocess.run(
             ["git", "-C", str(git_repo_with_change), "add", "main.py"],
-            check=True, capture_output=True,
+            check=True,
+            capture_output=True,
         )
         # Same forward patch
         forward_patch = (
@@ -643,23 +630,22 @@ class TestHandlerGitOps:
         assert result["data"]["hunks_reverted"] == 1
 
     @pytest.mark.asyncio
-    async def test_not_modified(
-        self, plugin, post_body, git_repo_with_change
-    ) -> None:
+    async def test_not_modified(self, plugin, post_body, git_repo_with_change) -> None:
         """文件无改动 → not_modified。"""
         # Reset file to clean state
         import subprocess
+
         subprocess.run(
             ["git", "-C", str(git_repo_with_change), "checkout", "--", "main.py"],
-            check=True, capture_output=True,
+            check=True,
+            capture_output=True,
         )
-        post_body({
-            "file": "main.py",
-            "patch_text": (
-                "diff --git a/main.py b/main.py\n"
-                "@@ -1 +1 @@\n-a\n+A\n"
-            ),
-        })
+        post_body(
+            {
+                "file": "main.py",
+                "patch_text": ("diff --git a/main.py b/main.py\n@@ -1 +1 @@\n-a\n+A\n"),
+            }
+        )
         result = await file_discard_hunk.handle(plugin)
         assert result["data"]["reason"] == "not_modified"
 
@@ -669,13 +655,14 @@ class TestHandlerGitOps:
     ) -> None:
         """新 untracked 文件 → untracked_file。"""
         (git_repo_with_change / "new.txt").write_text("hello")
-        post_body({
-            "file": "new.txt",
-            "patch_text": (
-                "diff --git a/new.txt b/new.txt\n"
-                "@@ -1 +1 @@\n-hello\n+bye\n"
-            ),
-        })
+        post_body(
+            {
+                "file": "new.txt",
+                "patch_text": (
+                    "diff --git a/new.txt b/new.txt\n@@ -1 +1 @@\n-hello\n+bye\n"
+                ),
+            }
+        )
         result = await file_discard_hunk.handle(plugin)
         assert result["data"]["reason"] == "untracked_file"
 
@@ -705,7 +692,8 @@ class TestHandlerGitOps:
         """patch 含 trailing whitespace → patch_check_failed(--whitespace=error)。"""
         # Modify the file with trailing whitespace first
         (git_repo_with_change / "main.py").write_text(
-            "original line\nnew line   \n", encoding="utf-8"  # trailing spaces
+            "original line\nnew line   \n",
+            encoding="utf-8",  # trailing spaces
         )
         # Patch that would add another trailing-whitespace line
         bad_patch = (
@@ -722,7 +710,8 @@ class TestHandlerGitOps:
         result = await file_discard_hunk.handle(plugin)
         # git 在 --whitespace=error 下会拒绝 trailing whitespace
         assert result["data"]["reason"] in (
-            "patch_check_failed", "patch_apply_failed"
+            "patch_check_failed",
+            "patch_apply_failed",
         ), result
 
     @pytest.mark.asyncio
@@ -764,3 +753,258 @@ class TestHandlerGitOps:
         post_body({"file": "main.py", "patch_text": forward_patch})
         result = await file_discard_hunk.handle(plugin)
         assert result["data"]["reason"] == "patch_apply_failed"
+
+    # ── v2.21 (2026-07-21, elecvoid243) scope 字段优先级测试 ──
+    # 修复 MM 状态(staged + worktree 同时 dirty)下旧 auto-detect 固定走
+    # --cached 的反向操作 bug:用户看 unstaged 视图点 discard 时,旧逻辑
+    # 会把 patch 反向应用到 index 而不是 worktree。客户端现在传 scope 后
+    # 直接决定路径,旧行为仅作为 fallback 保留。
+
+    @staticmethod
+    def _make_mm_repo(tmp_path) -> Path:
+        """构造 MM 状态:staged=2 行新加,worktree=3 行新加。
+
+        file contents at the end of setup:
+          HEAD   : 'original line\\n'
+          index  : 'original line\\nadded line A\\nadded line B\\n'
+          worktree: 'original line\\nadded line A\\nadded line B\\nadded line C\\n'
+        """
+        import os
+        import subprocess
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "GIT_AUTHOR_NAME": "T",
+                "GIT_AUTHOR_EMAIL": "t@e",
+                "GIT_COMMITTER_NAME": "T",
+                "GIT_COMMITTER_EMAIL": "t@e",
+            }
+        )
+        repo = tmp_path / "mm_repo"
+        repo.mkdir()
+        (repo / "main.py").write_text("original line\n", encoding="utf-8")
+        for cmd in (
+            ["git", "-C", str(repo), "init"],
+            ["git", "-C", str(repo), "config", "user.email", "t@e"],
+            ["git", "-C", str(repo), "config", "user.name", "T"],
+            ["git", "-C", str(repo), "add", "main.py"],
+            ["git", "-C", str(repo), "commit", "-m", "init"],
+        ):
+            subprocess.run(cmd, check=True, capture_output=True, env=env)
+        # Stage two new lines (becomes the index)
+        (repo / "main.py").write_text(
+            "original line\nadded line A\nadded line B\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "add", "main.py"],
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+        # Add a third line in the worktree only (worktree dirty on top of staged)
+        (repo / "main.py").write_text(
+            "original line\nadded line A\nadded line B\nadded line C\n",
+            encoding="utf-8",
+        )
+        return repo
+
+    @pytest.fixture
+    def mm_plugin(self, tmp_path) -> Any:
+        from tests.conftest import _make_plugin
+        from tools.project import state as _proj_state
+
+        repo = self._make_mm_repo(tmp_path)
+        plugin = _make_plugin()
+        _proj_state.put(
+            "u",
+            {"directory": str(repo), "loaded_at": 0},
+        )
+        return plugin
+
+    @pytest.mark.asyncio
+    async def test_scope_field_staged_on_mm_applies_to_index(
+        self, mm_plugin, post_body, tmp_path
+    ) -> None:
+        """MM 状态 + scope=staged + staged view 的 patch → 反向应用到 index。
+
+        index 回到 HEAD (single line),worktree 保持不动。
+        """
+        post_body(
+            {
+                "file": "main.py",
+                "scope": "staged",
+                "patch_text": (
+                    "diff --git a/main.py b/main.py\n"
+                    "--- a/main.py\n"
+                    "+++ b/main.py\n"
+                    "@@ -1,1 +1,3 @@\n"
+                    " original line\n"
+                    "+added line A\n"
+                    "+added line B\n"
+                ),
+            }
+        )
+        result = await file_discard_hunk.handle(mm_plugin)
+        assert result["data"]["discarded"] is True, result
+        assert result["data"]["scope"] == "staged"
+        assert result["data"]["hunks_reverted"] == 1
+        # index 回到 HEAD;worktree 不应被反向应用
+        import subprocess
+
+        staged = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(tmp_path / "mm_repo"),
+                "diff",
+                "--cached",
+                "--",
+                "main.py",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert staged.stdout == "", (
+            f"index should be back to HEAD, but got: {staged.stdout!r}"
+        )
+        worktree = (tmp_path / "mm_repo" / "main.py").read_text(encoding="utf-8")
+        assert worktree == (
+            "original line\nadded line A\nadded line B\nadded line C\n"
+        ), f"worktree should be untouched, but got: {worktree!r}"
+
+    @pytest.mark.asyncio
+    async def test_scope_field_unstaged_on_mm_applies_to_worktree(
+        self, mm_plugin, post_body, tmp_path
+    ) -> None:
+        """MM 状态 + scope=unstaged + unstaged view 的 patch → 反向应用到 worktree。
+
+        worktree 回到 index 内容,index 不动。这是 v2.21 修复的关键路径:
+        旧 auto-detect 在 MM 下会走 --cached,导致 patch_check_failed。
+        """
+        post_body(
+            {
+                "file": "main.py",
+                "scope": "unstaged",
+                "patch_text": (
+                    "diff --git a/main.py b/main.py\n"
+                    "--- a/main.py\n"
+                    "+++ b/main.py\n"
+                    "@@ -1,3 +1,4 @@\n"
+                    " original line\n"
+                    " added line A\n"
+                    " added line B\n"
+                    "+added line C\n"
+                ),
+            }
+        )
+        result = await file_discard_hunk.handle(mm_plugin)
+        assert result["data"]["discarded"] is True, result
+        assert result["data"]["scope"] == "unstaged"
+        assert result["data"]["hunks_reverted"] == 1
+        # worktree 回到 index;index 不动
+        worktree = (tmp_path / "mm_repo" / "main.py").read_text(encoding="utf-8")
+        assert worktree == ("original line\nadded line A\nadded line B\n"), (
+            f"worktree should match index, but got: {worktree!r}"
+        )
+        import subprocess
+
+        cached = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(tmp_path / "mm_repo"),
+                "diff",
+                "--cached",
+                "--",
+                "main.py",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert cached.stdout != "", (
+            "index should still be dirty (added A+B), but got empty diff"
+        )
+
+    @pytest.mark.asyncio
+    async def test_scope_field_missing_falls_back_to_auto_detect(
+        self, plugin, post_body, git_repo_with_change
+    ) -> None:
+        """不传 scope → 走 v1 porcelain auto-detect,行为与历史兼容。
+
+        git_repo_with_change 状态:worktree modified,未 staged → 应走 unstaged。
+        """
+        forward_patch = (
+            "diff --git a/main.py b/main.py\n"
+            "--- a/main.py\n"
+            "+++ b/main.py\n"
+            "@@ -1,1 +1,3 @@\n"
+            " original line\n"
+            "+added line A\n"
+            "+added line B\n"
+        )
+        post_body({"file": "main.py", "patch_text": forward_patch})
+        result = await file_discard_hunk.handle(plugin)
+        assert result["data"]["discarded"] is True, result
+        assert result["data"]["scope"] == "unstaged"
+
+    @pytest.mark.asyncio
+    async def test_scope_field_all_falls_back_to_auto_detect(
+        self, plugin, post_body, git_repo_with_change
+    ) -> None:
+        """scope='all' 没有明确单路径语义 → 走 auto-detect,行为与缺失一致。"""
+        import subprocess
+
+        # Stage the modification so auto-detect sees X=M, Y=space → staged
+        subprocess.run(
+            ["git", "-C", str(git_repo_with_change), "add", "main.py"],
+            check=True,
+            capture_output=True,
+        )
+        forward_patch = (
+            "diff --git a/main.py b/main.py\n"
+            "--- a/main.py\n"
+            "+++ b/main.py\n"
+            "@@ -1,1 +1,3 @@\n"
+            " original line\n"
+            "+added line A\n"
+            "+added line B\n"
+        )
+        post_body(
+            {
+                "file": "main.py",
+                "scope": "all",  # 客户端的 all 视图,服务端当缺失处理
+                "patch_text": forward_patch,
+            }
+        )
+        result = await file_discard_hunk.handle(plugin)
+        assert result["data"]["discarded"] is True, result
+        assert result["data"]["scope"] == "staged"
+
+    @pytest.mark.asyncio
+    async def test_scope_field_invalid_value_falls_back_to_auto_detect(
+        self, plugin, post_body, git_repo_with_change
+    ) -> None:
+        """scope='garbage' 等无效值 → 走 auto-detect(防御未来 typo)。"""
+        forward_patch = (
+            "diff --git a/main.py b/main.py\n"
+            "--- a/main.py\n"
+            "+++ b/main.py\n"
+            "@@ -1,1 +1,3 @@\n"
+            " original line\n"
+            "+added line A\n"
+            "+added line B\n"
+        )
+        post_body(
+            {
+                "file": "main.py",
+                "scope": "garbage",  # typo / 旧版本字段值
+                "patch_text": forward_patch,
+            }
+        )
+        result = await file_discard_hunk.handle(plugin)
+        assert result["data"]["discarded"] is True, result
+        assert result["data"]["scope"] == "unstaged"

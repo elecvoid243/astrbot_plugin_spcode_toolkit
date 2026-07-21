@@ -124,8 +124,6 @@ async def test_validate_restore_file_rejects_dot_git():
 # 之前 setattr),测试在这里镜像同一行为。
 
 
-
-
 async def test_restore_untracked_file_deletes_worktree_file(
     plugin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -167,7 +165,9 @@ async def test_restore_worktree_deleted_file_recovers_from_index(
     result = await file_restore.handle(plugin)
     assert result["data"]["restored"] is True, result
     assert result["data"]["scope"] == "unstaged"
-    assert tracked.exists(), "worktree-deleted file should be re-materialized from index"
+    assert tracked.exists(), (
+        "worktree-deleted file should be re-materialized from index"
+    )
     assert tracked.read_text(encoding="utf-8") == "y = 1\n"
 
 
@@ -182,7 +182,9 @@ async def test_restore_staged_deleted_file_recovers_from_head(
     subprocess.run(["git", "commit", "-m", "add", "-q"], cwd=tmp_path, check=True)
     # ``git rm`` 同时 staged + 删除 worktree,porcelain 展示为 ``D  path``
     # (X='D' Y=' ')。我们的 is_truly_staged 分支会跑 checkout HEAD --。
-    subprocess.run(["git", "rm", "staged_del.py"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "rm", "staged_del.py"], cwd=tmp_path, check=True, capture_output=True
+    )
     _load_project(plugin, "u:m", str(tmp_path))
 
     monkeypatch.setattr(
@@ -195,6 +197,59 @@ async def test_restore_staged_deleted_file_recovers_from_head(
     assert result["data"]["scope"] == "staged"
     assert tracked.exists(), "staged-deleted file should be recovered from HEAD"
     assert tracked.read_text(encoding="utf-8") == "z = 1\n"
+
+
+async def test_restore_staged_new_file_unsets_index_keeps_worktree(
+    plugin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Regression (v3.7, 2026-07-21, elecvoid243): ``A  path``(新增已暂存)
+    必须能被"恢复":从 index 取消暂存,worktree 文件保留为 untracked。
+
+    此前的实现 ``X_TRULY_STAGED = {M, D, R, C, T}`` 不含 ``A``,导致
+    scope detection 三个分支全 miss:不是 intent-to-add (X=' '),不是
+    truly_staged (``A`` 不在集合),不是 worktree_dirty (Y=' '),全走到
+    ``else: reason="not_modified"`` 报"文件无未暂存改动"。``A`` 状态下
+    ``checkout HEAD`` 会失败 "pathspec did not match"(HEAD 里没这个 blob),
+    所以统一走 ``git reset HEAD -- <file>``:取消 index 暂存,worktree
+    文件保留,文件退回 untracked。
+    """
+    _init_git_repo(tmp_path)
+    new_file = tmp_path / "new_staged.txt"
+    new_file.write_text("hello\n", encoding="utf-8")
+    # ``git add`` 但不 commit → porcelain = ``A  new_staged.txt``
+    subprocess.run(["git", "add", "new_staged.txt"], cwd=tmp_path, check=True)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    monkeypatch.setattr(
+        "astrbot.api.web.request",
+        _make_request({"file": "new_staged.txt", "umo": "u:m"}),
+    )
+
+    result = await file_restore.handle(plugin)
+
+    # 关键断言:必须 restored=True,不能是 not_modified
+    assert result["data"]["restored"] is True, (
+        f"新增 staged 文件恢复失败, reason="
+        f"{result['data'].get('reason')!r}, "
+        f"scope={result['data'].get('scope')!r}"
+    )
+    assert result["data"]["reason"] is None
+    # reset HEAD 是"取消 index 暂存",不算真正已暂存(m/d/r/c/t)
+    assert result["data"]["scope"] == "unstaged"
+    # worktree 中的文件应当被保留(用户可能还在编辑)
+    assert new_file.exists(), "worktree 文件不应被删除"
+    assert new_file.read_text(encoding="utf-8") == "hello\n"
+    # 之后 porcelain 状态应当变成 ``?? path``(untracked)
+    porcelain_after = subprocess.run(
+        ["git", "status", "--porcelain", "--", "new_staged.txt"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert porcelain_after.strip().startswith("??"), (
+        f"恢复后 porcelain 应为 untracked ('?? path'), 实际 {porcelain_after!r}"
+    )
 
 
 async def test_restore_modified_worktree_unchanged_after_fix(

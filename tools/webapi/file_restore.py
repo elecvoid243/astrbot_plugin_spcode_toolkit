@@ -350,25 +350,39 @@ async def handle(
             elapsed_ms=_elapsed(),
         )
 
-    # scope 判定(v3.6,基于 porcelain v1 实测语义):
+    # scope 判定(v3.6 + v3.7,基于 porcelain v1 实测语义):
     #
     # | 场景               | porcelain  示例      | X   | Y   | 处理 |
     # |--------------------|----------------------|-----|-----|------|
     # | 仅 worktree 改动    | `` M path``          | ' ' | 'M' | git checkout -- |
     # | 已暂存(无 wt 改动) | ``M  path``          | 'M' | ' ' | git checkout HEAD -- |
     # | 已暂存 + wt 改动    | ``MM path``          | 'M' | 'M' | git checkout HEAD -- |
+    # | 新增 已暂存         | ``A  path``          | 'A' | ' ' | git reset HEAD -- |
     # | intent-to-add      | `` A path``          | ' ' | 'A' | git reset HEAD -- |
     #
-    # 关键陷阱(intent-to-add):
-    # - X 是 ' ' 而**不是** 'A'(因为 index 还没真暂存内容,只是记了个意图)
-    # - Y 是 'A'(worktree 有新文件)
-    # - 不能用 ``git checkout --``:它会把 worktree 内容置空(index 里 blob 是空的)
-    # - 必须用 ``git reset HEAD`` 取消意图(worktree 内容保留,文件变 untracked)
+    # 关键陷阱(intent-to-add 和 新增 已暂存):
+    # - intent-to-add: X=' ' 不是 'A'(index 只记意图, 还没真暂存内容);
+    #   Y='A'(worktree 有新文件)
+    # - 新增 已暂存:   X='A' 且 Y=' '(worktree 与 index 一致, 文件已 add)
+    # - 两者都不能用 ``git checkout HEAD --``:HEAD 里没这个 blob,
+    #   会 fatal-exit("pathspec did not match any file(s) known to git")
+    # - 也不能用 ``git checkout --``:index blob 是空,会把 worktree 内容
+    #   置空(语义错误)
+    # - 必须用 ``git reset HEAD``:取消 index 暂存/意图, worktree 文件保留
+    #   (用户可继续在 worktree 编辑)
+    #
+    # v3.7 修复(2026-07-21, elecvoid243):``X_TRULY_STAGED = {M, D, R, C, T}``
+    # 不含 ``'A'``,``A  path``(新增 已暂存)在 is_intent_to_add /
+    # is_truly_staged / is_worktree_dirty 三个分支全 miss,落到
+    # ``else: reason="not_modified"`` —— 即"文件无未暂存改动" 误报。
     is_intent_to_add = x_status == " " and y_status == "A"
+    is_added_staged = x_status == "A"  # 命中的"新增 已暂存" porcelain
     is_truly_staged = x_status in X_TRULY_STAGED
     is_worktree_dirty = y_status in Y_WORKTREE
 
-    if is_intent_to_add:
+    if is_intent_to_add or is_added_staged:
+        # 合并 intent-to-add 和 新增 已暂存:同语义("取消 index 暂存") +
+        # 同命令(``reset HEAD``),只是 X/Y 列不同。
         scope = "unstaged"
         restore_cmd = [
             git_bin,
