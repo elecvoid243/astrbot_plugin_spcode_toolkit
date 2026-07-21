@@ -130,17 +130,17 @@ def test_branches_etag_cache_hit(loaded_umo, existing_repo):
 # ── 解析器 ────────────────────────────────────────────────
 
 def test_parse_for_each_ref_handles_empty():
-    from tools.webapi.git_branches import _parse_for_each_ref
+    from tools.webapi._helpers import _parse_for_each_ref
     assert _parse_for_each_ref("") == []
 
 
 def test_parse_for_each_ref_skips_blank_lines():
-    from tools.webapi.git_branches import _parse_for_each_ref
+    from tools.webapi._helpers import _parse_for_each_ref
     assert _parse_for_each_ref("\n\n  \n") == []
 
 
 def test_parse_for_each_ref_extracts_current_marker():
-    from tools.webapi.git_branches import _parse_for_each_ref
+    from tools.webapi._helpers import _parse_for_each_ref
     _tab = chr(9)
     _nl = chr(10)
     line = "*main" + _tab + "abc1234" + _tab + _tab + _nl
@@ -152,7 +152,7 @@ def test_parse_for_each_ref_extracts_current_marker():
 
 
 def test_parse_for_each_ref_handles_remote():
-    from tools.webapi.git_branches import _parse_for_each_ref
+    from tools.webapi._helpers import _parse_for_each_ref
     # concat 构造:避免 \\t 被文件写入工具双重转义
     _tab = chr(9)
     _nl = chr(10)

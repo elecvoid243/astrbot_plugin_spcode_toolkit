@@ -95,6 +95,34 @@ def test_create_default_from_HEAD(loaded_umo, existing_repo):
     assert "new-branch" in out.stdout
 
 
+def test_create_response_includes_post_state(loaded_umo, existing_repo):
+    """spec §3.5 L8 (apply to all mutating handlers): 成功响应必须含
+    refreshed branches + current + detached + total。
+
+    回归测试 — create 不切分支(留在 main),所以 current=main、detached=False,
+    但 branches list 必须含新创建的分支,让前端能立即看到。
+    """
+    plugin = _make_plugin()
+    result = _run(git_branch_create.handle(
+        plugin, umo=loaded_umo, body={"name": "post-state-branch"}
+    ))
+    data = result["data"]
+    assert data["created"] is True
+    assert "current" in data
+    assert "detached" in data
+    assert "branches" in data
+    assert "total" in data
+    # create 不切分支 → current 仍是 main
+    assert data["current"] == "main"
+    assert data["detached"] is False
+    assert data["total"] == 3  # main + feature/x + new post-state-branch
+    names = [b["name"] for b in data["branches"]]
+    assert "post-state-branch" in names
+    # 新分支不是 current
+    new_b = next(b for b in data["branches"] if b["name"] == "post-state-branch")
+    assert new_b["current"] is False
+
+
 def test_create_with_start_point(loaded_umo, existing_repo):
     sha = subprocess.run(
         ["git", "-C", str(existing_repo), "rev-parse", "HEAD"],

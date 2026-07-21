@@ -148,6 +148,65 @@ def test_switch_to_existing_branch(loaded_umo, existing_repo):
     assert result["data"]["created"] is False
 
 
+def test_switch_response_includes_post_state(loaded_umo, existing_repo):
+    """spec §3.5 L8: 成功响应必须含 refreshed branches + current + detached + total。
+
+    回归测试 — v2.17.0 release 漏实现 L8,导致 dashboard 切完分支后误显示
+    "detached HEAD"(必须刷新才能看到真实状态)。本测试确保响应字段齐全,
+    且切到 feature/x 后 current 立即是 feature/x(不再 detached)。
+    """
+    plugin = _make_plugin()
+    result = _run(
+        git_branch_switch.handle(
+            plugin, umo=loaded_umo, body={"name": "feature/x"},
+        )
+    )
+    data = result["data"]
+    assert data["switched"] is True
+    # L8 必含字段
+    assert "current" in data, "L8: response must include current branch name"
+    assert "detached" in data, "L8: response must include detached flag"
+    assert "branches" in data, "L8: response must include refreshed branches list"
+    assert "total" in data, "L8: response must include total count"
+    # 切到 feature/x 后必须反映真实状态
+    assert data["current"] == "feature/x"
+    assert data["detached"] is False
+    assert data["total"] == 2  # main + feature/x
+    names = [b["name"] for b in data["branches"]]
+    assert "main" in names
+    assert "feature/x" in names
+    # feature/x 是 current,main 不是
+    fx = next(b for b in data["branches"] if b["name"] == "feature/x")
+    main = next(b for b in data["branches"] if b["name"] == "main")
+    assert fx["current"] is True
+    assert main["current"] is False
+
+
+def test_switch_back_to_main_updates_current(loaded_umo, existing_repo):
+    """连续切换:先 feature/x → main,验证 current 字段跟着变。
+
+    进一步回归 — 修复后,响应 current 必须总是反映最新 HEAD 状态,
+    而不是被前一次 switch 的 state 污染。
+    """
+    plugin = _make_plugin()
+    # 第一次切到 feature/x
+    r1 = _run(
+        git_branch_switch.handle(
+            plugin, umo=loaded_umo, body={"name": "feature/x"},
+        )
+    )
+    assert r1["data"]["current"] == "feature/x"
+    # 切回 main
+    r2 = _run(
+        git_branch_switch.handle(
+            plugin, umo=loaded_umo, body={"name": "main"},
+        )
+    )
+    assert r2["data"]["current"] == "main"
+    assert r2["data"]["detached"] is False
+    assert r2["data"]["previous"] == "feature/x"
+
+
 def test_switch_create_mode(loaded_umo, existing_repo):
     """create=true → 创建并切换。"""
     plugin = _make_plugin()

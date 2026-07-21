@@ -14,15 +14,16 @@ import logging
 import time as _time
 from typing import TYPE_CHECKING
 
+from .._helpers import _is_valid_ref_name
 from ._helpers import (
+    ReasonCode,
     _classify_switch_stderr,
     _git_endpoint_preflight,
     _JSONResponseCompat,
     _make_envelope,
+    _read_post_mutation_branch_state,
     _run_git_async,
-    ReasonCode,
 )
-from .._helpers import _is_valid_ref_name
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
@@ -31,7 +32,10 @@ logger = logging.getLogger(__name__)
 
 
 def _validate_cross_fields(
-    create: bool, force: bool, detach: bool, start_point,
+    create: bool,
+    force: bool,
+    detach: bool,
+    start_point,
 ) -> str | None:
     """create/detach/force/start_point 跨字段校验。返回 error msg 或 None。"""
     if create and detach:
@@ -64,8 +68,11 @@ async def handle(
     # ── 1. body 校验 ──
     if not isinstance(body, dict):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_BODY,
-            elapsed_ms=_elapsed(), switched=False, name="",
+            success=False,
+            reason=ReasonCode.INVALID_BODY,
+            elapsed_ms=_elapsed(),
+            switched=False,
+            name="",
         )
 
     name = body.get("name")
@@ -76,25 +83,41 @@ async def handle(
 
     if not isinstance(name, str) or not name:
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
-            elapsed_ms=_elapsed(), switched=False, name=str(name or ""),
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            switched=False,
+            name=str(name or ""),
         )
-    if not isinstance(create, bool) or not isinstance(force, bool) or not isinstance(detach, bool):
+    if (
+        not isinstance(create, bool)
+        or not isinstance(force, bool)
+        or not isinstance(detach, bool)
+    ):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
-            elapsed_ms=_elapsed(), switched=False, name=name,
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            switched=False,
+            name=name,
         )
     if start_point is not None and not isinstance(start_point, str):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
-            elapsed_ms=_elapsed(), switched=False, name=name,
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            switched=False,
+            name=name,
         )
 
     # ── 2. ref-format 校验 ──
     if not _is_valid_ref_name(name):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_BRANCH,
-            elapsed_ms=_elapsed(), switched=False, name=name,
+            success=False,
+            reason=ReasonCode.INVALID_BRANCH,
+            elapsed_ms=_elapsed(),
+            switched=False,
+            name=name,
         )
     if (
         create
@@ -103,23 +126,27 @@ async def handle(
         and not _is_valid_ref_name(start_point)
     ):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
-            elapsed_ms=_elapsed(), switched=False, name=name,
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            switched=False,
+            name=name,
         )
 
     # ── 3. 跨字段校验 ──
     cross_err = _validate_cross_fields(create, force, detach, start_point)
     if cross_err is not None:
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_BODY,
-            elapsed_ms=_elapsed(), switched=False, name=name,
+            success=False,
+            reason=ReasonCode.INVALID_BODY,
+            elapsed_ms=_elapsed(),
+            switched=False,
+            name=name,
             stderr=cross_err,
         )
 
     # ── 4. preflight ──
-    err, ctx = await _git_endpoint_preflight(
-        plugin, umo=umo, worktree_param=worktree
-    )
+    err, ctx = await _git_endpoint_preflight(plugin, umo=umo, worktree_param=worktree)
     if err is not None:
         err["data"]["elapsed_ms"] = _elapsed()
         err["data"].setdefault("switched", False)
@@ -135,9 +162,7 @@ async def handle(
         encoding="utf-8",
     )
     head_out = head_result["stdout"].strip() if head_result.get("ok") else ""
-    previous: str | None = (
-        head_out if head_out and head_out != "HEAD" else None
-    )
+    previous: str | None = head_out if head_out and head_out != "HEAD" else None
 
     # ── 6. worktree 状态探测(force 跳过) ──
     if not force:
@@ -147,9 +172,14 @@ async def handle(
         )
         if status_result.get("ok") and status_result["stdout"].strip():
             return _make_envelope(
-                success=False, reason=ReasonCode.WORKTREE_DIRTY,
-                elapsed_ms=_elapsed(), switched=False, name=name,
-                directory=directory, umo=effective_umo, worktree=directory,
+                success=False,
+                reason=ReasonCode.WORKTREE_DIRTY,
+                elapsed_ms=_elapsed(),
+                switched=False,
+                name=name,
+                directory=directory,
+                umo=effective_umo,
+                worktree=directory,
                 stderr="working tree has uncommitted changes",
             )
 
@@ -170,25 +200,52 @@ async def handle(
         reason = _classify_switch_stderr(result.get("stderr", ""))
         logger.info(
             "git-branch-switch: failed %s (%s): %s",
-            name, reason, result.get("stderr", "")[:200],
+            name,
+            reason,
+            result.get("stderr", "")[:200],
         )
         return _make_envelope(
-            success=False, reason=reason,
-            elapsed_ms=_elapsed(), switched=False, name=name,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=reason,
+            elapsed_ms=_elapsed(),
+            switched=False,
+            name=name,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             stderr=result.get("stderr", "")[:4096],
         )
 
     logger.info(
         "git-branch-switch: %s (from=%s, create=%s, force=%s, detach=%s)",
-        name, previous, create, force, detach,
+        name,
+        previous,
+        create,
+        force,
+        detach,
     )
+    # spec §3.5 L8: 成功后回读分支状态,供前端原子替换 snapshot
+    # (useSpcodeGitBranches 依赖 current/detached/branches/total 字段
+    # 立刻反映 mutation 后的真实状态;漏实现 → 切完分支显示 detached HEAD,
+    # 必须刷新才能看到真实状态 — v2.17.0 release bug。)
+    post_state = await _read_post_mutation_branch_state(git_bin, directory)
     return _JSONResponseCompat(
         _make_envelope(
-            success=True, elapsed_ms=_elapsed(),
-            switched=True, name=name, previous=previous,
-            created=create, force=force, detach=detach,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=True,
+            elapsed_ms=_elapsed(),
+            switched=True,
+            name=name,
+            previous=previous,
+            created=create,
+            force=force,
+            detach=detach,
+            current=post_state["current"],
+            detached=post_state["detached"],
+            branches=post_state["branches"],
+            total=post_state["total"],
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
         ),
         status_code=200,
     )

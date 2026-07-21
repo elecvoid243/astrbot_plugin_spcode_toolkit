@@ -214,13 +214,17 @@ class ReasonCode:
     PATCH_BINARY = "patch_binary"
     PATCH_CHECK_FAILED = "patch_check_failed"
     PATCH_APPLY_FAILED = "patch_apply_failed"
-    FILE_NOT_FOUND = "file_not_found"  # Task 4 (2026-07-06): target 文件不存在于 worktree
+    FILE_NOT_FOUND = (
+        "file_not_found"  # Task 4 (2026-07-06): target 文件不存在于 worktree
+    )
     NOT_MODIFIED = "not_modified"  # Task 5 (2026-07-06): porcelain 为空(已落盘无改动)
     UNTRACKED_FILE = "untracked_file"  # Task 5 (2026-07-06): porcelain X/Y = ??
 
     # ── /spcode/git-file + /spcode/docs 专用(spec B,2026-07-11) ──
     FILE_TOO_LARGE = "file_too_large"  # git-file: blob 超过 1 MB
-    FILE_MISSING_AT_REF = "file_missing_at_ref"  # git-file: ref 解析成功但 path 不在 ref 下
+    FILE_MISSING_AT_REF = (
+        "file_missing_at_ref"  # git-file: ref 解析成功但 path 不在 ref 下
+    )
     FILE_EXISTS = "file_exists"  # PATCH /spcode/docs: new_path 已存在
 
     # Added by v2170impl on 2026-07-16 09:26 CST.
@@ -698,3 +702,151 @@ async def _compute_git_etag(git_bin: str, directory: str) -> str:
     porcelain_sha = hashlib.sha1(porcelain_src.encode("utf-8")).hexdigest()[:16]
 
     return f'W/"{head_sha}-{wt_mtime}-{porcelain_sha}"'
+
+
+# ── git for-each-ref 解析与 mutation 后分支状态读取(共享) ───────
+# v2.17.0 三个 mutating branch handler (switch / create / delete) 在成功路径
+# 需要返回 refreshed branches list + current + detached(spec §3.2 前端原子
+# 替换 state 所依赖)。git_branches.py (GET) 原本独占 _parse_for_each_ref;
+# v2.17.0 L8 修复把它和新的 _read_post_mutation_branch_state 一起搬到本
+# _helpers.py,供 3 个 mutating handler 共享。
+#
+# Why spec §3.5 L8 line 492 "成功后回读 current branch" 步骤在 v2.17.0
+# release 漏实现,导致 dashboard 切换分支后误显示 "detached HEAD"
+# (必须刷新才能看到真实状态)。修复:用 for-each-ref + %(HEAD) 标记找
+# current branch;%(HEAD) 不匹配任何 branch ref 时,补 ``git rev-parse
+# --abbrev-ref HEAD`` 探测 detached HEAD。
+
+_FOR_EACH_REF_FORMAT: str = (
+    "%(if)%(HEAD)%(then)*%(else) %(end)"
+    "%(refname:short)%09%(objectname:short)%09"
+    "%(upstream:short)%09%(upstream:track)"
+)
+
+
+def _parse_for_each_ref(raw: str) -> list[dict[str, Any]]:
+    """解析 ``git for-each-ref`` 输出为 branch 字典列表。
+
+    格式(每行 tab 分隔):
+        [*| ]<name><TAB><sha><TAB><upstream><TAB><track>
+
+    Args:
+        raw: ``git for-each-ref --format=... refs/heads/ refs/remotes/``
+            的 stdout 原文。
+
+    Returns:
+        list of dicts with keys: name, sha, upstream, upstream_track,
+        current, remote。
+
+    Note:
+        行首位置字符携带 ``current`` 信息(``*`` 表示 HEAD 指向该 branch),
+        解析时**不能**对整行 ``.strip()``,否则会丢失这个标记。
+    """
+    result: list[dict[str, Any]] = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        # 去掉行尾空白(\r, \n),保留行首位置字符
+        line_clean = line.rstrip("\r\n")
+        parts = line_clean.split("\t")
+        if len(parts) < 2:
+            continue
+
+        name_part = parts[0]  # e.g. "*main" or " feature/x"
+        is_current = name_part.startswith("*")
+        # 去掉首字符(* 或 空格),然后 .strip() 处理额外空白
+        name = name_part[1:].strip()
+
+        sha = parts[1].strip() if len(parts) > 1 else ""
+        upstream = parts[2].strip() if len(parts) > 2 else ""
+        upstream_track = parts[3].strip() if len(parts) > 3 else ""
+
+        result.append(
+            {
+                "name": name,
+                "sha": sha,
+                "upstream": upstream,
+                "upstream_track": upstream_track,
+                "current": is_current,
+                "remote": name.startswith("origin/") or name.startswith("remotes/"),
+            }
+        )
+
+    return result
+
+
+async def _read_post_mutation_branch_state(
+    git_bin: str,
+    directory: str,
+) -> dict[str, Any]:
+    """读取 mutation 后的分支状态,供 mutating handler 附加到成功响应。
+
+    spec §3.5 L8 "成功后回读 current branch" + spec §3.2 前端原子替换
+    state 需要 mutation handler 响应含 ``branches`` / ``total`` / ``current``
+    / ``detached`` 字段。本 helper 走 ``git for-each-ref`` 路径,与
+    GET ``/spcode/git-branches`` 共用解析器,保证响应 shape 一致。
+
+    Args:
+        git_bin: git 可执行文件路径(``plugin._git_binary()``)。
+        directory: 仓库根绝对路径。
+
+    Returns:
+        dict 含 keys:
+          - ``branches`` (list[dict]): 完整分支列表(``_parse_for_each_ref`` 输出)
+          - ``total`` (int): ``len(branches)``
+          - ``current`` (str | None): 当前 HEAD 指向的分支名;detached 时为 None
+          - ``detached`` (bool): HEAD 未指向任何 branch ref(可能在 commit 上)
+
+    Note:
+        故意不抛异常 — mutation 业务逻辑已成功(branch switch / create / delete
+        完成),即便辅助读失败也必须返回可空 dict,前端能拿到 200 + 业务字段,
+        后续 polling 修复后续状态。返回全空 + ``detached=False`` 是最安全的
+        降级 — 前端下次 GET /spcode/git-branches 会自动同步。
+    """
+    branches: list[dict[str, Any]] = []
+    current_name: str | None = None
+    try:
+        result = await _run_git_async(
+            [
+                git_bin,
+                "-C",
+                directory,
+                "for-each-ref",
+                f"--format={_FOR_EACH_REF_FORMAT}",
+                "refs/heads/",
+                "refs/remotes/",
+            ],
+            timeout=5.0,
+            encoding="utf-8",
+        )
+        if result.get("ok"):
+            branches = _parse_for_each_ref(result.get("stdout", ""))
+            for b in branches:
+                if b["current"]:
+                    current_name = b["name"]
+                    break
+    except Exception:
+        branches = []
+
+    detached = False
+    if current_name is None:
+        # for-each-ref 没找到 %(HEAD) 标记的 branch ref → 可能 detached HEAD
+        try:
+            head_result = await _run_git_async(
+                [git_bin, "-C", directory, "rev-parse", "--abbrev-ref", "HEAD"],
+                timeout=5.0,
+                encoding="utf-8",
+            )
+            if head_result.get("ok"):
+                head_ref = head_result.get("stdout", "").strip()
+                if head_ref == "HEAD":
+                    detached = True
+        except Exception:
+            pass
+
+    return {
+        "branches": branches,
+        "total": len(branches),
+        "current": current_name,
+        "detached": detached,
+    }

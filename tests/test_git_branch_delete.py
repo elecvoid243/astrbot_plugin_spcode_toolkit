@@ -217,6 +217,35 @@ def test_delete_merged_branch(loaded_umo, existing_repo):
     assert result["data"]["was_current"] is False
 
 
+def test_delete_response_includes_post_state(loaded_umo, existing_repo):
+    """spec §3.5 L8 (apply to all mutating handlers): 成功响应必须含
+    refreshed branches + current + detached + total。
+
+    回归测试 — delete 不切分支(current 仍是 main),但 branches list 必须
+    不再含被删的 feature/x,total 减 1。
+    """
+    plugin = _make_plugin()
+    result = _run(
+        git_branch_delete.handle(
+            plugin, umo=loaded_umo, body={"name": "feature/x"},
+        )
+    )
+    data = result["data"]
+    assert data["deleted"] is True
+    assert "current" in data
+    assert "detached" in data
+    assert "branches" in data
+    assert "total" in data
+    # delete 不切分支 → current 仍是 main
+    assert data["current"] == "main"
+    assert data["detached"] is False
+    # branches list 必须已不含 feature/x,total=1
+    names = [b["name"] for b in data["branches"]]
+    assert "feature/x" not in names
+    assert "main" in names
+    assert data["total"] == 1
+
+
 def test_delete_unmerged_with_force(loaded_umo, existing_repo):
     """force=true 删未合并 → deleted=True。"""
     # 先创建未合并分支

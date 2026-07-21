@@ -10,14 +10,15 @@ import logging
 import time as _time
 from typing import TYPE_CHECKING
 
+from .._helpers import _is_valid_ref_name
 from ._helpers import (
+    ReasonCode,
     _git_endpoint_preflight,
     _JSONResponseCompat,
     _make_envelope,
+    _read_post_mutation_branch_state,
     _run_git_async,
-    ReasonCode,
 )
-from .._helpers import _is_valid_ref_name
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
@@ -44,8 +45,11 @@ async def handle(
     # ── 1. body 校验 ──
     if not isinstance(body, dict):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_BODY,
-            elapsed_ms=_elapsed(), created=False, name="",
+            success=False,
+            reason=ReasonCode.INVALID_BODY,
+            elapsed_ms=_elapsed(),
+            created=False,
+            name="",
         )
 
     name = body.get("name")
@@ -54,32 +58,42 @@ async def handle(
 
     if not isinstance(name, str) or not name:
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
-            elapsed_ms=_elapsed(), created=False, name=str(name or ""),
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            created=False,
+            name=str(name or ""),
         )
     if not isinstance(start_point, str):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
-            elapsed_ms=_elapsed(), created=False, name=name,
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            created=False,
+            name=name,
         )
 
     # ── 2. ref-format 校验 ──
     if not _is_valid_ref_name(name):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_BRANCH,
-            elapsed_ms=_elapsed(), created=False, name=name,
+            success=False,
+            reason=ReasonCode.INVALID_BRANCH,
+            elapsed_ms=_elapsed(),
+            created=False,
+            name=name,
         )
     # start_point: HEAD 是快捷别名,免校验;其他 ref 必须合法
     if start_point != "HEAD" and not _is_valid_ref_name(start_point):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
-            elapsed_ms=_elapsed(), created=False, name=name,
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            created=False,
+            name=name,
         )
 
     # ── 3. preflight ──
-    err, ctx = await _git_endpoint_preflight(
-        plugin, umo=umo, worktree_param=worktree
-    )
+    err, ctx = await _git_endpoint_preflight(plugin, umo=umo, worktree_param=worktree)
     if err is not None:
         err["data"]["elapsed_ms"] = _elapsed()
         err["data"].setdefault("created", False)
@@ -106,9 +120,14 @@ async def handle(
         elif "not a valid branch name" in stderr:
             reason = ReasonCode.INVALID_BRANCH
         return _make_envelope(
-            success=False, reason=reason,
-            elapsed_ms=_elapsed(), created=False, name=name,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=reason,
+            elapsed_ms=_elapsed(),
+            created=False,
+            name=name,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             stderr=result.get("stderr", "")[:4096],
         )
 
@@ -120,12 +139,28 @@ async def handle(
     sha = sha_result["stdout"].strip() if sha_result.get("ok") else ""
 
     logger.info("git-branch-create: %s (start_point=%s)", name, start_point)
+    # spec §3.5 L8 (apply to all mutating handlers): 回读分支状态,供前端
+    # 原子替换 snapshot。create 语义是 ``git branch <name>`` 不切分支
+    # (spec §3.3 line 391-393: 切换留给 git-branch-switch 的 create=true
+    # 模式),所以新分支 current=false,HEAD 仍指原分支;helper 读到的
+    # post_state 即为正确状态,直接透传即可。
+    post_state = await _read_post_mutation_branch_state(git_bin, directory)
     return _JSONResponseCompat(
         _make_envelope(
-            success=True, elapsed_ms=_elapsed(),
-            created=True, name=name, sha=sha,
-            start_point=start_point, force=force,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=True,
+            elapsed_ms=_elapsed(),
+            created=True,
+            name=name,
+            sha=sha,
+            start_point=start_point,
+            force=force,
+            current=post_state["current"],
+            detached=post_state["detached"],
+            branches=post_state["branches"],
+            total=post_state["total"],
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
         ),
         status_code=200,
     )

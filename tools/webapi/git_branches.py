@@ -7,16 +7,17 @@ Author: elecvoid243
 from __future__ import annotations
 
 import time as _time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
 
 from ._helpers import (
     ReasonCode,
-    _JSONResponseCompat,
     _compute_git_etag,
+    _JSONResponseCompat,
     _make_envelope,
+    _parse_for_each_ref,
     _run_git_async,
 )
 
@@ -40,7 +41,9 @@ async def handle(
     # ── preflight ──────────────────────────────────────────
     from ._helpers import _git_endpoint_preflight
 
-    reason, ctx = await _git_endpoint_preflight(plugin, umo=umo, worktree_param=worktree)
+    reason, ctx = await _git_endpoint_preflight(
+        plugin, umo=umo, worktree_param=worktree
+    )
     if reason is not None:
         return _JSONResponseCompat(reason, status_code=200)
     assert ctx is not None
@@ -61,12 +64,16 @@ async def handle(
         return _JSONResponseCompat(content, status_code=304)
 
     # ── git for-each-ref ───────────────────────────────────
+    from ._helpers import _FOR_EACH_REF_FORMAT  # noqa: PLC0415
+
     try:
         result = await _run_git_async(
             [
-                git_bin, "-C", str(repo_dir),
+                git_bin,
+                "-C",
+                str(repo_dir),
                 "for-each-ref",
-                "--format=%(if)%(HEAD)%(then)*%(else) %(end)%(refname:short)%09%(objectname:short)%09%(upstream:short)%09%(upstream:track)",
+                f"--format={_FOR_EACH_REF_FORMAT}",
                 "refs/heads/",
                 "refs/remotes/",
             ],
@@ -91,7 +98,7 @@ async def handle(
             status_code=200,
         )
 
-    # ── 解析 ───────────────────────────────────────────────
+    # ── 解析(与 _read_post_mutation_branch_state 共享解析器) ──
     branches = _parse_for_each_ref(result.get("stdout", ""))
 
     # 提取 refs/heads/* 和 refs/remotes/*(标记 remote)
@@ -131,49 +138,3 @@ async def handle(
     if etag and resp.headers is not None:
         resp.headers["ETag"] = etag  # type: ignore[index]
     return resp
-
-
-# ── 解析器(公开供测试) ────────────────────────────────────
-
-
-def _parse_for_each_ref(raw: str) -> list[dict[str, Any]]:
-    """解析 ``git for-each-ref`` 输出为 branch 字典列表。
-
-    格式(每行 tab 分隔):
-      %(if)%(HEAD)%(then)*%(else) %(end)%(refname:short)\\t%(objectname:short)\\t%(upstream:short)\\t%(upstream:track)
-
-    Returns:
-        list of dicts with keys: name, sha, upstream, upstream_track, current, remote
-    """
-    result: list[dict[str, Any]] = []
-    for line in raw.splitlines():
-        # 注意: 不能 .strip() — 首字符可能是空格(标记非当前分支)
-        if not line.strip():
-            continue
-        # 去掉行尾空白(\\r, \\n),保留行首位置
-        line_clean = line.rstrip("\r\n")
-        # 解析格式: [*| ]<name>\\t<sha>\\t<upstream>\\t<track>
-        parts = line_clean.split("\t")
-        if len(parts) < 2:
-            continue
-
-        name_part = parts[0]  # e.g. "*main" or " feature/x"
-        is_current = name_part.startswith("*")
-        name = name_part[1:]  # 去掉首字符(* 或 空格)
-        # .strip() 只用于去掉 sha/upstream/track 的额外空白
-        name = name.strip()
-
-        sha = parts[1].strip() if len(parts) > 1 else ""
-        upstream = parts[2].strip() if len(parts) > 2 else ""
-        upstream_track = parts[3].strip() if len(parts) > 3 else ""
-
-        result.append({
-            "name": name,
-            "sha": sha,
-            "upstream": upstream,
-            "upstream_track": upstream_track,
-            "current": is_current,
-            "remote": name.startswith("origin/") or name.startswith("remotes/"),
-        })
-
-    return result

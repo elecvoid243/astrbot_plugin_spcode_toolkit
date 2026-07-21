@@ -13,14 +13,15 @@ import logging
 import time as _time
 from typing import TYPE_CHECKING
 
+from .._helpers import _is_valid_ref_name
 from ._helpers import (
+    ReasonCode,
     _git_endpoint_preflight,
     _JSONResponseCompat,
     _make_envelope,
+    _read_post_mutation_branch_state,
     _run_git_async,
-    ReasonCode,
 )
-from .._helpers import _is_valid_ref_name
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
@@ -47,8 +48,11 @@ async def handle(
     # ── 1. body 校验 ──
     if not isinstance(body, dict):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_BODY,
-            elapsed_ms=_elapsed(), deleted=False, name="",
+            success=False,
+            reason=ReasonCode.INVALID_BODY,
+            elapsed_ms=_elapsed(),
+            deleted=False,
+            name="",
         )
 
     name = body.get("name")
@@ -56,19 +60,23 @@ async def handle(
 
     if not isinstance(name, str) or not name:
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
-            elapsed_ms=_elapsed(), deleted=False, name=str(name or ""),
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            deleted=False,
+            name=str(name or ""),
         )
     if not _is_valid_ref_name(name):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_BRANCH,
-            elapsed_ms=_elapsed(), deleted=False, name=name,
+            success=False,
+            reason=ReasonCode.INVALID_BRANCH,
+            elapsed_ms=_elapsed(),
+            deleted=False,
+            name=name,
         )
 
     # ── 2. preflight ──
-    err, ctx = await _git_endpoint_preflight(
-        plugin, umo=umo, worktree_param=worktree
-    )
+    err, ctx = await _git_endpoint_preflight(plugin, umo=umo, worktree_param=worktree)
     if err is not None:
         err["data"]["elapsed_ms"] = _elapsed()
         err["data"].setdefault("deleted", False)
@@ -89,13 +97,20 @@ async def handle(
     if is_current:
         logger.warning(
             "git-branch-delete: 试图删 current branch '%s' (umo=%s)",
-            name, effective_umo,
+            name,
+            effective_umo,
         )
         return _make_envelope(
-            success=False, reason=ReasonCode.BRANCH_IS_CURRENT,
-            elapsed_ms=_elapsed(), deleted=False, name=name,
-            was_current=True, current=current,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=ReasonCode.BRANCH_IS_CURRENT,
+            elapsed_ms=_elapsed(),
+            deleted=False,
+            name=name,
+            was_current=True,
+            current=current,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             stderr=f"cannot delete current branch '{name}'",
         )
 
@@ -103,7 +118,8 @@ async def handle(
     flag = "-D" if force else "-d"
     result = await _run_git_async(
         [git_bin, "-C", directory, "branch", flag, name],
-        encoding="utf-8", timeout=15.0,
+        encoding="utf-8",
+        timeout=15.0,
     )
     if not result["ok"]:
         stderr_lower = result.get("stderr", "").lower()
@@ -116,26 +132,48 @@ async def handle(
             reason = ReasonCode.BRANCH_IS_CURRENT
         logger.info(
             "git-branch-delete: failed %s (%s): %s",
-            name, reason, result.get("stderr", "")[:200],
+            name,
+            reason,
+            result.get("stderr", "")[:200],
         )
         return _make_envelope(
-            success=False, reason=reason,
-            elapsed_ms=_elapsed(), deleted=False, name=name,
+            success=False,
+            reason=reason,
+            elapsed_ms=_elapsed(),
+            deleted=False,
+            name=name,
             was_current=False,
-            directory=directory, umo=effective_umo, worktree=directory,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             stderr=result.get("stderr", "")[:4096],
         )
 
     logger.info(
         "git-branch-delete: %s deleted (force=%s, umo=%s)",
-        name, force, effective_umo,
+        name,
+        force,
+        effective_umo,
     )
+    # spec §3.5 L8: 回读分支状态。delete 不会切分支,current 必是 L4 读到的
+    # 原 current(已通过"试图删 current branch"硬禁保护);helper 读到的
+    # post_state 反映的是 for-each-ref 列表(分支少了一个 name),直接透传。
+    post_state = await _read_post_mutation_branch_state(git_bin, directory)
     return _JSONResponseCompat(
         _make_envelope(
-            success=True, elapsed_ms=_elapsed(),
-            deleted=True, name=name, force=force,
+            success=True,
+            elapsed_ms=_elapsed(),
+            deleted=True,
+            name=name,
+            force=force,
             was_current=False,
-            directory=directory, umo=effective_umo, worktree=directory,
+            current=post_state["current"],
+            detached=post_state["detached"],
+            branches=post_state["branches"],
+            total=post_state["total"],
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
         ),
         status_code=200,
     )
