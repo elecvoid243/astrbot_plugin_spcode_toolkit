@@ -25,6 +25,23 @@ _NO_WINDOW_KWARGS: dict[str, int] = (
 )
 
 
+# Binary file preview support (spec 2026-07-22 §4.5).
+# Whitelist of extensions accepted by GET /spcode/file-binary; any
+# other suffix → 415 unsupported_media_type. Keep the table in sync
+# with the dashboard's <BinaryPreview> dispatcher.
+MIME_BY_EXT: dict[str, str] = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".csv": "text/csv; charset=utf-8",
+    ".md": "text/markdown; charset=utf-8",
+}
+
+# Hard cap for /spcode/file-binary. pdfjs / mammoth can OOM on files
+# above this size in browser tabs; v1 rejects with 413.
+FILE_BINARY_MAX_BYTES: int = 50 * 1024 * 1024  # 50 MB
+
+
 # 从 main.py line 80-136 整体迁移,行为不变。
 # 行为兼容 ``run_cmd`` 的返回 dict 格式,便于无侵入替换 ``run_sync(run_cmd, ...)``:
 #   - 成功: {ok: True, stdout: str, stderr: str, code: int}
@@ -97,6 +114,62 @@ async def _run_git_async(
         # 导致下游解析 `` M`` → ``M`` 后误判为已暂存(v3.6 file-restore bug)。
         "stdout": stdout_bytes.decode(encoding, errors="replace").rstrip("\r\n"),
         "stderr": stderr_bytes.decode(encoding, errors="replace").rstrip("\r\n"),
+        "code": proc.returncode,
+    }
+
+
+async def _run_git_async_bytes(
+    cmd_args: list[str],
+    cwd: str = "",
+    timeout: float = 15.0,
+) -> dict:
+    """Asyncio async variant of ``_run_git_async`` that returns stdout as bytes.
+
+    Used by /spcode/file-binary for git show <ref>:<path> where the blob
+    may be binary (PDF / DOCX / XLSX) and utf-8 decode would lose data.
+    Shares the subprocess plumbing with ``_run_git_async`` but skips the
+    stdout decode step.
+
+    Args:
+        cmd_args: Subprocess argument list.
+        cwd: Working directory; empty string keeps the parent's cwd.
+        timeout: Subprocess timeout in seconds.
+
+    Returns:
+        Same shape as ``_run_git_async`` but with ``stdout`` typed as bytes.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd or None,
+            **_NO_WINDOW_KWARGS,
+        )
+    except FileNotFoundError:
+        cmd_name = cmd_args[0] if cmd_args else "command"
+        return {"ok": False, "error": f"{cmd_name} 未安装或不在 PATH 中"}
+
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+        return {"ok": False, "error": f"命令超时 ({timeout}s)"}
+
+    return {
+        "ok": proc.returncode == 0,
+        "stdout": stdout_bytes,  # bytes, not str
+        "stderr": stderr_bytes.decode("utf-8", errors="replace").rstrip("\r\n"),
         "code": proc.returncode,
     }
 
@@ -250,6 +323,12 @@ class ReasonCode:
     NO_PROVIDER = "no_provider"  # 无可用 LLM Provider
     EMPTY_RESPONSE = "empty_response"  # LLM 返回空文本
     LLM_ERROR = "llm_error"  # LLM 调用异常(provider.text_chat 抛错)
+
+    # ── /spcode/file-binary(spec 2026-07-22) ──
+    UNSUPPORTED_MEDIA_TYPE = (
+        "unsupported_media_type"  # file-binary: extension not in MIME_BY_EXT
+    )
+    INTERNAL_ERROR = "internal_error"  # file-binary: unhandled exception
 
 
 # ── git status --porcelain X/Y 列判定(共享常量)────────────────────

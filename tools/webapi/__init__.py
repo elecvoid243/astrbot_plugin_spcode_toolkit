@@ -11,6 +11,7 @@ Dashboard / WebUI:
   * ``/spcode/git-status``      (GET)   # v2.13+
   * ``/spcode/git-log``         (GET)   # v3.7
   * ``/spcode/file-browser``    (GET)
+  * ``/spcode/file-binary``     (GET)   # 2026-07-22 — 原始字节流(供 BinaryPreview)
   * ``/spcode/file-restore``    (POST)
   * ``/spcode/file-discard-hunk`` (POST) # v2.16.0 (2026-07-06)
   * ``/spcode/file-search``     (POST)  # v2.15.0 (2026-07-02)
@@ -56,18 +57,19 @@ from . import (
     btw,  # v2.20 (2026-07-17) - 一次性独立 LLM 请求(顺便问问)
     codegraph_status,  # v2.14.x (2026-06-28)
     docs_crud,  # spec B (2026-07-11): POST/PATCH/DELETE /spcode/docs
+    file_binary,  # 2026-07-22: GET /spcode/file-binary(原始字节,供 BinaryPreview)
     file_browser,
     file_discard_hunk,  # v2.16.0 (2026-07-06)
     file_name_search,  # v2.15.0 (2026-07-02)
+    file_remove,  # 2026-07-18: POST /spcode/file-remove(删除文件)
+    file_rename,  # 2026-07-18: POST /spcode/file-rename(同目录重命名)
     file_restore,
     file_search,  # v2.15.0 (2026-07-02)
     file_write,  # 2026-07-17: POST /spcode/file-write(通用文本覆写)
-    file_rename,  # 2026-07-18: POST /spcode/file-rename(同目录重命名)
-    file_remove,  # 2026-07-18: POST /spcode/file-remove(删除文件)
     git_branch_create,  # v2.17.0 (2026-07-16) — PR-D POST endpoint
     git_branch_delete,  # v2.17.0 (2026-07-16) — PR-E POST endpoint
-    git_branches,  # v2.17.0 (2026-07-16) — PR-C GET endpoint
     git_branch_switch,  # v2.17.0 (2026-07-16) — PR-F POST endpoint
+    git_branches,  # v2.17.0 (2026-07-16) — PR-C GET endpoint
     git_commit,
     git_diff,
     git_file,  # spec B (2026-07-11): GET /spcode/git-file
@@ -76,8 +78,8 @@ from . import (
     git_repo_check,  # v2.18.0 (2026-07-16) - GET git 仓库探测
     git_revert,  # v2.17.0 (2026-07-16) - PR-G POST endpoint
     git_show,
-    git_stats,
     git_stage,
+    git_stats,
     git_status,
     git_unstage,
     git_worktree_add,  # v2.14.0 (2026-06-26)
@@ -206,6 +208,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["GET"],
         file_browser.handle,
         "读取文件内容或列出单层目录",
+    ),
+    (
+        "/spcode/file-binary",  # 2026-07-22: 原始字节流(供 BinaryPreview)
+        ["GET"],
+        file_binary.handle,
+        "读取白名单文件(PDF/DOCX/XLSX/CSV/MD)的原始字节,支持 ?ref= 历史版本",
     ),
     (
         "/spcode/file-search",  # v2.15.0 (2026-07-02)
