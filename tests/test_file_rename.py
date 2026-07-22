@@ -114,9 +114,7 @@ async def test_rejects_empty_new_name(plugin: Any, tmp_path: Path) -> None:
     assert result["data"]["reason"] == "invalid_param"
 
 
-async def test_rejects_new_name_with_separator(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_rejects_new_name_with_separator(plugin: Any, tmp_path: Path) -> None:
     """new_name must be a bare filename — separators mean cross-dir move."""
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))

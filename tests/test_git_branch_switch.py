@@ -27,6 +27,7 @@ def _run(coro):
 
 # ── preflight (3 cases) ──
 
+
 def test_switch_no_umo_loaded():
     plugin = _make_plugin()
     result = _run(git_branch_switch.handle(plugin, body={"name": "x"}))
@@ -40,9 +41,7 @@ def test_switch_not_a_git_repo(tmp_path):
     _state.put(umo, {"directory": str(target), "loaded_at": 1.0})
     try:
         plugin = _make_plugin()
-        result = _run(
-            git_branch_switch.handle(plugin, umo=umo, body={"name": "x"})
-        )
+        result = _run(git_branch_switch.handle(plugin, umo=umo, body={"name": "x"}))
         assert result["data"]["reason"] == ReasonCode.NOT_A_GIT_REPO
     finally:
         _state.pop(umo)
@@ -58,7 +57,10 @@ def test_switch_worktree_invalid(tmp_path, existing_repo):
         plugin = _make_plugin()
         result = _run(
             git_branch_switch.handle(
-                plugin, umo=umo, worktree=str(other), body={"name": "x"},
+                plugin,
+                umo=umo,
+                worktree=str(other),
+                body={"name": "x"},
             )
         )
         assert result["data"]["reason"] == ReasonCode.WORKTREE_INVALID
@@ -68,19 +70,16 @@ def test_switch_worktree_invalid(tmp_path, existing_repo):
 
 # ── body 校验 (4 cases) ──
 
+
 def test_switch_body_none(loaded_umo):
     plugin = _make_plugin()
-    result = _run(
-        git_branch_switch.handle(plugin, umo=loaded_umo, body=None)
-    )
+    result = _run(git_branch_switch.handle(plugin, umo=loaded_umo, body=None))
     assert result["data"]["reason"] == ReasonCode.INVALID_BODY
 
 
 def test_switch_name_missing(loaded_umo):
     plugin = _make_plugin()
-    result = _run(
-        git_branch_switch.handle(plugin, umo=loaded_umo, body={})
-    )
+    result = _run(git_branch_switch.handle(plugin, umo=loaded_umo, body={}))
     assert result["data"]["reason"] == ReasonCode.INVALID_PARAM
 
 
@@ -88,7 +87,9 @@ def test_switch_name_invalid_chars(loaded_umo):
     plugin = _make_plugin()
     result = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo, body={"name": "bad..name"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "bad..name"},
         )
     )
     assert result["data"]["reason"] == ReasonCode.INVALID_BRANCH
@@ -99,7 +100,8 @@ def test_switch_start_point_without_create(loaded_umo):
     plugin = _make_plugin()
     result = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo,
+            plugin,
+            umo=loaded_umo,
             body={"name": "x", "start_point": "main"},
         )
     )
@@ -109,11 +111,13 @@ def test_switch_start_point_without_create(loaded_umo):
 
 # ── 跨字段校验 (1 case) ──
 
+
 def test_switch_create_and_detach_mutually_exclusive(loaded_umo):
     plugin = _make_plugin()
     result = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo,
+            plugin,
+            umo=loaded_umo,
             body={"name": "x", "create": True, "detach": True},
         )
     )
@@ -122,13 +126,16 @@ def test_switch_create_and_detach_mutually_exclusive(loaded_umo):
 
 # ── happy path (5 cases) ──
 
+
 def test_switch_to_current_branch(loaded_umo, existing_repo):
     """切到 current branch(no-op)→ switched=True。"""
     # existing_repo current=main
     plugin = _make_plugin()
     result = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo, body={"name": "main"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "main"},
         )
     )
     assert result["data"]["switched"] is True
@@ -139,7 +146,9 @@ def test_switch_to_existing_branch(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo, body={"name": "feature/x"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "feature/x"},
         )
     )
     assert result["data"]["switched"] is True
@@ -158,7 +167,9 @@ def test_switch_response_includes_post_state(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo, body={"name": "feature/x"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "feature/x"},
         )
     )
     data = result["data"]
@@ -192,14 +203,18 @@ def test_switch_back_to_main_updates_current(loaded_umo, existing_repo):
     # 第一次切到 feature/x
     r1 = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo, body={"name": "feature/x"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "feature/x"},
         )
     )
     assert r1["data"]["current"] == "feature/x"
     # 切回 main
     r2 = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo, body={"name": "main"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "main"},
         )
     )
     assert r2["data"]["current"] == "main"
@@ -212,7 +227,8 @@ def test_switch_create_mode(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo,
+            plugin,
+            umo=loaded_umo,
             body={"name": "from-create", "create": True},
         )
     )
@@ -225,7 +241,8 @@ def test_switch_create_from_start_point(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo,
+            plugin,
+            umo=loaded_umo,
             body={
                 "name": "from-main",
                 "create": True,
@@ -241,12 +258,15 @@ def test_switch_detach_to_sha(loaded_umo, existing_repo):
     """detach=true 切到 7+ char SHA → detached 状态。"""
     sha = subprocess.run(
         ["git", "-C", str(existing_repo), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
     plugin = _make_plugin()
     result = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo,
+            plugin,
+            umo=loaded_umo,
             body={"name": sha[:7], "detach": True},
         )
     )
@@ -256,6 +276,7 @@ def test_switch_detach_to_sha(loaded_umo, existing_repo):
 
 # ── force (1 case) ──
 
+
 def test_switch_force_overwrites_dirty_worktree(loaded_umo, existing_repo):
     """force=true 丢弃工作区改动 → switched=True。"""
     # 先让 worktree 变 dirty
@@ -263,7 +284,8 @@ def test_switch_force_overwrites_dirty_worktree(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo,
+            plugin,
+            umo=loaded_umo,
             body={"name": "feature/x", "force": True},
         )
     )
@@ -273,12 +295,15 @@ def test_switch_force_overwrites_dirty_worktree(loaded_umo, existing_repo):
 
 # ── 业务 reason (4 cases) ──
 
+
 def test_switch_branch_not_found(loaded_umo, existing_repo):
     """branch 不存在(create=false)→ branch_not_found。"""
     plugin = _make_plugin()
     result = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo, body={"name": "missing-branch"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "missing-branch"},
         )
     )
     assert result["data"]["reason"] == ReasonCode.BRANCH_NOT_FOUND
@@ -289,7 +314,8 @@ def test_switch_branch_exists_when_create(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo,
+            plugin,
+            umo=loaded_umo,
             body={"name": "feature/x", "create": True},
         )
     )
@@ -302,7 +328,9 @@ def test_switch_worktree_dirty(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo, body={"name": "feature/x"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "feature/x"},
         )
     )
     assert result["data"]["reason"] == ReasonCode.WORKTREE_DIRTY
@@ -313,7 +341,9 @@ def test_switch_ref_format_invalid(loaded_umo):
     plugin = _make_plugin()
     result = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo, body={"name": "bad..name"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "bad..name"},
         )
     )
     assert result["data"]["reason"] == ReasonCode.INVALID_BRANCH
@@ -321,44 +351,45 @@ def test_switch_ref_format_invalid(loaded_umo):
 
 # ── 集成 (3 cases) ──
 
+
 def test_switch_then_git_branch_shows_new(loaded_umo, existing_repo):
     """切后 git-branches 应显示当前为新 branch。"""
     from tools.webapi import git_branches
+
     plugin = _make_plugin()
     # 切到 feature/x
     _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo, body={"name": "feature/x"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "feature/x"},
         )
     )
     # 再查 branches
     result = _run(git_branches.handle(plugin, umo=loaded_umo))
-    current_branch = next(
-        b for b in result["data"]["branches"] if b["current"]
-    )
+    current_branch = next(b for b in result["data"]["branches"] if b["current"])
     assert current_branch["name"] == "feature/x"
 
 
 def test_switch_then_etag_invalidates(loaded_umo, existing_repo):
     """切换后 ETag 应该失效(下个 git-status / git-branches 请求会刷新)。"""
     from tools.webapi import git_branches
+
     plugin = _make_plugin()
     # 触发一次(branches endpoint 算 ETag 用 _compute_git_etag 验证可用)
     _run(git_branches.handle(plugin, umo=loaded_umo))
     # 切分支
     _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo, body={"name": "feature/x"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "feature/x"},
         )
     )
     # 再查一次(branches endpoint 算 ETag 用 _compute_git_etag,会捕捉 HEAD SHA 变化)
-    result_after = _run(
-        git_branches.handle(plugin, umo=loaded_umo)
-    )
+    result_after = _run(git_branches.handle(plugin, umo=loaded_umo))
     # 验证 current 真的变了
-    current_branch = next(
-        b for b in result_after["data"]["branches"] if b["current"]
-    )
+    current_branch = next(b for b in result_after["data"]["branches"] if b["current"])
     assert current_branch["name"] == "feature/x"
 
 
@@ -367,14 +398,18 @@ def test_switch_round_trip(loaded_umo, existing_repo):
     plugin = _make_plugin()
     r1 = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo, body={"name": "feature/x"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "feature/x"},
         )
     )
     assert r1["data"]["switched"] is True
     assert r1["data"]["previous"] == "main"
     r2 = _run(
         git_branch_switch.handle(
-            plugin, umo=loaded_umo, body={"name": "main"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "main"},
         )
     )
     assert r2["data"]["switched"] is True

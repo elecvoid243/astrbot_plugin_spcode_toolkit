@@ -42,7 +42,8 @@ def test_init_to_revert_full_flow(tmp_path):
         # 1. init (PR-B 不自动配置 git user.email/user.name)
         r = _run(
             git_init.handle(
-                plugin, body={"path": str(repo), "initial_branch": "main"},
+                plugin,
+                body={"path": str(repo), "initial_branch": "main"},
             )
         )
         assert r["data"]["initialized"] is True, f"init failed: {r}"
@@ -77,7 +78,9 @@ def test_init_to_revert_full_flow(tmp_path):
         # 4. create feature branch
         r = _run(
             git_branch_create.handle(
-                plugin, umo=umo, body={"name": "feature/x"},
+                plugin,
+                umo=umo,
+                body={"name": "feature/x"},
             )
         )
         assert r["data"]["created"] is True, f"create failed: {r}"
@@ -85,7 +88,9 @@ def test_init_to_revert_full_flow(tmp_path):
         # 5. switch to feature
         r = _run(
             git_branch_switch.handle(
-                plugin, umo=umo, body={"name": "feature/x"},
+                plugin,
+                umo=umo,
+                body={"name": "feature/x"},
             )
         )
         assert r["data"]["switched"] is True, f"switch failed: {r}"
@@ -94,15 +99,11 @@ def test_init_to_revert_full_flow(tmp_path):
         # 6. shell: 在 feature/x 改文件 + commit
         (repo / "feature.txt").write_text("feature work")
         subprocess.run(["git", "-C", str(repo), "add", "feature.txt"], check=True)
-        r = _run(
-            git_commit.handle(plugin, umo=umo, body={"message": "add feature"})
-        )
+        r = _run(git_commit.handle(plugin, umo=umo, body={"message": "add feature"}))
         assert r["data"]["committed"] is True
 
         # 7. switch back to main
-        r = _run(
-            git_branch_switch.handle(plugin, umo=umo, body={"name": "main"})
-        )
+        r = _run(git_branch_switch.handle(plugin, umo=umo, body={"name": "main"}))
         assert r["data"]["switched"] is True
         assert r["data"]["previous"] == "feature/x"
 
@@ -110,18 +111,19 @@ def test_init_to_revert_full_flow(tmp_path):
         # 用 main 自己的 commit(而非 feature/x 的 SHA — non-ancestor revert 会失败)。
         main_sha = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
-        r = _run(
-            git_revert.handle(plugin, umo=umo, body={"ref": main_sha})
-        )
+        r = _run(git_revert.handle(plugin, umo=umo, body={"ref": main_sha}))
         assert r["data"]["reverted"] is True, f"revert failed: {r}"
         assert r["data"]["revert_sha"] != main_sha
 
         # 9. delete feature branch (用 force 因为 revert 后可能变得未合并)
         r = _run(
             git_branch_delete.handle(
-                plugin, umo=umo,
+                plugin,
+                umo=umo,
                 body={"name": "feature/x", "force": True},
             )
         )

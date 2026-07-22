@@ -26,6 +26,7 @@ def _run(coro):
 
 # ── preflight (3 cases) ──
 
+
 def test_revert_no_umo_loaded():
     plugin = _make_plugin()
     result = _run(git_revert.handle(plugin, body={}))
@@ -55,7 +56,10 @@ def test_revert_worktree_invalid(tmp_path, existing_repo):
         plugin = _make_plugin()
         result = _run(
             git_revert.handle(
-                plugin, umo=umo, worktree=str(other), body={},
+                plugin,
+                umo=umo,
+                worktree=str(other),
+                body={},
             )
         )
         assert result["data"]["reason"] == ReasonCode.WORKTREE_INVALID
@@ -64,6 +68,7 @@ def test_revert_worktree_invalid(tmp_path, existing_repo):
 
 
 # ── body 校验 (2 cases) ──
+
 
 def test_revert_body_none(loaded_umo):
     plugin = _make_plugin()
@@ -76,7 +81,9 @@ def test_revert_no_edit_false_rejected(loaded_umo):
     plugin = _make_plugin()
     result = _run(
         git_revert.handle(
-            plugin, umo=loaded_umo, body={"no_edit": False},
+            plugin,
+            umo=loaded_umo,
+            body={"no_edit": False},
         )
     )
     assert result["data"]["reason"] == ReasonCode.INVALID_PARAM
@@ -84,12 +91,14 @@ def test_revert_no_edit_false_rejected(loaded_umo):
 
 # ── commit_not_found (3 cases) ──
 
+
 def test_revert_ref_does_not_exist(loaded_umo, existing_repo):
     """ref 不存在 → commit_not_found。"""
     plugin = _make_plugin()
     result = _run(
         git_revert.handle(
-            plugin, umo=loaded_umo,
+            plugin,
+            umo=loaded_umo,
             body={"ref": "nonexistent-branch", "no_edit": True},
         )
     )
@@ -101,7 +110,9 @@ def test_revert_ref_is_a_tag(loaded_umo, existing_repo):
     # 创建一个 annotated tag
     sha = subprocess.run(
         ["git", "-C", str(existing_repo), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
     subprocess.run(
         ["git", "-C", str(existing_repo), "tag", "-a", "-m", "tagged", "v1.0", sha],
@@ -110,7 +121,8 @@ def test_revert_ref_is_a_tag(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_revert.handle(
-            plugin, umo=loaded_umo,
+            plugin,
+            umo=loaded_umo,
             body={"ref": "v1.0", "no_edit": True},
         )
     )
@@ -129,7 +141,8 @@ def test_revert_ref_is_blob(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_revert.handle(
-            plugin, umo=loaded_umo,
+            plugin,
+            umo=loaded_umo,
             body={"ref": "README.md", "no_edit": True},  # 文件不是 commit
         )
     )
@@ -139,13 +152,16 @@ def test_revert_ref_is_blob(loaded_umo, existing_repo):
 
 # ── worktree dirty (2 cases) ──
 
+
 def test_revert_worktree_dirty(loaded_umo, existing_repo):
     """worktree 有未提交改动 → worktree_dirty。"""
     (existing_repo / "uncommitted.txt").write_text("uncommitted")
     plugin = _make_plugin()
     result = _run(
         git_revert.handle(
-            plugin, umo=loaded_umo, body={"no_edit": True},
+            plugin,
+            umo=loaded_umo,
+            body={"no_edit": True},
         )
     )
     assert result["data"]["reason"] == ReasonCode.WORKTREE_DIRTY
@@ -154,13 +170,13 @@ def test_revert_worktree_dirty(loaded_umo, existing_repo):
 def test_revert_worktree_staged(loaded_umo, existing_repo):
     """worktree 有已暂存改动(staged)→ worktree_dirty。"""
     (existing_repo / "staged.txt").write_text("staged")
-    subprocess.run(
-        ["git", "-C", str(existing_repo), "add", "staged.txt"], check=True
-    )
+    subprocess.run(["git", "-C", str(existing_repo), "add", "staged.txt"], check=True)
     plugin = _make_plugin()
     result = _run(
         git_revert.handle(
-            plugin, umo=loaded_umo, body={"no_edit": True},
+            plugin,
+            umo=loaded_umo,
+            body={"no_edit": True},
         )
     )
     assert result["data"]["reason"] == ReasonCode.WORKTREE_DIRTY
@@ -168,12 +184,15 @@ def test_revert_worktree_staged(loaded_umo, existing_repo):
 
 # ── happy path (2 cases) ──
 
+
 def test_revert_HEAD_default(loaded_umo, existing_repo):
     """revert HEAD (默认) → reverted=True,产生新 commit。"""
     plugin = _make_plugin()
     result = _run(
         git_revert.handle(
-            plugin, umo=loaded_umo, body={"no_edit": True},
+            plugin,
+            umo=loaded_umo,
+            body={"no_edit": True},
         )
     )
     assert result["data"]["reverted"] is True
@@ -186,12 +205,15 @@ def test_revert_explicit_sha(loaded_umo, existing_repo):
     """revert 指定 SHA → reverted=True。"""
     sha = subprocess.run(
         ["git", "-C", str(existing_repo), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
     plugin = _make_plugin()
     result = _run(
         git_revert.handle(
-            plugin, umo=loaded_umo,
+            plugin,
+            umo=loaded_umo,
             body={"ref": sha, "no_edit": True},
         )
     )
@@ -201,32 +223,40 @@ def test_revert_explicit_sha(loaded_umo, existing_repo):
 
 # ── 端到端 (1 case) ──
 
+
 def test_revert_then_log_shows_new_commit(loaded_umo, existing_repo):
     """revert 后 git-log 出现新 commit。"""
     # 用 subprocess 测 git log(webapi git_log endpoint 需要 HTTP context)
     log_before = subprocess.run(
         ["git", "-C", str(existing_repo), "log", "--oneline"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     commits_before = len(log_before.stdout.strip().splitlines())
 
     plugin = _make_plugin()
     revert_result = _run(
         git_revert.handle(
-            plugin, umo=loaded_umo, body={"no_edit": True},
+            plugin,
+            umo=loaded_umo,
+            body={"no_edit": True},
         )
     )
     assert revert_result["data"]["reverted"] is True
 
     log_after = subprocess.run(
         ["git", "-C", str(existing_repo), "log", "--oneline"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     commits_after = len(log_after.stdout.strip().splitlines())
     assert commits_after == commits_before + 1
 
 
 # ── stderr classifier (3 cases) ──
+
 
 def test_revert_pre_commit_hook_rejected(loaded_umo, existing_repo, monkeypatch):
     """pre-commit hook 拒 → hook_rejected(通过 mock 模拟 hook 失败)。
@@ -252,12 +282,17 @@ def test_revert_pre_commit_hook_rejected(loaded_umo, existing_repo, monkeypatch)
                 "error": "",
             }
         # 其他命令走真实实现
-        return await _helpers._run_git_async.__wrapped__(args, **kwargs) if hasattr(
-            _helpers._run_git_async, "__wrapped__"
-        ) else {
-            "ok": True, "returncode": 0,
-            "stderr": "", "stdout": "", "error": "",
-        }
+        return (
+            await _helpers._run_git_async.__wrapped__(args, **kwargs)
+            if hasattr(_helpers._run_git_async, "__wrapped__")
+            else {
+                "ok": True,
+                "returncode": 0,
+                "stderr": "",
+                "stdout": "",
+                "error": "",
+            }
+        )
 
     monkeypatch.setattr(_helpers, "_run_git_async", fake_run)
     monkeypatch.setattr(git_revert, "_run_git_async", fake_run)
@@ -265,7 +300,9 @@ def test_revert_pre_commit_hook_rejected(loaded_umo, existing_repo, monkeypatch)
     plugin = _make_plugin()
     result = _run(
         git_revert.handle(
-            plugin, umo=loaded_umo, body={"no_edit": True},
+            plugin,
+            umo=loaded_umo,
+            body={"no_edit": True},
         )
     )
     # classifier 把 "pre-commit hook" stderr 分类到 hook_rejected
@@ -291,7 +328,9 @@ def test_revert_identity_not_set(loaded_umo, existing_repo, monkeypatch):
     plugin = _make_plugin()
     result = _run(
         git_revert.handle(
-            plugin, umo=loaded_umo, body={"no_edit": True},
+            plugin,
+            umo=loaded_umo,
+            body={"no_edit": True},
         )
     )
     # git 会拒:Please tell me who you are → identity_not_set
@@ -314,7 +353,9 @@ def test_revert_conflict_with_worktree_changes(loaded_umo, existing_repo):
     plugin = _make_plugin()
     r1 = _run(
         git_revert.handle(
-            plugin, umo=loaded_umo, body={"no_edit": True},
+            plugin,
+            umo=loaded_umo,
+            body={"no_edit": True},
         )
     )
     assert r1["data"]["reverted"] is True
@@ -328,7 +369,8 @@ def test_revert_conflict_with_worktree_changes(loaded_umo, existing_repo):
     # 步骤 4: 试图再 revert 它(冲突)
     r2 = _run(
         git_revert.handle(
-            plugin, umo=loaded_umo,
+            plugin,
+            umo=loaded_umo,
             body={"ref": revert_sha, "no_edit": True},
         )
     )
@@ -341,10 +383,12 @@ def test_revert_conflict_with_worktree_changes(loaded_umo, existing_repo):
 
 # ── env passthrough (1 case) ──
 
+
 def test_revert_passes_through_GIT_AUTHOR_EMAIL(loaded_umo, existing_repo, monkeypatch):
     """os.environ 含 GIT_AUTHOR_EMAIL → 透传给 git revert 子进程。"""
     # 监控 _run_git_async 是否接收到了 env=GIT_AUTHOR_EMAIL
     from tools.webapi import _helpers
+
     original_run = _helpers._run_git_async
     captured_env: dict[str, str] | None = None
 
@@ -360,11 +404,14 @@ def test_revert_passes_through_GIT_AUTHOR_EMAIL(loaded_umo, existing_repo, monke
     plugin = _make_plugin()
     _run(
         git_revert.handle(
-            plugin, umo=loaded_umo, body={"no_edit": True},
+            plugin,
+            umo=loaded_umo,
+            body={"no_edit": True},
         )
     )
     # env 透传:验证 _build_git_env 返回了 GIT_AUTHOR_EMAIL
     from tools.webapi.git_commit import _build_git_env
+
     env = _build_git_env()
     assert env is not None
     assert env.get("GIT_AUTHOR_EMAIL") == "spcode-test@example.com"
@@ -372,21 +419,29 @@ def test_revert_passes_through_GIT_AUTHOR_EMAIL(loaded_umo, existing_repo, monke
 
 # ── 空仓库 (1 case) ──
 
+
 def test_revert_empty_repository(loaded_umo, empty_dir):
     """空仓库(无 commit)→ empty_repository。"""
     from tools.project import state as _state
+
     _state.pop(loaded_umo)  # 清理 fixture 残留
     umo = "test:rev:empty"
     _state.put(umo, {"directory": str(empty_dir), "loaded_at": 1.0})
     try:
         # 把空目录变成 git repo(无 commit)
         subprocess.run(["git", "init", "-q", "-b", "main", str(empty_dir)], check=True)
-        subprocess.run(["git", "-C", str(empty_dir), "config", "user.email", "t@t"], check=True)
-        subprocess.run(["git", "-C", str(empty_dir), "config", "user.name", "T"], check=True)
+        subprocess.run(
+            ["git", "-C", str(empty_dir), "config", "user.email", "t@t"], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(empty_dir), "config", "user.name", "T"], check=True
+        )
         plugin = _make_plugin()
         result = _run(
             git_revert.handle(
-                plugin, umo=umo, body={"no_edit": True},
+                plugin,
+                umo=umo,
+                body={"no_edit": True},
             )
         )
         # 空仓库:revert HEAD 被 _is_commit_ref(HEAD^{commit}) 拦下(返回 False)

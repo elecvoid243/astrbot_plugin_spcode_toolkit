@@ -196,6 +196,7 @@ def _stub_missing_runtime_modules() -> None:
 
         class _StubStar:
             """``star`` stub:提供 Star 基类 + filter 命名空间。"""
+
             Star = type("Star", (), {})
             filter = type("filter", (), {})
 
@@ -229,6 +230,7 @@ def _stub_missing_runtime_modules() -> None:
                     def command(self, *c_args, **c_kwargs):
                         def decorator(fn):
                             return fn
+
                         return decorator
 
                     def __call__(self, *c_args, **c_kwargs):
@@ -238,15 +240,20 @@ def _stub_missing_runtime_modules() -> None:
 
                 def decorator(fn):
                     return _StubCommandGroup(fn)
+
                 return decorator
 
             def __getattr__(self, name):
                 """任意属性访问返回空装饰器。"""
+
                 def decorator(*args, **kwargs):
                     def inner(fn):
                         return fn
+
                     return inner
+
                 return decorator
+
         _api_event.filter = _StubFilter()
         sys.modules["astrbot.api.event"] = _api_event
         # astrbot.api.provider
@@ -258,8 +265,10 @@ def _stub_missing_runtime_modules() -> None:
 
         def _stub_register(*args, **kwargs):
             """``@register(...)`` decorator stub:返回一个空装饰器。"""
+
             def decorator(cls):
                 return cls
+
             return decorator
 
         _api_star.StarTools = type("StarTools", (), {})
@@ -295,6 +304,7 @@ def _stub_missing_runtime_modules() -> None:
 
         def _send2trash_stub(path):  # pragma: no cover
             import os
+
             os.remove(path)
 
         _s2t.send2trash = _send2trash_stub
@@ -374,9 +384,18 @@ if _pkg_name not in sys.modules:
 
                 def __getattr__(self, name):
                     # ModuleType 内部属性:不能让其触发 exec_module
-                    if name in {"__path__", "__package__", "__loader__",
-                                "__spec__", "__file__", "__cached__", "_loaded",
-                                "__builtins__", "__doc__", "__name__"}:
+                    if name in {
+                        "__path__",
+                        "__package__",
+                        "__loader__",
+                        "__spec__",
+                        "__file__",
+                        "__cached__",
+                        "_loaded",
+                        "__builtins__",
+                        "__doc__",
+                        "__name__",
+                    }:
                         raise AttributeError(name)
                     if not self._loaded:
                         # 第一次真实属性访问 → exec_module,执行 main.py

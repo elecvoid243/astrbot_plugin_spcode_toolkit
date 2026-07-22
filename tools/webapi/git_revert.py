@@ -58,8 +58,11 @@ async def handle(
     # ── 1. body 校验 ──
     if not isinstance(body, dict):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_BODY,
-            elapsed_ms=_elapsed(), reverted=False, ref="",
+            success=False,
+            reason=ReasonCode.INVALID_BODY,
+            elapsed_ms=_elapsed(),
+            reverted=False,
+            ref="",
         )
 
     ref = body.get("ref", "HEAD")
@@ -67,21 +70,25 @@ async def handle(
 
     if not isinstance(ref, str) or not ref:
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
-            elapsed_ms=_elapsed(), reverted=False, ref=str(ref or ""),
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            reverted=False,
+            ref=str(ref or ""),
         )
     if no_edit is not True:
         # v2.17.0 强制 no_edit=true(headless 服务不开编辑器)
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
-            elapsed_ms=_elapsed(), reverted=False, ref=ref,
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            reverted=False,
+            ref=ref,
             stderr="no_edit must be true (headless service, no editor)",
         )
 
     # ── 2. preflight ──
-    err, ctx = await _git_endpoint_preflight(
-        plugin, umo=umo, worktree_param=worktree
-    )
+    err, ctx = await _git_endpoint_preflight(plugin, umo=umo, worktree_param=worktree)
     if err is not None:
         err["data"]["elapsed_ms"] = _elapsed()
         err["data"].setdefault("reverted", False)
@@ -94,9 +101,14 @@ async def handle(
     # ── 3. 校验 ref 是 commit ──
     if not _is_commit_ref(git_bin, directory, ref):
         return _make_envelope(
-            success=False, reason=ReasonCode.COMMIT_NOT_FOUND,
-            elapsed_ms=_elapsed(), reverted=False, ref=ref,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=ReasonCode.COMMIT_NOT_FOUND,
+            elapsed_ms=_elapsed(),
+            reverted=False,
+            ref=ref,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             stderr=f"ref does not resolve to a commit: {ref}",
         )
 
@@ -109,33 +121,58 @@ async def handle(
         stderr_msg = status_result.get("stderr", "") or status_result.get("error", "")
         if "does not have any commits" in stderr_msg or "no commits" in stderr_msg:
             return _make_envelope(
-                success=False, reason=ReasonCode.EMPTY_REPOSITORY,
-                elapsed_ms=_elapsed(), reverted=False, ref=ref,
-                directory=directory, umo=effective_umo, worktree=directory,
+                success=False,
+                reason=ReasonCode.EMPTY_REPOSITORY,
+                elapsed_ms=_elapsed(),
+                reverted=False,
+                ref=ref,
+                directory=directory,
+                umo=effective_umo,
+                worktree=directory,
                 stderr=stderr_msg,
             )
         return _make_envelope(
-            success=False, reason=ReasonCode.GIT_ERROR,
-            elapsed_ms=_elapsed(), reverted=False, ref=ref,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=ReasonCode.GIT_ERROR,
+            elapsed_ms=_elapsed(),
+            reverted=False,
+            ref=ref,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             stderr=stderr_msg,
         )
     if status_result["stdout"].strip():
         return _make_envelope(
-            success=False, reason=ReasonCode.WORKTREE_DIRTY,
-            elapsed_ms=_elapsed(), reverted=False, ref=ref,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=ReasonCode.WORKTREE_DIRTY,
+            elapsed_ms=_elapsed(),
+            reverted=False,
+            ref=ref,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             stderr="working tree has uncommitted changes",
         )
 
     # ── 5. git revert --no-edit ──
     args = [
-        git_bin, "-C", directory, "-c", "color.ui=never",
-        "revert", "--no-edit", ref,
+        git_bin,
+        "-C",
+        directory,
+        "-c",
+        "color.ui=never",
+        "revert",
+        "--no-edit",
+        ref,
     ]
     git_env = _build_git_env()
     result = await _run_git_async(
-        args, encoding="utf-8", input_text="", env=git_env, timeout=30.0,
+        args,
+        encoding="utf-8",
+        input_text="",
+        env=git_env,
+        timeout=30.0,
     )
 
     if not result["ok"]:
@@ -143,12 +180,19 @@ async def handle(
         reason = _classify_revert_stderr(stderr)
         logger.info(
             "git-revert: failed ref=%s (%s): %s",
-            ref, reason, stderr[:200],
+            ref,
+            reason,
+            stderr[:200],
         )
         return _make_envelope(
-            success=False, reason=reason,
-            elapsed_ms=_elapsed(), reverted=False, ref=ref,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=reason,
+            elapsed_ms=_elapsed(),
+            reverted=False,
+            ref=ref,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             stderr=stderr[:COMMIT_TRUNCATE_BYTES],
         )
 
@@ -169,22 +213,35 @@ async def handle(
         [git_bin, "-C", directory, "show", "--name-only", "--pretty=", "HEAD"],
         encoding="utf-8",
     )
-    files_touched = [
-        line.strip()
-        for line in (files_result.get("stdout", "")).splitlines()
-        if line.strip()
-    ] if files_result.get("ok") else []
+    files_touched = (
+        [
+            line.strip()
+            for line in (files_result.get("stdout", "")).splitlines()
+            if line.strip()
+        ]
+        if files_result.get("ok")
+        else []
+    )
 
     logger.info(
         "git-revert: %s → %s (touched %d files, umo=%s)",
-        ref, revert_sha[:12], len(files_touched), effective_umo,
+        ref,
+        revert_sha[:12],
+        len(files_touched),
+        effective_umo,
     )
     return _JSONResponseCompat(
         _make_envelope(
-            success=True, elapsed_ms=_elapsed(),
-            reverted=True, ref=ref, revert_sha=revert_sha,
-            revert_message=revert_message, files_touched=files_touched,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=True,
+            elapsed_ms=_elapsed(),
+            reverted=True,
+            ref=ref,
+            revert_sha=revert_sha,
+            revert_message=revert_message,
+            files_touched=files_touched,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
         ),
         status_code=200,
     )

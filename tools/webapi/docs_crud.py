@@ -66,7 +66,8 @@ async def handle_post_docs(
     t0 = _time.time()
     if body is None or not isinstance(body, dict):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_BODY,
+            success=False,
+            reason=ReasonCode.INVALID_BODY,
             elapsed_ms=_elapsed(t0),
         )
 
@@ -74,29 +75,32 @@ async def handle_post_docs(
     content = body.get("content", "")
     if not isinstance(content, str):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_BODY,
+            success=False,
+            reason=ReasonCode.INVALID_BODY,
             elapsed_ms=_elapsed(t0),
         )
 
     err_reason = _validate_doc_path(path)
     if err_reason is not None:
         return _make_envelope(
-            success=False, reason=err_reason, elapsed_ms=_elapsed(t0),
+            success=False,
+            reason=err_reason,
+            elapsed_ms=_elapsed(t0),
         )
 
     content_bytes = content.encode("utf-8")
     if len(content_bytes) > MAX_CONTENT_BYTES:
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
             elapsed_ms=_elapsed(t0),
-            stderr=(
-                f"content bytes {len(content_bytes)} > "
-                f"limit {MAX_CONTENT_BYTES}"
-            ),
+            stderr=(f"content bytes {len(content_bytes)} > limit {MAX_CONTENT_BYTES}"),
         )
 
     err, ctx = await _git_endpoint_preflight(
-        plugin, umo=umo, worktree_param=worktree,
+        plugin,
+        umo=umo,
+        worktree_param=worktree,
     )
     if err is not None:
         err["data"]["elapsed_ms"] = _elapsed(t0)
@@ -108,9 +112,13 @@ async def handle_post_docs(
     target, path_err = _validate_repo_relative_file(path, Path(directory))
     if path_err is not None:
         return _make_envelope(
-            success=False, reason=ReasonCode.PATH_UNSAFE,
-            elapsed_ms=_elapsed(t0), loaded=False,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=ReasonCode.PATH_UNSAFE,
+            elapsed_ms=_elapsed(t0),
+            loaded=False,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
         )
 
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -118,11 +126,18 @@ async def handle_post_docs(
     target.write_text(content, encoding="utf-8")
 
     return _make_envelope(
-        success=True, elapsed_ms=_elapsed(t0),
-        saved=True, created=created,
-        directory=directory, umo=effective_umo, worktree=directory,
-        path=path, size=len(content_bytes),
+        success=True,
+        elapsed_ms=_elapsed(t0),
+        saved=True,
+        created=created,
+        directory=directory,
+        umo=effective_umo,
+        worktree=directory,
+        path=path,
+        size=len(content_bytes),
     )
+
+
 # ── PATCH ───────────────────────
 async def handle_patch_docs(
     plugin: "SPCodeToolkit",
@@ -135,7 +150,8 @@ async def handle_patch_docs(
     t0 = _time.time()
     if body is None or not isinstance(body, dict):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_BODY,
+            success=False,
+            reason=ReasonCode.INVALID_BODY,
             elapsed_ms=_elapsed(t0),
         )
 
@@ -146,19 +162,23 @@ async def handle_patch_docs(
         err_reason = _validate_doc_path(val)
         if err_reason is not None:
             return _make_envelope(
-                success=False, reason=err_reason,
+                success=False,
+                reason=err_reason,
                 elapsed_ms=_elapsed(t0),
             )
 
     if old_path == new_path:
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
             elapsed_ms=_elapsed(t0),
             stderr="path and new_path are equal",
         )
 
     err, ctx = await _git_endpoint_preflight(
-        plugin, umo=umo, worktree_param=worktree,
+        plugin,
+        umo=umo,
+        worktree_param=worktree,
     )
     if err is not None:
         err["data"]["elapsed_ms"] = _elapsed(t0)
@@ -171,23 +191,35 @@ async def handle_patch_docs(
     new_target, err2 = _validate_repo_relative_file(new_path, Path(directory))
     if err1 is not None or err2 is not None:
         return _make_envelope(
-            success=False, reason=ReasonCode.PATH_UNSAFE,
-            elapsed_ms=_elapsed(t0), loaded=False,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=ReasonCode.PATH_UNSAFE,
+            elapsed_ms=_elapsed(t0),
+            loaded=False,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
         )
 
     if not old_target.exists():
         return _make_envelope(
-            success=False, reason=ReasonCode.FILE_NOT_FOUND,
-            elapsed_ms=_elapsed(t0), loaded=False,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=ReasonCode.FILE_NOT_FOUND,
+            elapsed_ms=_elapsed(t0),
+            loaded=False,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             path=old_path,
         )
     if new_target.exists():
         return _make_envelope(
-            success=False, reason=ReasonCode.FILE_EXISTS,
-            elapsed_ms=_elapsed(t0), loaded=False,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=ReasonCode.FILE_EXISTS,
+            elapsed_ms=_elapsed(t0),
+            loaded=False,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             path=new_path,
         )
 
@@ -195,11 +227,16 @@ async def handle_patch_docs(
     os.replace(old_target, new_target)
 
     return _make_envelope(
-        success=True, elapsed_ms=_elapsed(t0),
+        success=True,
+        elapsed_ms=_elapsed(t0),
         renamed=True,
-        directory=directory, umo=effective_umo, worktree=directory,
-        path=old_path, new_path=new_path,
+        directory=directory,
+        umo=effective_umo,
+        worktree=directory,
+        path=old_path,
+        new_path=new_path,
     )
+
 
 # ── DELETE ─────────────────────────
 async def handle_delete_docs(
@@ -213,7 +250,8 @@ async def handle_delete_docs(
     t0 = _time.time()
     if body is None or not isinstance(body, dict):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_BODY,
+            success=False,
+            reason=ReasonCode.INVALID_BODY,
             elapsed_ms=_elapsed(t0),
         )
 
@@ -221,12 +259,15 @@ async def handle_delete_docs(
     err_reason = _validate_doc_path(path)
     if err_reason is not None:
         return _make_envelope(
-            success=False, reason=err_reason,
+            success=False,
+            reason=err_reason,
             elapsed_ms=_elapsed(t0),
         )
 
     err, ctx = await _git_endpoint_preflight(
-        plugin, umo=umo, worktree_param=worktree,
+        plugin,
+        umo=umo,
+        worktree_param=worktree,
     )
     if err is not None:
         err["data"]["elapsed_ms"] = _elapsed(t0)
@@ -238,31 +279,46 @@ async def handle_delete_docs(
     target, path_err = _validate_repo_relative_file(path, Path(directory))
     if path_err is not None:
         return _make_envelope(
-            success=False, reason=ReasonCode.PATH_UNSAFE,
-            elapsed_ms=_elapsed(t0), loaded=False,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=ReasonCode.PATH_UNSAFE,
+            elapsed_ms=_elapsed(t0),
+            loaded=False,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
         )
 
     if not target.exists():
         return _make_envelope(
-            success=False, reason=ReasonCode.FILE_NOT_FOUND,
-            elapsed_ms=_elapsed(t0), loaded=False,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=ReasonCode.FILE_NOT_FOUND,
+            elapsed_ms=_elapsed(t0),
+            loaded=False,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             path=path,
         )
 
     if target.is_dir():
         return _make_envelope(
-            success=False, reason=ReasonCode.GIT_ERROR,
-            elapsed_ms=_elapsed(t0), loaded=False,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=ReasonCode.GIT_ERROR,
+            elapsed_ms=_elapsed(t0),
+            loaded=False,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             stderr=f"path {path} is a directory, not a file",
         )
 
     target.unlink()
     return _make_envelope(
-        success=True, elapsed_ms=_elapsed(t0),
+        success=True,
+        elapsed_ms=_elapsed(t0),
         deleted=True,
-        directory=directory, umo=effective_umo, worktree=directory,
+        directory=directory,
+        umo=effective_umo,
+        worktree=directory,
         path=path,
     )

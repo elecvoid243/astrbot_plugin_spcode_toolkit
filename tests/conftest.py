@@ -210,9 +210,12 @@ def _make_plugin() -> Any:
     try:
         from astrbot_plugin_spcode_toolkit.main import SPCodeToolkit
     except ImportError:
+
         class SPCodeToolkit:
             """Standalone pytest 下的最小 SPCodeToolkit stub。"""
+
             pass
+
     from tools.project import state as _proj_state
 
     plugin = SPCodeToolkit.__new__(SPCodeToolkit)

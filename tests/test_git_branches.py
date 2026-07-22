@@ -29,6 +29,7 @@ def _run(coro):
 
 # ── preflight ──────────────────────────────────────────────
 
+
 def test_branches_no_umo_loaded():
     plugin = _make_plugin()
     result = _run(git_branches.handle(plugin))
@@ -64,6 +65,7 @@ def test_branches_worktree_invalid(tmp_path, existing_repo):
 
 
 # ── happy path ─────────────────────────────────────────────
+
 
 def test_branches_lists_local_branches(loaded_umo, existing_repo):
     plugin = _make_plugin()
@@ -103,11 +105,11 @@ def test_branches_detached_head(loaded_umo, existing_repo):
     """切换到 detached HEAD 后,detached=true, current=null。"""
     sha = subprocess.run(
         ["git", "-C", str(existing_repo), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
-    subprocess.run(
-        ["git", "-C", str(existing_repo), "checkout", "-q", sha], check=True
-    )
+    subprocess.run(["git", "-C", str(existing_repo), "checkout", "-q", sha], check=True)
     plugin = _make_plugin()
     result = _run(git_branches.handle(plugin, umo=loaded_umo))
     assert result["data"]["detached"] is True
@@ -115,6 +117,7 @@ def test_branches_detached_head(loaded_umo, existing_repo):
 
 
 # ── ETag ──────────────────────────────────────────────────
+
 
 def test_branches_etag_cache_hit(loaded_umo, existing_repo):
     """两次连续请求,第二次 ETag 命中 → envelope 缩短。"""
@@ -129,18 +132,22 @@ def test_branches_etag_cache_hit(loaded_umo, existing_repo):
 
 # ── 解析器 ────────────────────────────────────────────────
 
+
 def test_parse_for_each_ref_handles_empty():
     from tools.webapi._helpers import _parse_for_each_ref
+
     assert _parse_for_each_ref("") == []
 
 
 def test_parse_for_each_ref_skips_blank_lines():
     from tools.webapi._helpers import _parse_for_each_ref
+
     assert _parse_for_each_ref("\n\n  \n") == []
 
 
 def test_parse_for_each_ref_extracts_current_marker():
     from tools.webapi._helpers import _parse_for_each_ref
+
     _tab = chr(9)
     _nl = chr(10)
     line = "*main" + _tab + "abc1234" + _tab + _tab + _nl
@@ -153,6 +160,7 @@ def test_parse_for_each_ref_extracts_current_marker():
 
 def test_parse_for_each_ref_handles_remote():
     from tools.webapi._helpers import _parse_for_each_ref
+
     # concat 构造:避免 \\t 被文件写入工具双重转义
     _tab = chr(9)
     _nl = chr(10)

@@ -67,35 +67,49 @@ async def handle(
     ref = (_qget(query, "ref") or "HEAD").strip()
     if not ref or len(ref) > MAX_PARAM_LENGTH:
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
-            elapsed_ms=_elapsed(), loaded=False,
-            umo=umo, worktree=worktree,
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            loaded=False,
+            umo=umo,
+            worktree=worktree,
         )
 
     target_path = _qget(query, "path")
     if not target_path or not isinstance(target_path, str):
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
-            elapsed_ms=_elapsed(), loaded=False,
-            umo=umo, worktree=worktree,
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            loaded=False,
+            umo=umo,
+            worktree=worktree,
         )
     target_path = target_path.strip()
     if len(target_path) > MAX_PARAM_LENGTH:
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
-            elapsed_ms=_elapsed(), loaded=False,
-            umo=umo, worktree=worktree,
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            loaded=False,
+            umo=umo,
+            worktree=worktree,
         )
     if "\n" in target_path or "\r" in target_path or "\x00" in target_path:
         return _make_envelope(
-            success=False, reason=ReasonCode.INVALID_PARAM,
-            elapsed_ms=_elapsed(), loaded=False,
-            umo=umo, worktree=worktree,
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            loaded=False,
+            umo=umo,
+            worktree=worktree,
         )
 
     # preflight
     err, ctx = await _git_endpoint_preflight(
-        plugin, umo=umo, worktree_param=worktree,
+        plugin,
+        umo=umo,
+        worktree_param=worktree,
     )
     if err is not None:
         err["data"]["elapsed_ms"] = _elapsed()
@@ -108,9 +122,13 @@ async def handle(
     target, path_err = _validate_repo_relative_file(target_path, Path(directory))
     if path_err is not None:
         return _make_envelope(
-            success=False, reason=ReasonCode.PATH_UNSAFE,
-            elapsed_ms=_elapsed(), loaded=False,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=ReasonCode.PATH_UNSAFE,
+            elapsed_ms=_elapsed(),
+            loaded=False,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
         )
 
     git_bin = plugin._git_binary()  # type: ignore[attr-defined]
@@ -122,9 +140,7 @@ async def handle(
         encoding="utf-8",
     )
     if not resolve["ok"] or not resolve["stdout"]:
-        stderr = (
-            resolve.get("stderr", "") or resolve.get("error", "")
-        ).lower()
+        stderr = (resolve.get("stderr", "") or resolve.get("error", "")).lower()
         if (
             "bad revision" in stderr
             or "unknown revision" in stderr
@@ -137,9 +153,13 @@ async def handle(
         else:
             reason = ReasonCode.GIT_ERROR
         return _make_envelope(
-            success=False, reason=reason,
-            elapsed_ms=_elapsed(), loaded=False,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=reason,
+            elapsed_ms=_elapsed(),
+            loaded=False,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             stderr=resolve.get("stderr", "") or resolve.get("error", ""),
         )
 
@@ -151,32 +171,44 @@ async def handle(
         encoding="utf-8",
     )
     if not show["ok"]:
-        stderr_lower = (
-            show.get("stderr", "") or show.get("error", "")
-        ).lower()
+        stderr_lower = (show.get("stderr", "") or show.get("error", "")).lower()
         if (
             "exists on disk, but not in" in stderr_lower
             or "does not exist in" in stderr_lower
             or "path not in" in stderr_lower
         ):
             return _make_envelope(
-                success=False, reason=ReasonCode.FILE_MISSING_AT_REF,
-                elapsed_ms=_elapsed(), loaded=False,
-                directory=directory, umo=effective_umo, worktree=directory,
-                ref=ref, resolved_sha=resolved_sha, path=target_path,
+                success=False,
+                reason=ReasonCode.FILE_MISSING_AT_REF,
+                elapsed_ms=_elapsed(),
+                loaded=False,
+                directory=directory,
+                umo=effective_umo,
+                worktree=directory,
+                ref=ref,
+                resolved_sha=resolved_sha,
+                path=target_path,
                 stderr=show.get("stderr", "") or show.get("error", ""),
             )
         if "bad revision" in stderr_lower or "bad object" in stderr_lower:
             return _make_envelope(
-                success=False, reason=ReasonCode.REF_NOT_FOUND,
-                elapsed_ms=_elapsed(), loaded=False,
-                directory=directory, umo=effective_umo, worktree=directory,
+                success=False,
+                reason=ReasonCode.REF_NOT_FOUND,
+                elapsed_ms=_elapsed(),
+                loaded=False,
+                directory=directory,
+                umo=effective_umo,
+                worktree=directory,
                 stderr=show.get("stderr", ""),
             )
         return _make_envelope(
-            success=False, reason=ReasonCode.GIT_ERROR,
-            elapsed_ms=_elapsed(), loaded=False,
-            directory=directory, umo=effective_umo, worktree=directory,
+            success=False,
+            reason=ReasonCode.GIT_ERROR,
+            elapsed_ms=_elapsed(),
+            loaded=False,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
             stderr=show.get("stderr", "") or show.get("error", ""),
         )
 
@@ -190,19 +222,26 @@ async def handle(
         content = ""
     elif len(raw_bytes) > MAX_FILE_BLOB_BYTES:
         truncated = True
-        content = raw_bytes[:MAX_FILE_BLOB_BYTES].decode(
-            "utf-8", errors="replace"
-        )
+        content = raw_bytes[:MAX_FILE_BLOB_BYTES].decode("utf-8", errors="replace")
     size = len(content.encode("utf-8"))
 
     return _JSONResponseCompat(
         _make_envelope(
-            success=True, elapsed_ms=_elapsed(),
+            success=True,
+            elapsed_ms=_elapsed(),
             loaded=True,
-            directory=directory, umo=effective_umo, worktree=directory,
-            ref=ref, resolved_sha=resolved_sha, path=target_path,
-            content=content, is_binary=is_binary, size=size,
-            truncated=truncated, max_bytes=MAX_FILE_BLOB_BYTES,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
+            ref=ref,
+            resolved_sha=resolved_sha,
+            path=target_path,
+            content=content,
+            is_binary=is_binary,
+            size=size,
+            truncated=truncated,
+            max_bytes=MAX_FILE_BLOB_BYTES,
         ),
-        status_code=200, headers=_NO_STORE,
+        status_code=200,
+        headers=_NO_STORE,
     )

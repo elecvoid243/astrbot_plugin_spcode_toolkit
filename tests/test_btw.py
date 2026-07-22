@@ -187,7 +187,9 @@ class TestBtwEndpoint:
         )
         mock_plugin.context.persona_manager = persona_manager
 
-        mock_plugin.context.get_using_provider.return_value = self._mock_provider("回答")
+        mock_plugin.context.get_using_provider.return_value = self._mock_provider(
+            "回答"
+        )
 
         await handle(
             mock_plugin, body={"prompt": "测试", "umo": "webchat:FriendMessage:test"}

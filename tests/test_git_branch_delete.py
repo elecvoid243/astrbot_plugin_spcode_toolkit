@@ -28,6 +28,7 @@ def _run(coro):
 
 # ── preflight (3 cases: no_umo / not_git_repo / cross worktree) ──
 
+
 def test_delete_no_umo_loaded():
     plugin = _make_plugin()
     result = _run(git_branch_delete.handle(plugin, body={"name": "x"}))
@@ -41,9 +42,7 @@ def test_delete_not_a_git_repo(tmp_path):
     _state.put(umo, {"directory": str(target), "loaded_at": 1.0})
     try:
         plugin = _make_plugin()
-        result = _run(
-            git_branch_delete.handle(plugin, umo=umo, body={"name": "x"})
-        )
+        result = _run(git_branch_delete.handle(plugin, umo=umo, body={"name": "x"}))
         assert result["data"]["reason"] == ReasonCode.NOT_A_GIT_REPO
     finally:
         _state.pop(umo)
@@ -59,7 +58,10 @@ def test_delete_worktree_invalid(tmp_path, existing_repo):
         plugin = _make_plugin()
         result = _run(
             git_branch_delete.handle(
-                plugin, umo=umo, worktree=str(other), body={"name": "x"},
+                plugin,
+                umo=umo,
+                worktree=str(other),
+                body={"name": "x"},
             )
         )
         assert result["data"]["reason"] == ReasonCode.WORKTREE_INVALID
@@ -69,19 +71,16 @@ def test_delete_worktree_invalid(tmp_path, existing_repo):
 
 # ── body 校验 (3 cases) ──
 
+
 def test_delete_body_none(loaded_umo):
     plugin = _make_plugin()
-    result = _run(
-        git_branch_delete.handle(plugin, umo=loaded_umo, body=None)
-    )
+    result = _run(git_branch_delete.handle(plugin, umo=loaded_umo, body=None))
     assert result["data"]["reason"] == ReasonCode.INVALID_BODY
 
 
 def test_delete_name_missing(loaded_umo):
     plugin = _make_plugin()
-    result = _run(
-        git_branch_delete.handle(plugin, umo=loaded_umo, body={})
-    )
+    result = _run(git_branch_delete.handle(plugin, umo=loaded_umo, body={}))
     assert result["data"]["reason"] == ReasonCode.INVALID_PARAM
 
 
@@ -89,7 +88,9 @@ def test_delete_name_invalid_chars(loaded_umo):
     plugin = _make_plugin()
     result = _run(
         git_branch_delete.handle(
-            plugin, umo=loaded_umo, body={"name": "bad..name"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "bad..name"},
         )
     )
     assert result["data"]["reason"] == ReasonCode.INVALID_BRANCH
@@ -97,13 +98,16 @@ def test_delete_name_invalid_chars(loaded_umo):
 
 # ── 业务 reason (5 cases) ──
 
+
 def test_delete_current_branch_force_false(loaded_umo, existing_repo):
     """删 current branch + force=false → branch_is_current."""
     plugin = _make_plugin()
     # existing_repo 初始化时 current=main
     result = _run(
         git_branch_delete.handle(
-            plugin, umo=loaded_umo, body={"name": "main", "force": False},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "main", "force": False},
         )
     )
     assert result["data"]["reason"] == ReasonCode.BRANCH_IS_CURRENT
@@ -114,7 +118,9 @@ def test_delete_current_branch_force_true_still_blocked(loaded_umo, existing_rep
     plugin = _make_plugin()
     result = _run(
         git_branch_delete.handle(
-            plugin, umo=loaded_umo, body={"name": "main", "force": True},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "main", "force": True},
         )
     )
     # 硬禁:即便 force=true,current branch 也不能删
@@ -126,7 +132,9 @@ def test_delete_main_when_main_is_current(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_branch_delete.handle(
-            plugin, umo=loaded_umo, body={"name": "main"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "main"},
         )
     )
     assert result["data"]["reason"] == ReasonCode.BRANCH_IS_CURRENT
@@ -137,7 +145,9 @@ def test_delete_branch_not_found(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_branch_delete.handle(
-            plugin, umo=loaded_umo, body={"name": "nonexistent-branch"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "nonexistent-branch"},
         )
     )
     assert result["data"]["reason"] == ReasonCode.BRANCH_NOT_FOUND
@@ -167,7 +177,9 @@ def test_delete_unmerged_branch_force_false(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_branch_delete.handle(
-            plugin, umo=loaded_umo, body={"name": "truly-unmerged"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "truly-unmerged"},
         )
     )
     assert result["data"]["reason"] == ReasonCode.BRANCH_NOT_MERGED
@@ -181,11 +193,16 @@ def test_delete_remote_tracking_branch(loaded_umo, existing_repo):
     # 模拟一个 remote tracking 分支
     subprocess.run(
         [
-            "git", "-C", str(existing_repo),
-            "update-ref", "refs/remotes/origin/main",
+            "git",
+            "-C",
+            str(existing_repo),
+            "update-ref",
+            "refs/remotes/origin/main",
             subprocess.run(
                 ["git", "-C", str(existing_repo), "rev-parse", "HEAD"],
-                capture_output=True, text=True, check=True,
+                capture_output=True,
+                text=True,
+                check=True,
             ).stdout.strip(),
         ],
         check=True,
@@ -193,7 +210,9 @@ def test_delete_remote_tracking_branch(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_branch_delete.handle(
-            plugin, umo=loaded_umo, body={"name": "origin/main"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "origin/main"},
         )
     )
     # git 会拒绝(remote tracking 不能直接 -d)
@@ -205,12 +224,15 @@ def test_delete_remote_tracking_branch(loaded_umo, existing_repo):
 
 # ── happy path (2 cases) ──
 
+
 def test_delete_merged_branch(loaded_umo, existing_repo):
     """删已合并 feature/x → deleted=True。"""
     plugin = _make_plugin()
     result = _run(
         git_branch_delete.handle(
-            plugin, umo=loaded_umo, body={"name": "feature/x"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "feature/x"},
         )
     )
     assert result["data"]["deleted"] is True
@@ -227,7 +249,9 @@ def test_delete_response_includes_post_state(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_branch_delete.handle(
-            plugin, umo=loaded_umo, body={"name": "feature/x"},
+            plugin,
+            umo=loaded_umo,
+            body={"name": "feature/x"},
         )
     )
     data = result["data"]
@@ -265,7 +289,8 @@ def test_delete_unmerged_with_force(loaded_umo, existing_repo):
     plugin = _make_plugin()
     result = _run(
         git_branch_delete.handle(
-            plugin, umo=loaded_umo,
+            plugin,
+            umo=loaded_umo,
             body={"name": "will-force", "force": True},
         )
     )
@@ -275,6 +300,7 @@ def test_delete_unmerged_with_force(loaded_umo, existing_repo):
 
 # ── 集成 (3 cases) ──
 
+
 def test_delete_then_not_in_branches(loaded_umo, existing_repo):
     """删后 git-branches 不再返回。"""
     from tools.webapi import git_branches
@@ -283,15 +309,14 @@ def test_delete_then_not_in_branches(loaded_umo, existing_repo):
     # 删除 feature/x
     delete_result = _run(
         git_branch_delete.handle(
-            plugin, umo=loaded_umo,
+            plugin,
+            umo=loaded_umo,
             body={"name": "feature/x", "force": True},
         )
     )
     assert delete_result["data"]["deleted"] is True
     # 再查 branches
-    branch_result = _run(
-        git_branches.handle(plugin, umo=loaded_umo)
-    )
+    branch_result = _run(git_branches.handle(plugin, umo=loaded_umo))
     names = [b["name"] for b in branch_result["data"]["branches"]]
     assert "feature/x" not in names
     assert "main" in names
@@ -307,15 +332,27 @@ def test_delete_branch_checked_out_other_worktree_fails(loaded_umo, existing_rep
     if other_dir.exists():
         # cleanup before
         subprocess.run(
-            ["git", "-C", str(existing_repo), "worktree", "remove", "--force",
-             str(other_dir)],
+            [
+                "git",
+                "-C",
+                str(existing_repo),
+                "worktree",
+                "remove",
+                "--force",
+                str(other_dir),
+            ],
             check=False,
         )
     try:
         subprocess.run(
             [
-                "git", "-C", str(existing_repo), "worktree", "add",
-                str(other_dir), "feature/x",
+                "git",
+                "-C",
+                str(existing_repo),
+                "worktree",
+                "add",
+                str(other_dir),
+                "feature/x",
             ],
             check=True,
         )
@@ -326,7 +363,9 @@ def test_delete_branch_checked_out_other_worktree_fails(loaded_umo, existing_rep
         plugin = _make_plugin()
         result = _run(
             git_branch_delete.handle(
-                plugin, umo=loaded_umo, body={"name": "feature/x"},
+                plugin,
+                umo=loaded_umo,
+                body={"name": "feature/x"},
             )
         )
         # git 在分支被其他 worktree checked out 时会拒绝(用 -d 不是 -D)
@@ -338,7 +377,14 @@ def test_delete_branch_checked_out_other_worktree_fails(loaded_umo, existing_rep
     finally:
         # 清理
         subprocess.run(
-            ["git", "-C", str(existing_repo), "worktree", "remove", "--force",
-             str(other_dir)],
+            [
+                "git",
+                "-C",
+                str(existing_repo),
+                "worktree",
+                "remove",
+                "--force",
+                str(other_dir),
+            ],
             check=False,
         )

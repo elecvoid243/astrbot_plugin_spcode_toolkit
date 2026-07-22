@@ -97,9 +97,7 @@ class PlanModeController:
             original = self._original_tool_sets.pop(umo, None)
             if original is not None:
                 req.func_tool = original
-                logger.debug(
-                    f"[plan] 会话 {umo}: 已从 plan 模式恢复原始 ToolSet"
-                )
+                logger.debug(f"[plan] 会话 {umo}: 已从 plan 模式恢复原始 ToolSet")
             return
         if not req.func_tool:
             return

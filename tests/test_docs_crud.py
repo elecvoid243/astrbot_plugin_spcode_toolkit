@@ -26,15 +26,11 @@ def plugin() -> Any:
 
 def _init_git_repo(path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=path, check=True)
-    subprocess.run(
-        ["git", "config", "user.email", "t@t"], cwd=path, check=True
-    )
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=path, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=path, check=True)
     (path / "README.md").write_text("hi", encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=path, check=True)
-    subprocess.run(
-        ["git", "commit", "-m", "init", "-q"], cwd=path, check=True
-    )
+    subprocess.run(["git", "commit", "-m", "init", "-q"], cwd=path, check=True)
 
 
 def _load_project(plugin: Any, umo: str, directory: str) -> None:
@@ -44,9 +40,7 @@ def _load_project(plugin: Any, umo: str, directory: str) -> None:
 # ── POST ─────────────────────────────────────────────────────────
 
 
-async def test_post_creates_new_file(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_post_creates_new_file(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))
 
@@ -60,9 +54,7 @@ async def test_post_creates_new_file(
     assert (tmp_path / "docs" / "new.md").read_text(encoding="utf-8") == "# hi\n"
 
 
-async def test_post_overwrites_existing_file(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_post_overwrites_existing_file(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "x.md").write_text("old", encoding="utf-8")
@@ -77,9 +69,7 @@ async def test_post_overwrites_existing_file(
     assert (tmp_path / "docs" / "x.md").read_text(encoding="utf-8") == "new"
 
 
-async def test_post_mkdir_parents(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_post_mkdir_parents(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))
 
@@ -93,9 +83,7 @@ async def test_post_mkdir_parents(
     assert (tmp_path / "deep" / "nested" / "dir" / "file.md").exists()
 
 
-async def test_post_rejects_non_md_extension(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_post_rejects_non_md_extension(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))
 
@@ -106,9 +94,7 @@ async def test_post_rejects_non_md_extension(
     assert result["data"]["reason"] == "invalid_param"
 
 
-async def test_post_rejects_oversized_content(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_post_rejects_oversized_content(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))
 
@@ -121,9 +107,7 @@ async def test_post_rejects_oversized_content(
     assert not (tmp_path / "docs" / "big.md").exists()
 
 
-async def test_post_invalid_body_when_not_dict(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_post_invalid_body_when_not_dict(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))
 
@@ -131,14 +115,14 @@ async def test_post_invalid_body_when_not_dict(
     assert result["data"]["reason"] == "invalid_body"
 
     result = await _dc.handle_post_docs(
-        plugin, umo="u:m", body="not a dict"  # type: ignore[arg-type]
+        plugin,
+        umo="u:m",
+        body="not a dict",  # type: ignore[arg-type]
     )
     assert result["data"]["reason"] == "invalid_body"
 
 
-async def test_post_rejects_path_with_null_byte(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_post_rejects_path_with_null_byte(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))
 
@@ -148,9 +132,7 @@ async def test_post_rejects_path_with_null_byte(
     assert result["data"]["reason"] == "invalid_param"
 
 
-async def test_post_rejects_parent_traversal(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_post_rejects_parent_traversal(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))
 
@@ -162,9 +144,7 @@ async def test_post_rejects_parent_traversal(
 
 async def test_post_no_project_loaded(plugin: Any) -> None:
     _proj_state.reset()
-    result = await _dc.handle_post_docs(
-        plugin, body={"path": "x.md", "content": "y"}
-    )
+    result = await _dc.handle_post_docs(plugin, body={"path": "x.md", "content": "y"})
     assert result["data"]["reason"] == "no_project_loaded"
 
 
@@ -181,9 +161,8 @@ async def test_post_feature_disabled(plugin: Any, tmp_path: Path) -> None:
 
 # ── PATCH ─────────────────────────────────────────────────────────
 
-async def test_patch_renames_file(
-    plugin: Any, tmp_path: Path
-) -> None:
+
+async def test_patch_renames_file(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "old.md").write_text("data", encoding="utf-8")
@@ -202,9 +181,7 @@ async def test_patch_renames_file(
     assert (tmp_path / "docs" / "new.md").read_text(encoding="utf-8") == "data"
 
 
-async def test_patch_rejects_missing_old(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_patch_rejects_missing_old(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))
 
@@ -216,9 +193,7 @@ async def test_patch_rejects_missing_old(
     assert result["data"]["reason"] == "file_not_found"
 
 
-async def test_patch_rejects_existing_new(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_patch_rejects_existing_new(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "old.md").write_text("old", encoding="utf-8")
@@ -233,9 +208,7 @@ async def test_patch_rejects_existing_new(
     assert result["data"]["reason"] == "file_exists"
 
 
-async def test_patch_rejects_same_path(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_patch_rejects_same_path(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "x.md").write_text("x", encoding="utf-8")
@@ -249,9 +222,7 @@ async def test_patch_rejects_same_path(
     assert result["data"]["reason"] == "invalid_param"
 
 
-async def test_patch_invalid_body_when_not_dict(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_patch_invalid_body_when_not_dict(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))
 
@@ -259,9 +230,7 @@ async def test_patch_invalid_body_when_not_dict(
     assert result["data"]["reason"] == "invalid_body"
 
 
-async def test_patch_rejects_non_md_new_path(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_patch_rejects_non_md_new_path(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "old.md").write_text("o", encoding="utf-8")
@@ -275,9 +244,7 @@ async def test_patch_rejects_non_md_new_path(
     assert result["data"]["reason"] == "invalid_param"
 
 
-async def test_patch_rejects_parent_traversal(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_patch_rejects_parent_traversal(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "old.md").write_text("o", encoding="utf-8")
@@ -291,9 +258,7 @@ async def test_patch_rejects_parent_traversal(
     assert result["data"]["reason"] == "path_unsafe"
 
 
-async def test_patch_mkdir_parents_for_new_path(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_patch_mkdir_parents_for_new_path(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "old.md").write_text("o", encoding="utf-8")
@@ -310,27 +275,22 @@ async def test_patch_mkdir_parents_for_new_path(
 
 # ── DELETE ──────────────────────────────────────────────────────────
 
-async def test_delete_removes_file(
-    plugin: Any, tmp_path: Path
-) -> None:
+
+async def test_delete_removes_file(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     (tmp_path / "docs").mkdir()
     target = tmp_path / "docs" / "x.md"
     target.write_text("bye", encoding="utf-8")
     _load_project(plugin, "u:m", str(tmp_path))
 
-    result = await _dc.handle_delete_docs(
-        plugin, umo="u:m", body={"path": "docs/x.md"}
-    )
+    result = await _dc.handle_delete_docs(plugin, umo="u:m", body={"path": "docs/x.md"})
 
     assert result["data"]["deleted"] is True
     assert result["data"]["path"] == "docs/x.md"
     assert not target.exists()
 
 
-async def test_delete_rejects_missing_file(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_delete_rejects_missing_file(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))
 
@@ -340,9 +300,7 @@ async def test_delete_rejects_missing_file(
     assert result["data"]["reason"] == "file_not_found"
 
 
-async def test_delete_rejects_non_md_path(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_delete_rejects_non_md_path(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))
 
@@ -352,25 +310,19 @@ async def test_delete_rejects_non_md_path(
     assert result["data"]["reason"] == "invalid_param"
 
 
-async def test_delete_rejects_directory_path(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_delete_rejects_directory_path(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     weird_dir = tmp_path / "weird.md"
     weird_dir.mkdir()
     _load_project(plugin, "u:m", str(tmp_path))
 
-    result = await _dc.handle_delete_docs(
-        plugin, umo="u:m", body={"path": "weird.md"}
-    )
+    result = await _dc.handle_delete_docs(plugin, umo="u:m", body={"path": "weird.md"})
     assert result["data"]["reason"] == "git_error"
     assert "directory" in result["data"]["stderr"]
     assert weird_dir.exists()
 
 
-async def test_delete_invalid_body_when_not_dict(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_delete_invalid_body_when_not_dict(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))
 
@@ -378,9 +330,7 @@ async def test_delete_invalid_body_when_not_dict(
     assert result["data"]["reason"] == "invalid_body"
 
 
-async def test_delete_rejects_parent_traversal(
-    plugin: Any, tmp_path: Path
-) -> None:
+async def test_delete_rejects_parent_traversal(plugin: Any, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _load_project(plugin, "u:m", str(tmp_path))
 
@@ -392,7 +342,5 @@ async def test_delete_rejects_parent_traversal(
 
 async def test_delete_no_project_loaded(plugin: Any) -> None:
     _proj_state.reset()
-    result = await _dc.handle_delete_docs(
-        plugin, body={"path": "x.md"}
-    )
+    result = await _dc.handle_delete_docs(plugin, body={"path": "x.md"})
     assert result["data"]["reason"] == "no_project_loaded"
