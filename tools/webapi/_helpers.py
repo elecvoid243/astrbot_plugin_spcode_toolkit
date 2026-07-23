@@ -359,6 +359,16 @@ class ReasonCode:
     EMPTY_RESPONSE = "empty_response"  # LLM 返回空文本
     LLM_ERROR = "llm_error"  # LLM 调用异常(provider.text_chat 抛错)
 
+    # ── vivado-mcp 专用 (PR-4 2026-07-23) ──
+    VIVADO_NOT_INSTALLED = "vivado_not_installed"
+    VIVADO_EXECUTABLE_INVALID = "vivado_executable_invalid"
+    MCP_NOT_RUNNING = "mcp_not_running"
+    MCP_STARTUP_FAILED = "mcp_startup_failed"
+    SESSION_NOT_FOUND = "session_not_found"
+    SESSION_ALREADY_EXISTS = "session_already_exists"
+    VIVADO_STARTUP_FAILED = "vivado_startup_failed"
+    MAX_SESSIONS_REACHED = "max_sessions_reached"
+
     # ── /spcode/file-binary(spec 2026-07-22) ──
     UNSUPPORTED_MEDIA_TYPE = (
         "unsupported_media_type"  # file-binary: extension not in MIME_BY_EXT

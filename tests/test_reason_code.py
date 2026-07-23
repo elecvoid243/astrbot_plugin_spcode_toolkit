@@ -184,3 +184,18 @@ def test_v217_reason_codes_do_not_redeclare_existing_literals() -> None:
             names_in_v217_block.update(names)
 
     assert names_before_marker.isdisjoint(names_in_v217_block)
+
+
+# ── PR-4 vivado-mcp 8 个新 ReasonCode (2026-07-23) ──
+
+
+def test_vivado_reason_codes_defined():
+    """PR-4 (2026-07-23): 8 new ReasonCode constants for vivado-mcp."""
+    assert ReasonCode.VIVADO_NOT_INSTALLED == "vivado_not_installed"
+    assert ReasonCode.VIVADO_EXECUTABLE_INVALID == "vivado_executable_invalid"
+    assert ReasonCode.MCP_NOT_RUNNING == "mcp_not_running"
+    assert ReasonCode.MCP_STARTUP_FAILED == "mcp_startup_failed"
+    assert ReasonCode.SESSION_NOT_FOUND == "session_not_found"
+    assert ReasonCode.SESSION_ALREADY_EXISTS == "session_already_exists"
+    assert ReasonCode.VIVADO_STARTUP_FAILED == "vivado_startup_failed"
+    assert ReasonCode.MAX_SESSIONS_REACHED == "max_sessions_reached"
