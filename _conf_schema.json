@@ -20,6 +20,13 @@
     "type": "string",
     "default": ""
   },
+  "admin_only_mcp_servers": {
+    "description": "MCP server 名称白名单 (只有这些 mcp_* 工具被 L1 admin 鉴权过滤)",
+    "hint": "工具名以 mcp_<X>__ 开头且 X 在此列表, 非管理员不可见。默认 ['codegraph', 'vivado']。",
+    "type": "list",
+    "item": {"type": "string", "hint": "MCP server 名称"},
+    "default": ["codegraph", "vivado"]
+  },
   "es_search": {
     "description": "es_search — Everything 极速文件名搜索",
     "hint": "Windows 用 Everything (es.exe),Linux/macOS 三层 fallback。",
@@ -115,6 +122,31 @@
         "hint": "LLM 调用 codegraph_* 工具省略 projectPath 时使用。",
         "type": "string",
         "default": ""
+      }
+    }
+  },
+  "vivado": {
+    "description": "vivado-mcp — FPGA 开发助手 MCP 集成 (21 个 mcp_vivado__* 工具)",
+    "hint": "需先 pip install vivado-mcp; vivado_executable 留空则自动检测。",
+    "type": "object",
+    "items": {
+      "vivado_enabled": {
+        "description": "启用 vivado-mcp MCP 集成",
+        "type": "bool",
+        "default": true
+      },
+      "vivado_executable": {
+        "description": "Vivado 工具链可执行文件路径",
+        "hint": "Windows: D:/Xilinx/Vivado/2024.1/bin/vivado.bat; 留空走自动检测。",
+        "type": "string",
+        "default": ""
+      },
+      "vivado_max_sessions": {
+        "description": "最大并发 Vivado session 数",
+        "type": "int",
+        "default": 8,
+        "min": 1,
+        "max": 32
       }
     }
   },

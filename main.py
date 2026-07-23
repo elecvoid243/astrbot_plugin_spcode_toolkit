@@ -581,10 +581,19 @@ class SPCodeToolkit(star.Star):
         # 管理员可见全部；非管理员 → 全部隐藏（spcode_toolkit 是管理员工具集）
         kept = []
         removed = []
+        admin_only_mcp_servers = set(self._config.get("admin_only_mcp_servers") or [])
         for tool in req.func_tool.tools:
             if tool.name in self._tool_names:
                 removed.append(tool.name)
                 continue
+            # PR-4 2026-07-23: mcp_<X>__* 工具, 当 X 在 admin_only_mcp_servers 列表时也隐藏
+            if tool.name.startswith("mcp_"):
+                rest = tool.name[4:]
+                if "__" in rest:
+                    server = rest.split("__", 1)[0]
+                    if server in admin_only_mcp_servers:
+                        removed.append(tool.name)
+                        continue
             kept.append(tool)
         if removed:
             try:
