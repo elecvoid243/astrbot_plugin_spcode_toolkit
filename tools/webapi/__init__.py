@@ -89,6 +89,7 @@ from . import (
     git_worktrees,
     plan_mode,
     project_status,
+    vivado_status,  # PR-4 2026-07-23
 )
 
 logger = logging.getLogger(__name__)
@@ -317,6 +318,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         file_remove.handle,
         "删除 repo 文件(不限扩展名,仅文件,目录拒绝)",
     ),
+    (
+        "/spcode/vivado-status",  # PR-4 2026-07-23
+        ["GET"],
+        vivado_status.handle,
+        "获取 vivado MCP 运行状态快照(供 dashboard 显示)",
+    ),
 ]
 
 # 旧方法名 -> 新模块级 handler (for back-compat / introspection)
@@ -356,6 +363,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_file_write": file_write.handle,  # 2026-07-17
     "handle_post_file_rename": file_rename.handle,  # 2026-07-18
     "handle_post_file_remove": file_remove.handle,  # 2026-07-18
+    "handle_get_vivado_status": vivado_status.handle,  # PR-4 2026-07-23
 }
 
 
@@ -465,33 +473,36 @@ __all__ = [
     "codegraph_status",  # v2.14.x (2026-06-28)
     "docs_crud",  # spec B (2026-07-11)
     "file_browser",
+    "file_binary",  # 2026-07-22: 原始字节流(供 BinaryPreview)
     "file_discard_hunk",  # v2.16.0 (2026-07-06)
     "file_name_search",  # v2.15.0 (2026-07-02)
+    "file_remove",  # 2026-07-18
+    "file_rename",  # 2026-07-18
     "file_restore",
     "file_search",  # v2.15.0 (2026-07-02)
     "file_write",  # 2026-07-17
-    "file_rename",  # 2026-07-18
-    "file_remove",  # 2026-07-18
+    "git_branch_create",  # v2.17.0
+    "git_branch_delete",  # v2.17.0
+    "git_branch_switch",  # v2.17.0
+    "git_branches",  # v2.17.0
+    "git_commit",
     "git_diff",
     "git_file",  # spec B (2026-07-11)
-    "git_init",  # v2.17.0 (2026-07-15)
-    "git_branches",  # v2.17.0 (2026-07-16)
-    "git_branch_create",  # v2.17.0 (2026-07-16)
-    "git_branch_delete",  # v2.17.0 (2026-07-16)
-    "git_branch_switch",  # v2.17.0 (2026-07-16)
+    "git_init",  # v2.17.0
     "git_log",
-    "git_revert",  # v2.17.0 (2026-07-16)
-    "git_repo_check",  # v2.18.0 (2026-07-16)
+    "git_repo_check",  # v2.18.0
+    "git_revert",  # v2.17.0
     "git_show",
     "git_stage",
+    "git_stats",
     "git_status",
     "git_unstage",
-    "git_commit",
-    "git_worktree_add",  # v2.14.0 (2026-06-26)
-    "git_worktree_lock",  # v2.14.0 (2026-06-26)
-    "git_worktree_remove",  # v2.14.0 (2026-06-26)
-    "git_worktree_unlock",  # v2.14.0 (2026-06-26)
+    "git_worktree_add",  # v2.14.0
+    "git_worktree_lock",  # v2.14.0
+    "git_worktree_remove",  # v2.14.0
+    "git_worktree_unlock",  # v2.14.0
     "git_worktrees",
     "plan_mode",
     "project_status",
+    "vivado_status",  # PR-4 2026-07-23
 ]

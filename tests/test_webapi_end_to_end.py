@@ -111,7 +111,8 @@ def test_routes_table_has_thirty_endpoints() -> None:
     v2.17.0 (2026-07-15) 新增 6 个 git 端点(init/branches/create/delete/switch/revert)。
     v2.18.0 (2026-07-16) 新增 1 个 git 端点(repo-check)。
     端点总数演进:24 (spec B) -> 30 (v2.17.0) -> 31 (v2.18.0) -> 32 (v2.20 btw)
-    -> 33 (2026-07-17 file-write)。
+    -> 33 (2026-07-17 file-write) -> 35 (2026-07-18 file-rename/remove)
+    -> 36 (2026-07-22 file-binary) -> 37 (PR-4 vivado-status).
     - 24 个之前端点:9 GET + 11 POST + 1 PATCH + 1 DELETE = 22 routes,
       部分端点共享路径(/spcode/docs 用 POST/PATCH/DELETE 三方法)。
     - v2.17.0 新增:1 GET (git-branches) + 5 POST (init/create/delete/switch/revert)。
@@ -132,6 +133,7 @@ def test_routes_table_has_thirty_endpoints() -> None:
         "/spcode/git-unstage",  # PR-4 (2026-06-24)
         "/spcode/git-commit",  # PR-5 (2026-06-24)
         "/spcode/file-browser",
+        "/spcode/file-binary",  # 2026-07-22 — 原始字节流(供 BinaryPreview)
         "/spcode/file-restore",
         "/spcode/file-discard-hunk",  # v2.16.0 (2026-07-06)
         "/spcode/git-worktree-add",  # v2.14.0 (2026-06-26) PR-B
@@ -156,19 +158,18 @@ def test_routes_table_has_thirty_endpoints() -> None:
         "/spcode/file-write",  # 2026-07-17 (workspace file editor)
         "/spcode/file-rename",  # 2026-07-18 (workspace file editor)
         "/spcode/file-remove",  # 2026-07-18 (workspace file editor)
+        "/spcode/vivado-status",  # PR-4 (2026-07-23)
     }
     # Methods sanity:
-    # 24 base: 10 GET (含 docs GET?) + 12 POST + 1 PATCH + 1 DELETE = 24 entries
+    # 24 base: 10 GET + 12 POST + 1 PATCH + 1 DELETE = 24 entries
     #   docs 是 POST/PATCH/DELETE 三方法(同一路径)
     # v2.17.0 +1 GET (git-branches) + 5 POST = 6 entries
     # 30 entries total: 11 GET + 17 POST + 1 PATCH + 1 DELETE
+    # + file-binary (GET) + file-rename (POST) + file-remove (POST)
+    # + git-stats (GET) + file-write (POST) + vivado-status (GET)
     methods = [m for entry in ROUTES for m in entry[1]]
-    assert methods.count("GET") == 13  # +1 for git-stats
-    # v2.20 (2026-07-17): +1 POST for btw endpoint. 32 entries total:
-    # 13 GET + 18 POST + 1 PATCH + 1 DELETE
-    # 2026-07-17: +1 POST for file-write. 33 entries total.
-    # 2026-07-18: +2 POST for file-rename/file-remove. 35 entries total.
-    assert methods.count("POST") == 21  # was 19; +2 for file-rename/remove
+    assert methods.count("GET") == 15  # +file-binary +vivado-status
+    assert methods.count("POST") == 21
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
 
@@ -393,8 +394,8 @@ def test_register_webapi_routes_calls_context_thirty_two_times() -> None:
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    # 36 entries total: 35 + git-stats (2026-07-18)
-    assert plugin.context.register_web_api.call_count == 36
+    # 38 entries: 35 (pre) + file-binary (2026-07-22) + git-stats + vivado-status (PR-4)
+    assert plugin.context.register_web_api.call_count == 38
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -411,9 +412,9 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 36 routes (git-stats added).
+    # Should not raise; should attempt all 38 routes (+file-binary +git-stats +vivado-status).
     register_webapi_routes(plugin)
-    assert call_count == 36
+    assert call_count == 38
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────
