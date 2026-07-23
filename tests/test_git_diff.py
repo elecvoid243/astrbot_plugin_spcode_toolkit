@@ -912,7 +912,10 @@ async def test_parse_raw_numstat_z_binary():
 async def test_parse_raw_numstat_z_preserves_tabs_and_newlines():
     """NUL boundaries must preserve whitespace inside the path."""
     path = "dir/tab\tline\nname.txt"
-    metadata = f":100644 100644 aaaaaaa bbbbbbb M\0{path}\01\t2\t{path}\0"
+    nul = "\0"
+    metadata = (
+        ":100644 100644 aaaaaaa bbbbbbb M" + nul + path + nul + "1\t2\t" + path + nul
+    )
 
     assert _gd._parse_raw_numstat_z(metadata)[0]["path"] == path
 
@@ -1117,6 +1120,31 @@ async def test_handle_git_diff_304_skips_git_diff_invocation(
     assert len(head_calls) == 0, (
         f"cached 304 should skip rev-parse HEAD, got {head_calls}"
     )
+
+
+async def test_handle_git_diff_unicode_filename_uses_canonical_path(
+    plugin, tmp_path, monkeypatch
+):
+    """v2.21: Unicode file paths must round-trip unchanged through git-diff."""
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path)
+    unicode_filename = "提交文档.txt"
+    (tmp_path / unicode_filename).write_text("v1", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True)
+    (tmp_path / unicode_filename).write_text("v2", encoding="utf-8")
+    _load_project(plugin, "test:umo", str(tmp_path))
+    monkeypatch.setattr(web, "request", make_web_request_mock({}))
+
+    # Reset cached module-level state so the new file is picked up.
+    _gd._DIFF_ETAG_CACHE.clear()
+
+    result = await _gd.handle(plugin)
+
+    assert result.status_code == 200
+    paths = [item["path"] for item in result["data"]["files_changed"]]
+    assert unicode_filename in paths
 
 
 # ── v3.4 (2026-06-21) P0 perf: _compute_diff_etag in-memory 缓存 ──

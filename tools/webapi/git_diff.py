@@ -550,26 +550,40 @@ async def handle(
             elapsed_ms=_elapsed(),
         )
 
-    # raw 成功后才跑 numstat(走 diff 留下的 page cache)
-    numstat_result = await _run_git_async(
-        git_prefix + ["diff", "--numstat"] + scope_args, encoding="utf-8"
+    # Files-metadata stream is collected in a second pass so raw diff
+    # syntax (``diff --git`` headers, hunks) can be parsed with the
+    # existing v3.3 helper without coupling. The metadata call uses
+    # machine-readable output to keep paths with spaces, quotes,
+    # backslashes, Unicode text, and embedded newlines intact
+    # (v2.21 canonical-paths fix).
+    metadata_result = await _run_git_async(
+        git_prefix + ["diff", "--raw", "--numstat", "-z"] + scope_args,
+        encoding="utf-8",
     )
+    if not metadata_result["ok"]:
+        return _make_git_diff_empty_envelope(
+            umo=umo,
+            reason="git_error",
+            directory=directory,
+            stderr=metadata_result.get("stderr", ""),
+            elapsed_ms=_elapsed(),
+        )
 
     # 6. 截断与解析(single raw diff → 3 views in Python)
     raw = raw_result["stdout"]
     truncated = len(raw) > MAX_GIT_DIFF_BYTES
     diff = raw[:MAX_GIT_DIFF_BYTES]
-    status_by_path = _parse_diff_status_map(raw)
-    counts_by_path = _parse_numstat_counts(numstat_result.get("stdout", ""))
-    files_changed = [
-        {
-            "path": path,
-            "status": status,
-            "additions": counts_by_path.get(path, (0, 0))[0],
-            "deletions": counts_by_path.get(path, (0, 0))[1],
-        }
-        for path, status in status_by_path.items()
-    ]
+    try:
+        files_changed = _parse_raw_numstat_z(metadata_result.get("stdout", ""))
+    except ValueError as exc:
+        logger.warning("git-diff metadata parse failed: %s", exc)
+        return _make_git_diff_empty_envelope(
+            umo=umo,
+            reason="git_error",
+            directory=directory,
+            stderr=str(exc),
+            elapsed_ms=_elapsed(),
+        )
     stat = _build_stat_text(files_changed)
 
     return _JSONResponseCompat(
