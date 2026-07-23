@@ -853,6 +853,88 @@ async def test_parse_numstat_counts_skips_blank():
     assert _gd._parse_numstat_counts(out) == {"file.txt": (5, 2)}
 
 
+# ── 纯函数: _parse_raw_numstat_z (v2.21 canonical-paths) ──
+
+
+async def test_parse_raw_numstat_z_regular_and_rename():
+    """Raw and numstat records must join on canonical destination paths."""
+    metadata = (
+        ":100644 100644 aaaaaaa bbbbbbb M\0"
+        "src/中文 文档.txt\0"
+        ":100644 000000 aaaaaaa 0000000 D\0"
+        "deleted.txt\0"
+        ":100644 100644 aaaaaaa bbbbbbb R097\0"
+        "旧 名称.txt\0"
+        "新 名称.txt\0"
+        "3\t1\tsrc/中文 文档.txt\0"
+        "0\t2\tdeleted.txt\0"
+        "4\t5\t\0"
+        "旧 名称.txt\0"
+        "新 名称.txt\0"
+    )
+
+    assert _gd._parse_raw_numstat_z(metadata) == [
+        {
+            "path": "src/中文 文档.txt",
+            "status": "M",
+            "additions": 3,
+            "deletions": 1,
+        },
+        {
+            "path": "deleted.txt",
+            "status": "D",
+            "additions": 0,
+            "deletions": 2,
+        },
+        {
+            "path": "新 名称.txt",
+            "status": "R",
+            "additions": 4,
+            "deletions": 5,
+        },
+    ]
+
+
+async def test_parse_raw_numstat_z_binary():
+    """Binary numstat markers must remain zero counts."""
+    metadata = ":100644 100644 aaaaaaa bbbbbbb M\0image.bin\0-\t-\timage.bin\0"
+
+    assert _gd._parse_raw_numstat_z(metadata) == [
+        {
+            "path": "image.bin",
+            "status": "M",
+            "additions": 0,
+            "deletions": 0,
+        }
+    ]
+
+
+async def test_parse_raw_numstat_z_preserves_tabs_and_newlines():
+    """NUL boundaries must preserve whitespace inside the path."""
+    path = "dir/tab\tline\nname.txt"
+    metadata = f":100644 100644 aaaaaaa bbbbbbb M\0{path}\01\t2\t{path}\0"
+
+    assert _gd._parse_raw_numstat_z(metadata)[0]["path"] == path
+
+
+async def test_parse_raw_numstat_z_rejects_malformed_raw_header():
+    """Malformed raw metadata must fail instead of producing wrong paths."""
+    import pytest
+
+    with pytest.raises(ValueError, match="raw metadata header"):
+        _gd._parse_raw_numstat_z(":broken\0file.txt\0")
+
+
+async def test_parse_raw_numstat_z_rejects_malformed_numstat():
+    """Malformed numstat metadata must fail instead of dropping file data."""
+    import pytest
+
+    metadata = ":100644 100644 aaaaaaa bbbbbbb M\0file.txt\0not-numstat\0"
+
+    with pytest.raises(ValueError, match="numstat record"):
+        _gd._parse_raw_numstat_z(metadata)
+
+
 # ── 纯函数: _build_stat_text ──
 
 

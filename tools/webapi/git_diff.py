@@ -155,6 +155,98 @@ def _parse_numstat_counts(numstat_output: str) -> dict[str, tuple[int, int]]:
     return counts
 
 
+def _parse_raw_numstat_z(metadata_output: str) -> list[dict]:
+    """Parse combined ``git diff --raw --numstat -z`` output.
+
+    Raw records provide status and canonical paths. Numstat records provide
+    line counts. Rename and copy records carry source and destination paths
+    in separate NUL-delimited fields (v2.21 canonical-paths fix).
+
+    Args:
+        metadata_output: Decoded NUL-delimited Git output.
+
+    Returns:
+        File metadata in raw Git output order.
+
+    Raises:
+        ValueError: A raw or numstat record has an invalid structure.
+    """
+    tokens = metadata_output.split("\0")
+    cursor = 0
+    raw_files: list[dict] = []
+
+    while cursor < len(tokens) and tokens[cursor].startswith(":"):
+        header = tokens[cursor]
+        cursor += 1
+        fields = header.split()
+        if len(fields) != 5 or not fields[4]:
+            raise ValueError(f"Invalid raw metadata header: {header!r}")
+
+        raw_status = fields[4][0]
+        if raw_status in {"A", "D", "R", "C"}:
+            status = raw_status
+        else:
+            status = "M"
+
+        if raw_status in {"R", "C"}:
+            if cursor + 1 >= len(tokens):
+                raise ValueError("Missing rename or copy path fields")
+            source_path = tokens[cursor]
+            path = tokens[cursor + 1]
+            cursor += 2
+            if not source_path or not path:
+                raise ValueError("Empty rename or copy path field")
+        else:
+            if cursor >= len(tokens):
+                raise ValueError("Missing raw metadata path field")
+            path = tokens[cursor]
+            cursor += 1
+            if not path:
+                raise ValueError("Empty raw metadata path field")
+
+        raw_files.append({"path": path, "status": status})
+
+    counts_by_path: dict[str, tuple[int, int]] = {}
+
+    while cursor < len(tokens):
+        record = tokens[cursor]
+        cursor += 1
+        if not record:
+            continue
+
+        parts = record.split("\t", 2)
+        if len(parts) != 3:
+            raise ValueError(f"Invalid numstat record: {record!r}")
+
+        add_raw, delete_raw, path = parts
+        if not path:
+            if cursor + 1 >= len(tokens):
+                raise ValueError("Missing numstat rename or copy path fields")
+            source_path = tokens[cursor]
+            path = tokens[cursor + 1]
+            cursor += 2
+            if not source_path or not path:
+                raise ValueError("Empty numstat rename or copy path field")
+
+        try:
+            additions = 0 if add_raw == "-" else int(add_raw)
+            deletions = 0 if delete_raw == "-" else int(delete_raw)
+        except ValueError as exc:
+            raise ValueError(f"Invalid numstat counts: {record!r}") from exc
+
+        counts_by_path[path] = (additions, deletions)
+
+    return [
+        {
+            "path": item["path"],
+            "status": item["status"],
+            "additions": counts_by_path.get(item["path"], (0, 0))[0],
+            "deletions": counts_by_path.get(item["path"], (0, 0))[1],
+        }
+        for item in raw_files
+    ]
+
+
 def _build_stat_text(files_changed: list[dict]) -> str:
     """根据 files_changed 构造 ``git --stat`` 风格的统计文本。
 
