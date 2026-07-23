@@ -52,8 +52,36 @@ async def handle(
     git_bin = plugin._git_binary()  # type: ignore[attr-defined]
 
     # ── ETag ───────────────────────────────────────────────
-    # 与 git_status 一致:取 HEAD SHA + porcelain 作为 ETag 输入
-    etag = await _compute_git_etag(git_bin, repo_dir)
+    # 与 git_status 一致:取 HEAD SHA + porcelain 作为 ETag 输入。
+    # v3.6 (2026-07-24): 额外把 ``%(upstream:track)`` 拼入 ETag,
+    # 修复 ``git fetch / pull / push`` 后上游跟踪计数(↑N / ↓N)
+    # 缓存命中的 staleness bug —— 这些操作不动工作树, porcelain
+    # 不变, 但 upstream_track 会变。再跑一次极轻量的 for-each-ref
+    # 只取 track 字段, ref 数量 < 1000 时开销 < 5ms。
+    extra_etag_inputs: tuple[str, ...] = ()
+    try:
+        track_result = await _run_git_async(
+            [
+                git_bin,
+                "-C",
+                str(repo_dir),
+                "for-each-ref",
+                "--format=%(upstream:track)",
+                "refs/heads/",
+                "refs/remotes/",
+            ],
+        )
+        if track_result.get("ok", False):
+            # 单行 track 字符串(末尾可能含 \n)→ 整体作为单一 ETag 因子。
+            # 任何 track 字符串变化都会让 hash 不同, 命中 304 失效。
+            track_blob = (track_result.get("stdout") or "").strip()
+            extra_etag_inputs = (track_blob,) if track_blob else ()
+    except Exception:
+        # for-each-ref 失败不阻塞主流程: 返回的 etag 退回到 v3.5 行为,
+        # 即不感知 upstream_track 变化 (保留旧行为作为兜底)。
+        pass
+
+    etag = await _compute_git_etag(git_bin, repo_dir, extra_inputs=extra_etag_inputs)
     if etag and if_none_match and etag == if_none_match:
         content = _make_envelope(
             success=True,

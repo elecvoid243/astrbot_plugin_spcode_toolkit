@@ -787,16 +787,29 @@ async def _compute_porcelain_diffs(
     return unstaged, staged, untracked
 
 
-async def _compute_git_etag(git_bin: str, directory: str) -> str:
+async def _compute_git_etag(
+    git_bin: str,
+    directory: str,
+    *,
+    extra_inputs: tuple[str, ...] = (),
+) -> str:
     """统一 ETag 计算 (git-diff / git-status / git-log 共享)。
 
     v3.5 (2026-06-30) 修复 ETag staleness: 在旧算法的 HEAD SHA + wt_mtime
     + idx_mtime 基础上, 加入 3 路 porcelain 探测的 SHA-1 哈希。
 
+    v3.6 (2026-07-24) 扩展点 ``extra_inputs``: 接受调用方传入的额外
+    ETag 因子(任意字符串元组),拼入 porcelain SHA 的输入中。用于
+    ``git-branches`` endpoint 把 ``upstream_track`` 纳入 ETag,
+    修复 ``git fetch/pull/push`` 后上游跟踪计数(↑N / ↓N)未刷新
+    的 staleness bug —— 这些操作不动工作树,porcelain SHA 不变,
+    但 upstream_track 会变。其他 endpoint 不传该参数,行为不变。
+
     组成: ``W/"<head_sha>-<wt_mtime>-<porcelain_sha>"``
     - ``head_sha``: commit 变化时变
     - ``wt_mtime``: 防御性保留,git 命令失败时仍能感知根目录时间变化
     - ``porcelain_sha``: 文件级真实变化 (3 路探测合并哈希)
+    - ``extra_inputs`` (v3.6+): 调用方定义的额外 staleness 因子
 
     任意一项变化 → 整个 ETag 变化 → dashboard 收到 200 + 新数据。
     """
@@ -823,6 +836,10 @@ async def _compute_git_etag(git_bin: str, directory: str) -> str:
     # 3. 3 路 porcelain 探测 → SHA-1 哈希 (核心 v3.5 修复)
     unstaged, staged, untracked = await _compute_porcelain_diffs(git_bin, directory)
     porcelain_src = f"{unstaged}\x00{staged}\x00{untracked}"
+    # v3.6: 把 extra_inputs 用 NUL 拼接进 hash 输入。
+    # 因子之间用 \x00 隔离避免拼接歧义(例如 "a" + "bc" vs "" + "abc")。
+    if extra_inputs:
+        porcelain_src = f"{porcelain_src}\x00\x00" + "\x00".join(extra_inputs)
     porcelain_sha = hashlib.sha1(porcelain_src.encode("utf-8")).hexdigest()[:16]
 
     return f'W/"{head_sha}-{wt_mtime}-{porcelain_sha}"'
