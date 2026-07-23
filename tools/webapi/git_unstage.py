@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from ._helpers import (
     _JSONResponseCompat,
+    _get_staged_files,
     _git_endpoint_preflight,
     _make_envelope,
     _run_git_async,
@@ -28,32 +29,6 @@ logger = logging.getLogger(__name__)
 # ── 端点常量 ──
 MAX_FILES_PER_REQUEST = 100
 UNSTAGE_TRUNCATE_BYTES = 1024
-
-
-def _parse_staged_files(stdout: str) -> list[str]:
-    """解析 ``git diff --cached --name-only --diff-filter=AMRD`` 输出。"""
-    return [line.strip() for line in stdout.splitlines() if line.strip()]
-
-
-async def _get_staged_files(git_bin: str, directory: str) -> list[str]:
-    """读取当前 staged 文件列表(用于响应 payload)。"""
-    result = await _run_git_async(
-        [
-            git_bin,
-            "-C",
-            directory,
-            "-c",
-            "color.ui=never",
-            "diff",
-            "--cached",
-            "--name-only",
-            "--diff-filter=AMRD",
-        ],
-        encoding="utf-8",
-    )
-    if not result["ok"]:
-        return []
-    return _parse_staged_files(result.get("stdout", ""))
 
 
 async def handle(

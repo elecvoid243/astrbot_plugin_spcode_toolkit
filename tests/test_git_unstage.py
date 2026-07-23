@@ -98,6 +98,35 @@ async def test_unstage_specific_files(plugin, tmp_path: Path):
     assert "b.py" not in cached.stdout
 
 
+async def test_unstage_unicode_file_returns_remaining_canonical_path(
+    plugin,
+    tmp_path: Path,
+):
+    """Unstaging one Unicode file must preserve the remaining staged path."""
+    _init_git_repo(tmp_path)
+    remaining = "保留文档.txt"
+    target = "取消文档.txt"
+
+    (tmp_path / remaining).write_text("keep", encoding="utf-8")
+    (tmp_path / target).write_text("remove", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "--", remaining, target],
+        cwd=tmp_path,
+        check=True,
+    )
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _unstage(
+        plugin,
+        {"files": [target]},
+        umo="u:m",
+    )
+
+    assert result["data"]["unstaged"] is True
+    assert result["data"]["files"] == [remaining]
+    assert result["data"]["staged_count"] == 1
+
+
 async def test_unstage_all(plugin, tmp_path: Path):
     """all=true → 取消所有 staged。"""
     _init_git_repo(tmp_path)

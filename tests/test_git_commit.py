@@ -87,6 +87,27 @@ async def test_commit_with_staged_changes(plugin, tmp_path: Path):
     assert "feat: add a.py" in log.stdout
 
 
+async def test_commit_unicode_file_returns_canonical_path(
+    plugin,
+    tmp_path: Path,
+):
+    """Committed files must use canonical Unicode repository paths."""
+    _init_git_repo(tmp_path)
+    filename = "提交文档.txt"
+    _stage_change(tmp_path, filename, "content")
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _commit(
+        plugin,
+        {"message": "test: commit unicode path"},
+        umo="u:m",
+    )
+
+    assert result["data"]["committed"] is True
+    assert result["data"]["files"] == [filename]
+    assert result["data"]["committed_count"] == 1
+
+
 async def test_commit_message_empty(plugin, tmp_path: Path):
     """message="" → invalid_message。"""
     _init_git_repo(tmp_path)

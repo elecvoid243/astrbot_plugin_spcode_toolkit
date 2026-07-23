@@ -118,6 +118,41 @@ async def _run_git_async(
     }
 
 
+async def _get_staged_files(git_bin: str, directory: str) -> list[str]:
+    """Return staged repository-relative paths from Git.
+
+    Git's NUL-delimited format is used so path whitespace, quotes,
+    backslashes, Unicode text, and newlines remain data rather than
+    record delimiters (v2.21 canonical-paths fix).
+
+    Args:
+        git_bin: Git executable path.
+        directory: Repository worktree directory.
+
+    Returns:
+        Staged paths in Git output order. Returns an empty list when the
+        Git query fails.
+    """
+    result = await _run_git_async(
+        [
+            git_bin,
+            "-C",
+            directory,
+            "-c",
+            "color.ui=never",
+            "diff",
+            "--cached",
+            "--name-only",
+            "-z",
+            "--diff-filter=AMRD",
+        ],
+        encoding="utf-8",
+    )
+    if not result["ok"]:
+        return []
+    return [path for path in result.get("stdout", "").split("\0") if path]
+
+
 async def _run_git_async_bytes(
     cmd_args: list[str],
     cwd: str = "",

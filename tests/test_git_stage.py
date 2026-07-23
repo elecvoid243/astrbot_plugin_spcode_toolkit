@@ -84,6 +84,20 @@ async def test_stage_specific_files(plugin, tmp_path: Path):
     assert "A  b.py" in status.stdout
 
 
+async def test_stage_unicode_file_returns_canonical_path(plugin, tmp_path: Path):
+    """Staging a Unicode file must return its real repository path."""
+    _init_git_repo(tmp_path)
+    filename = "新建文本文档.txt"
+    (tmp_path / filename).write_text("content", encoding="utf-8")
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _stage(plugin, {"files": [filename]}, umo="u:m")
+
+    assert result["data"]["staged"] is True
+    assert result["data"]["files"] == [filename]
+    assert result["data"]["staged_count"] == 1
+
+
 async def test_stage_all(plugin, tmp_path: Path):
     """all=true → 工作区所有改动(不含 untracked,但 intent-to-add 会暂存)。"""
     _init_git_repo(tmp_path)
