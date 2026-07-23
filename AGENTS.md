@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.20** · Author: elecvoid243 · 最后更新: 2026-07-17
+> **当前版本: v2.21** · Author: elecvoid243 · 最后更新: 2026-07-23
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -115,6 +115,9 @@ pytest tests/test_todo_guidance_inject.py
 pytest tests/test_todo_list.py
 pytest tests/test_todo_split_tools.py
 pytest tests/test_validate_repo_relative_file.py
+pytest tests/test_vivado_e2e.py  # PR-5 (2026-07-23)
+pytest tests/test_vivado_inject.py  # PR-5 (2026-07-23)
+pytest tests/test_vivado_status_endpoint.py  # PR-4 (2026-07-23)
 pytest tests/test_webapi_end_to_end.py
 pytest tests/test_webapi_helpers_smoke.py
 
@@ -256,7 +259,7 @@ astrbot_plugin_spcode_toolkit/
     ├── file_remove.py            # [legacy 入口] 删除业务实现
     ├── todo_list.py              # [legacy 入口] v2.6+ stub，保留兼容
     │
-    └── webapi/                   # Web API 层（33 条路由记录 / 31 个唯一路径，每端点一文件）
+    └── webapi/                   # Web API 层（38 条路由记录 / 36 个唯一路径，每端点一文件）
         ├── __init__.py           #   ROUTES 路由表 + HANDLERS 别名 + _wrap() 适配器 + register_webapi_routes()
         ├── _helpers.py           #   ReasonCode / _make_envelope / _git_endpoint_preflight /
         │                         #   _git_init_preflight / _validate_repo_relative_file /
@@ -315,7 +318,7 @@ astrbot_plugin_spcode_toolkit/
    - 顶层 `xxx.py`（如 `code_check.py`、`file_remove.py`）：legacy 业务实现入口，被 `function_tools/` 引用
    - **关键设计**：`main.py` 仅保留插件入口职责，业务逻辑全部下沉到 `tools/*` 子包
 
-3. **Web API 层** `tools/webapi/`（v3.6+ 自 main.py 拆出；当前 33 条路由记录 / 31 个唯一路径）
+3. **Web API 层** `tools/webapi/`（v3.6+ 自 main.py 拆出；当前 38 条路由记录 / 36 个唯一路径）
    - 每个端点一个文件，handler 命名固定为 `async def handle(plugin, ...) -> dict`
      （`docs_crud.py` 例外：一个文件承载 `handle_post_docs` / `handle_patch_docs` / `handle_delete_docs` 三个方法，复用同一 `/spcode/docs` 路径）
    - `__init__.py` 拥有 `ROUTES` 路由表 + `HANDLERS` 别名表 + `_wrap()` 适配器 + `register_webapi_routes()`
@@ -436,11 +439,11 @@ astrbot_plugin_spcode_toolkit/
 10. **路径安全**：任何涉及用户输入路径的代码，先调用 `_path_safety` 校验，**不要**自己实现路径判断
 11. **Web API 参数安全**：`?worktree=` 等用户控制的路径参数，必须经过 `_validate_worktree_param`（位于 `tools/_helpers.py`）的 6 步防御链：**关键不变量 - git-common-dir 不匹配 = 直接拒绝**
 12. **配置拍平**：`_conf_schema.json` 是分组结构，`main.py._flatten_config()` 会把嵌套分组拍平为顶层键（如 `codegraph.codegraph_enabled` -> `codegraph_enabled`）。新增配置项时保持此约定
-13. **版本号统一**：当前版本统一为 **v2.20**。发布时同步更新 `metadata.yaml` 的 `version` 字段
+13. **版本号统一**：当前版本统一为 **v2.21**。发布时同步更新 `metadata.yaml` 的 `version` 字段
 
 ## Web API 端点（供 Dashboard 消费）
 
-Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()` 中注册，挂载前缀 `/spcode`。当前共 **33 条路由记录**（31 个唯一路径，`/spcode/docs` 一路径复用 POST/PATCH/DELETE 三方法）：
+Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()` 中注册，挂载前缀 `/spcode`。当前共 **38 条路由记录**（36 个唯一路径，`/spcode/docs` 一路径复用 POST/PATCH/DELETE 三方法）：
 
 | 端点 | 方法 | 用途 | 关键参数 |
 |------|------|------|---------|
@@ -472,6 +475,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/git-worktree-lock` | POST | 锁定 git worktree（可选 `--reason`），main 允许但 git 自身拒绝 | body: `{path, reason?}` |
 | `/spcode/git-worktree-unlock` | POST | 解锁 git worktree，main 允许但 git 自身拒绝 | body: `{path}` |
 | `/spcode/codegraph-status` | GET | codegraph MCP 运行状态 | - |
+| `/spcode/vivado-status` | GET | vivado MCP 运行状态快照 (PR-4 2026-07-23) | `umo?` |
 | `/spcode/btw` | POST | 一次性独立 LLM 请求（顺便问问）：复用当前会话历史命中 prefix cache，不回写历史，无工具，纯文本输出 | body: `{prompt, umo?}` |
 | `/spcode/file-write` | POST | 保存任意 repo 文本文件（不限扩展名；upsert：不存在则新建并自动建父目录，响应带 `created` 标志；目标是目录时 `file_not_found`） | body: `{path, content, umo?, worktree?}` |
 | `/spcode/file-rename` | POST | 同目录重命名任意 repo 文件（不限扩展名；`new_name` 须为纯文件名；目标已存在 `file_exists`，源缺失 `file_not_found`） | body: `{path, new_name, umo?, worktree?}` |
@@ -519,6 +523,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | patch 路径 | `patch_unsafe_path` / `multi_file_patch` / `patch_file_mismatch` / `patch_binary` | patch 路径含 `..`/绝对/`.git/` / 多文件 / 文件不匹配 / binary（v2.16.0） |
 | patch apply | `patch_check_failed` / `patch_apply_failed` | `git apply --check --reverse` 失败 / `git apply --reverse` 失败（v2.16.0） |
 | worktree-mgmt | `invalid_branch` / `path_exists_nonempty` / `cannot_create_existing` / `cannot_checkout_missing` | ADD: branch 格式非法 / 目标已存在非空 / branch 已存在 / branch 不存在（v2.14.0） |
+| MCP 状态 | `vivado_not_running` / `vivado_no_session` / `vivado_session_timeout` / `vivado_generic_error` / `vivado_executable_not_found` / `vivado_mcp_start_failed` / `vivado_already_running` / `vivado_session_not_found` | vivado MCP 运行状态 / 会话相关错误 (2026-07-23, PR-4) |
 
 ### `?worktree=` 参数防御链（2026-06-18 引入）
 

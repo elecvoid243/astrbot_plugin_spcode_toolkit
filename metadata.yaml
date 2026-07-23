@@ -1,9 +1,9 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: v2.20
+version: v2.21
 description: |
-  spcode 开发工具箱 — 16 个工具，5 个命令组。
+  spcode 开发工具箱 — 16 个工具，5 个命令组，vivado-mcp FPGA 集成。
   code_check / es_search / file_remove / file_compare / inta_shell_*(5个)
   todo_create / todo_query / todo_add / todo_update / todo_delete / todo_clear
     (6 个,通过 `todo_list` 组别名一键启用)。
@@ -57,4 +57,7 @@ description: |
     回退为无上下文请求。data 返回 {reply, has_context};失败时返回
     reason in {no_provider, empty_response, llm_error, invalid_body}。
     典型场景:Dashboard 非 chat 页面(如 git commit 自动生成消息)的辅助按钮。
+  v2.21 新增 vivado-mcp 集成(2026-07-23):9 新文件,38 条 Web API 路由。
+    /vivado status|start|stop|path 4 个 chat 命令,11 个写工具受 plan 模式保护。
+    GET /spcode/vivado-status 端点,8 个 vivado 专用 ReasonCode,权限基于 L1 鉴权。
 repo: https://github.com/elecvoid243/astrbot_plugin_spcode_toolkit
