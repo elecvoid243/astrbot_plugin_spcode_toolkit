@@ -2,3 +2,4 @@ ruff
 cpplint
 send2trash
 astyle
+vivado-mcp>=0.1.0
