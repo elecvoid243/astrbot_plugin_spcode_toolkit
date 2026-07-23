@@ -572,6 +572,11 @@ class SPCodeToolkit(star.Star):
             logger.debug("[code_format] 已向 system_prompt 注入优先使用指引")
 
     @filter.on_llm_request()
+    async def _vivado_inject(self, event, req: ProviderRequest):
+        """向 system_prompt 注入 vivado-mcp 工具使用说明。"""
+        await self._vivado.on_llm_request(event, req)
+
+    @filter.on_llm_request()
     async def _auth_guard(self, event, req: ProviderRequest):
         """L1 鉴权:非管理员从工具列表中移除本插件工具。"""
         if not req.func_tool:

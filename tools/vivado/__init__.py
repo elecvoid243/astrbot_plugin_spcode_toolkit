@@ -38,8 +38,10 @@ class VivadoSubsystem:
         await shutdown_mcp(self._plugin_getter(), state=self._state)
 
     async def on_llm_request(self, event, req) -> None:
-        """注入 vivado 工具指引 (Phase 10 实现, 本 task 内 pass)。"""
-        pass
+        """注入 vivado 工具指引 — 委托给 inject.inject_vivado_guidance。"""
+        from .inject import inject_vivado_guidance
+
+        await inject_vivado_guidance(self._plugin_getter(), req)
 
     async def cmd_status(self, event):
         async for msg in self._manager.cmd_status(event):

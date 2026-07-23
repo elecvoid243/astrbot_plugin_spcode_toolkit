@@ -71,3 +71,32 @@ When you need to format a Python or C/C++/Java/JS/TS/C# source file:
 - Priority use the built-in `code_format` tool. It runs ruff format (for .py) or AStyle (for other supported extensions) internally without spawning a subprocess.
 - DO NOT call `ruff format`, `astyle`, or any other external formatter via `subprocess.run([...])` or shell.
 """
+
+# vivado-mcp 集成 (PR-5 2026-07-23)
+VIVADO_INJECTION_MARKER: str = (
+    "# === vivado-mcp integration guidance (auto-injected by spcode) ==="
+)
+
+VIVADO_WRITE_TOOLS: tuple[str, ...] = (
+    "mcp_vivado__add_files",
+    "mcp_vivado__close_project",
+    "mcp_vivado__create_project",
+    "mcp_vivado__generate_bitstream",
+    "mcp_vivado__open_project",
+    "mcp_vivado__program_device",
+    "mcp_vivado__run_implementation",
+    "mcp_vivado__run_synthesis",
+    "mcp_vivado__run_tcl",
+    "mcp_vivado__start_session",
+    "mcp_vivado__stop_session",
+)
+
+VIVADO_GUIDANCE_TEMPLATE: str = """{marker}
+[vivado-mcp 集成]
+本插件集成了 vivado-mcp (21 个工具), 通过 MCP 协议与 Python stdio 通信。
+- 默认 session_id = "{session_default}". 长任务用专用 session
+- 写工具 ({write_tool_count} 个: {write_tools_sample}) 需在 build 模式 (非 /plan) 下才能调用
+- 烧板 (program_device) 后果不可逆, 务必确认 bitstream 正确
+- start_session 会拉起 vivado -mode tcl 子进程 (~1GB RAM), 谨慎在容器 / CI 启用
+- 如需 vivado 会话状态, 用 chat /vivado status 或 GET /spcode/vivado-status
+- Vivado 路径优先级: spcode 配置 vivado_executable > 系统 VIVADO_PATH env > 自动检测""".strip()
