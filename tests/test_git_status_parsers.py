@@ -136,3 +136,83 @@ class TestParseAheadBehind:
 
     def test_with_whitespace(self) -> None:
         assert _gs._parse_ahead_behind("  2 \t 7  ") == (2, 7)
+
+
+# ──────────────────────────────────────────────────────────
+# _parse_porcelain_v1_z — NUL-delimited porcelain v1 parser
+# Author: elecvoid243
+# Date: 2026-07-23
+# Replaces _parse_porcelain_v1 for ``git status --porcelain=v1 -z``.
+# Backwards compatible with the old line-based helper (still used by
+# other tests). Both parsers share _classify_file_scope.
+# ──────────────────────────────────────────────────────────
+
+
+class TestParsePorcelainV1Z:
+    """NUL-delimited ``git status --porcelain=v1 -z`` parser tests."""
+
+    def test_empty(self) -> None:
+        assert _gs._parse_porcelain_v1_z("") == []
+
+    def test_single_unstaged(self) -> None:
+        files = _gs._parse_porcelain_v1_z(" M src/main.py\0")
+        assert files == [
+            {
+                "path": "src/main.py",
+                "x_status": " ",
+                "y_status": "M",
+                "scope": "unstaged",
+            }
+        ]
+
+    def test_single_staged(self) -> None:
+        files = _gs._parse_porcelain_v1_z("M  src/main.py\0")
+        assert files[0]["path"] == "src/main.py"
+        assert files[0]["scope"] == "staged"
+
+    def test_preserves_unicode_and_spaces(self) -> None:
+        path = "docs/中文 文档.txt"
+        files = _gs._parse_porcelain_v1_z(f"?? {path}\0")
+        assert files[0]["path"] == path
+        assert files[0]["scope"] == "untracked"
+
+    def test_preserves_tabs_and_newlines(self) -> None:
+        path = "docs/tab\tline\nname.txt"
+        files = _gs._parse_porcelain_v1_z(f"?? {path}\0")
+        assert files[0]["path"] == path
+
+    def test_intent_to_add(self) -> None:
+        files = _gs._parse_porcelain_v1_z(" A intent.py\0")
+        assert files[0]["scope"] == "intent_to_add"
+
+    def test_mixed(self) -> None:
+        raw = (
+            " M src/main.py\0M  src/lib.py\0?? new.txt\0 A intent.py\0UU conflict.txt\0"
+        )
+        files = _gs._parse_porcelain_v1_z(raw)
+        scopes = {item["path"]: item["scope"] for item in files}
+        assert scopes == {
+            "src/main.py": "unstaged",
+            "src/lib.py": "staged",
+            "new.txt": "untracked",
+            "intent.py": "intent_to_add",
+            "conflict.txt": "conflict",
+        }
+
+    def test_rename_uses_destination_and_consumes_source(self) -> None:
+        raw = "R  新名称.txt\0旧名称.txt\0?? next.txt\0"
+        files = _gs._parse_porcelain_v1_z(raw)
+        assert [item["path"] for item in files] == [
+            "新名称.txt",
+            "next.txt",
+        ]
+        assert files[0]["scope"] == "staged"
+
+    def test_copy_uses_destination_and_consumes_source(self) -> None:
+        raw = " C copied.txt\0source.txt\0"
+        files = _gs._parse_porcelain_v1_z(raw)
+        assert [item["path"] for item in files] == ["copied.txt"]
+
+    def test_skips_malformed_records(self) -> None:
+        files = _gs._parse_porcelain_v1_z("bad\0?? ok.txt\0")
+        assert [item["path"] for item in files] == ["ok.txt"]

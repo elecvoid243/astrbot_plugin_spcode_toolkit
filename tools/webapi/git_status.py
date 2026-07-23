@@ -154,6 +154,56 @@ def _parse_porcelain_v1(porcelain: str) -> list[dict]:
     return files
 
 
+def _parse_porcelain_v1_z(porcelain: str) -> list[dict]:
+    """Parse NUL-delimited ``git status --porcelain=v1 -z`` output.
+
+    Records are separated by NUL bytes. The X/Y status columns sit at the
+    start of each record, and the path starts at offset 3. Rename and copy
+    records carry the destination path in the first record and the source
+    path in the following NUL-delimited field. The API exposes only the
+    destination path.
+
+    Args:
+        porcelain: Raw decoded stdout from Git.
+
+    Returns:
+        Parsed file records in Git output order, capped at ``MAX_FILES``.
+    """
+    files: list[dict] = []
+    records = porcelain.split("\0")
+    cursor = 0
+    while cursor < len(records):
+        record = records[cursor]
+        cursor += 1
+        if not record:
+            continue
+        if len(record) < 4 or record[2] != " ":
+            continue
+        x_status = record[0]
+        y_status = record[1]
+        path = record[3:]
+        if not path:
+            continue
+        # rename and copy records consume an additional NUL-delimited field
+        # containing the source path. The destination (current) path is the
+        # first field.
+        if x_status in ("R", "C") or y_status in ("R", "C"):
+            if cursor >= len(records) or not records[cursor]:
+                continue
+            cursor += 1
+        files.append(
+            {
+                "path": path,
+                "x_status": x_status,
+                "y_status": y_status,
+                "scope": _classify_file_scope(x_status, y_status),
+            }
+        )
+        if len(files) >= MAX_FILES:
+            break
+    return files
+
+
 def _parse_ahead_behind(rev_list_output: str) -> tuple[int, int]:
     """解析 ``git rev-list --left-right --count HEAD...@{upstream}`` 输出。
 
@@ -256,8 +306,10 @@ async def handle(
 
     # ── 3. 串行跑 4 个 git 调用(同 git-diff 模式 — page cache 命中) ──
     # 命令 1: 必跑的 porcelain status
+    # Use NUL-delimited output so paths containing spaces, quotes, tabs,
+    # newlines, or non-ASCII bytes stay intact (v2.21 canonical-paths fix).
     status_result = await _run_git_async(
-        git_prefix + ["status", "--porcelain"], encoding="utf-8"
+        git_prefix + ["status", "--porcelain=v1", "-z"], encoding="utf-8"
     )
     if not status_result["ok"]:
         stderr = status_result.get("stderr", "") or status_result.get("error", "")
@@ -314,8 +366,10 @@ async def handle(
             ahead, behind = _parse_ahead_behind(rev_list_result["stdout"])
 
     # ── 4. 解析 porcelain + 汇总 ──
-    files = _parse_porcelain_v1(status_result["stdout"])
-    truncated = bool(status_result["stdout"].splitlines()) and len(files) >= MAX_FILES
+    files = _parse_porcelain_v1_z(status_result["stdout"])
+    # truncation check operates on parsed files, not on splitlines() which
+    # would mis-count paths that themselves contain newlines.
+    truncated = bool(status_result["stdout"]) and len(files) >= MAX_FILES
 
     summary = {
         "staged": 0,

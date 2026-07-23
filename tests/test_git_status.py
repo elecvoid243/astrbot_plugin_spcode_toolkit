@@ -231,6 +231,23 @@ class TestHandlerDirtyRepo:
         assert result["data"]["summary"]["staged"] == 0
         assert result["data"]["files"][0]["scope"] == "intent_to_add"
 
+    async def test_untracked_unicode_filename_is_not_git_quoted(
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
+    ) -> None:
+        """Unicode paths must be returned as repository-relative text."""
+        _init_git_repo(tmp_path)
+        filename = "新建文本文档.txt"
+        (tmp_path / filename).write_text("content", encoding="utf-8")
+        _load_project(plugin, "u:m", str(tmp_path))
+
+        result = await _call_handle(monkeypatch, plugin)
+
+        assert result["data"]["files"][0]["path"] == filename
+        assert result["data"]["files"][0]["scope"] == "untracked"
+
     async def test_mixed_changes(
         self,
         monkeypatch,
