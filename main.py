@@ -32,6 +32,7 @@ from .tools.codegraph import (
     shutdown_mcp,
 )
 from .tools.codegraph import state as _codegraph_state
+from .tools.vivado import VivadoSubsystem
 from .tools.project import ProjectManager
 from .tools.webapi import register_webapi_routes
 from .tools.webapi.git_diff import _GIT_DIFF_ENCODING
@@ -143,6 +144,7 @@ class SPCodeToolkit(star.Star):
         # 子系统管理器句柄 — 详见 tools/*/ 子包
         self.agentsmd = AgentsmdSubsystem(plugin=self, is_path_safe=_is_path_safe)
         self.codegraph = CodegraphManager(self)
+        self._vivado = VivadoSubsystem(plugin=self)
         self.project = ProjectManager(self)
         self._plan = PlanModeController(get_config=lambda: self._config)
 
@@ -190,6 +192,13 @@ class SPCodeToolkit(star.Star):
         # 异步启动 codegraph MCP(task 登记到 tools.codegraph.state)
         if _config.get("codegraph_enabled", True):
             _codegraph_state.set_task(asyncio.create_task(bootstrap_mcp(self)))
+
+        # 异步启动 vivado MCP(PR-2 2026-07-23, task 登记到 tools.vivado.state)
+        from .tools.vivado import state as _vivado_state_module
+        if _config.get("vivado_enabled", True):
+            _vivado_state_module.get_state().set_task(
+                asyncio.create_task(self._vivado.bootstrap())
+            )
 
         # git 可用性探测(失败仅记 WARNING,不阻塞插件加载)
         try:
@@ -337,6 +346,38 @@ class SPCodeToolkit(star.Star):
         async for msg in self.codegraph.set_project(event, directory):
             yield msg
 
+    @filter.command("vivado")
+    async def vivado(self, event, subcommand: str = "", arg: str = ""):
+        """/vivado <subcommand> [args...] - vivado 会话管理。
+
+        子命令:
+            status                列出活跃 sessions
+            start [name]          启动 session (默认 name=default)
+            stop <name>           停止 session
+            path                  显示当前 VIVADO_PATH
+        """
+        if not subcommand or subcommand == "status":
+            async for msg in self._vivado.cmd_status(event):
+                yield msg
+        elif subcommand == "start":
+            name = arg or "default"
+            async for msg in self._vivado.cmd_start(event, name):
+                yield msg
+        elif subcommand == "stop":
+            if not arg:
+                yield event.plain_result("❌ /vivado stop <name> - name 不能为空")
+                return
+            async for msg in self._vivado.cmd_stop(event, arg):
+                yield msg
+        elif subcommand == "path":
+            async for msg in self._vivado.cmd_path(event):
+                yield msg
+        else:
+            yield event.plain_result(
+                f"❌ 未知子命令: {subcommand}\n"
+                f"   可用: status | start [name] | stop <name> | path"
+            )
+
     @filter.command_group("agentsmd")
     def agentsmd(self):
         """AGENTS.md 管理指令组(从独立插件合并)。"""
@@ -436,6 +477,9 @@ class SPCodeToolkit(star.Star):
             finally:
                 _inta_runtime.component = None
                 _inta_runtime.default_cwd = ""
+
+        # vivado shutdown (PR-2 2026-07-23, before codegraph)
+        await self._vivado.shutdown()
 
         # 取消 codegraph MCP task + 停 MCP(详见 tools/codegraph.shutdown_mcp)
         await shutdown_mcp(self)
