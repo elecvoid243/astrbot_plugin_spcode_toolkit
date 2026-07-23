@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from tools.security.plan_mode import PlanModeController
+
+_SCHEMA_PATH = Path(__file__).parent.parent / "_conf_schema.json"
+
+
+def _load_plan_mode_blocked_defaults() -> list[str]:
+    data = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    return data["plan_mode"]["items"]["plan_mode_blocked_tools"]["default"]
 
 
 def _make_req(blocked_tools: list[str] | None = None):
@@ -308,3 +317,42 @@ def test_filter_request_reminder_appended_to_last_user_message():
     # 最后一条 user message 被追加
     assert "u2-original" in req.contexts[3]["content"]
     assert "PLAN_REMINDER_TEXT" in req.contexts[3]["content"]
+
+
+class TestVivadoBlockedInPlanMode:
+    """plan 模式默认应隐藏 11 个 vivado 写工具。"""
+
+    VIVADO_WRITE_TOOLS = [
+        "mcp_vivado__add_files",
+        "mcp_vivado__close_project",
+        "mcp_vivado__create_project",
+        "mcp_vivado__generate_bitstream",
+        "mcp_vivado__open_project",
+        "mcp_vivado__program_device",
+        "mcp_vivado__run_implementation",
+        "mcp_vivado__run_synthesis",
+        "mcp_vivado__run_tcl",
+        "mcp_vivado__start_session",
+        "mcp_vivado__stop_session",
+    ]
+
+    def test_default_blocked_includes_all_vivado_writes(self):
+        defaults = _load_plan_mode_blocked_defaults()
+        for tool in self.VIVADO_WRITE_TOOLS:
+            assert tool in defaults, f"{tool} 应在 plan_mode_blocked_tools.default 中"
+
+    def test_readonly_tools_not_blocked(self):
+        defaults = _load_plan_mode_blocked_defaults()
+        readonly = [
+            "mcp_vivado__list_sessions",
+            "mcp_vivado__get_status",
+            "mcp_vivado__get_critical_warnings",
+            "mcp_vivado__report",
+        ]
+        for tool in readonly:
+            assert tool not in defaults
+
+    def test_eleven_writes_are_grouped_at_end(self):
+        defaults = _load_plan_mode_blocked_defaults()
+        assert len(self.VIVADO_WRITE_TOOLS) == 11
+        assert defaults[-11:] == self.VIVADO_WRITE_TOOLS

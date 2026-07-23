@@ -178,7 +178,18 @@
           "astrbot_inta_shell_send",
           "astrbot_inta_shell_stop",
           "astrbot_file_write_tool",
-          "astrbot_file_edit_tool"
+          "astrbot_file_edit_tool",
+          "mcp_vivado__add_files",
+          "mcp_vivado__close_project",
+          "mcp_vivado__create_project",
+          "mcp_vivado__generate_bitstream",
+          "mcp_vivado__open_project",
+          "mcp_vivado__program_device",
+          "mcp_vivado__run_implementation",
+          "mcp_vivado__run_synthesis",
+          "mcp_vivado__run_tcl",
+          "mcp_vivado__start_session",
+          "mcp_vivado__stop_session"
         ]
       },
       "plan_mode_reminder": {
