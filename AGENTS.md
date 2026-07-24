@@ -305,7 +305,7 @@ astrbot_plugin_spcode_toolkit/
 1. **入口层** `main.py`
    - 在 AstrBot 启动时被加载
    - 注册 AstrBot **工具**（16 个本地 LLM 工具，经 `enabled_tools` 过滤）
-   - 注册 AstrBot **命令**（`/codegraph`(+别名`/cg`)、`/agentsmd`、`/project`、`/plan`、`/build`）
+   - 注册 AstrBot **命令**（`/codegraph`(+别名`/cg`)、`/agentsmd`、`/project`、`/vivado`、`/plan`、`/build`）
    - 注册多个 `@filter.on_llm_request()` 钩子：AGENTS.md 注入、codegraph 指引、todo/file_remove/code_check/code_format 指引、L1 鉴权、plan 模式过滤
    - 读取 `_conf_schema.json` 配置（`_flatten_config` 拍平嵌套分组）
    - **L1 鉴权**：整个 spcode 工具箱为管理员工具集，非管理员不可见任何工具（`_auth_guard` 钩子）

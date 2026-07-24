@@ -1,8 +1,10 @@
-"""GET /spcode/vivado-status — vivado MCP 运行状态快照 (PR-4 2026-07-23)。"""
+"""GET /spcode/vivado-status — vivado MCP 运行状态快照 (PR-4 2026-07-23)。
+
+PR 2026-07-24: 复用 tools/vivado/availability.py 的 helper (去重)。
+"""
 
 from __future__ import annotations
 
-import importlib.util
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -12,6 +14,11 @@ if TYPE_CHECKING:
 
 from .._vivado_mcp import VivadoNotFoundError, find_vivado_executable
 from ..vivado import state as _vivado_state
+from ..vivado.availability import (
+    is_vivado_enabled,
+    is_vivado_installed,
+    is_vivado_mcp_running,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +33,10 @@ async def handle(plugin: "SPCodeToolkit") -> dict:
     """
     t0 = time.time()
     data = {
-        "enabled": _get_enabled(plugin),
-        "mcp_running": _get_mcp_running(plugin),
+        "enabled": is_vivado_enabled(plugin),
+        "mcp_running": is_vivado_mcp_running(plugin),
         "vivado_path": _get_vivado_path(plugin),
-        "install_missing": _get_install_missing(),
+        "install_missing": not is_vivado_installed(),  # 反转语义保持 API 不变
         "degraded": False,
         "sessions": [],
     }
@@ -49,22 +56,6 @@ async def handle(plugin: "SPCodeToolkit") -> dict:
         "elapsed_ms": elapsed_ms,
         "data": data,
     }
-
-
-def _get_enabled(plugin: "SPCodeToolkit") -> bool:
-    return bool(plugin._config.get("vivado_enabled", True))
-
-
-def _get_install_missing() -> bool:
-    return importlib.util.find_spec("vivado_mcp") is None
-
-
-def _get_mcp_running(plugin: "SPCodeToolkit") -> bool:
-    try:
-        mgr = plugin.context.get_llm_tool_manager()
-        return "vivado" in mgr.mcp_server_runtime
-    except Exception:
-        return False
 
 
 def _get_vivado_path(plugin: "SPCodeToolkit") -> str:
