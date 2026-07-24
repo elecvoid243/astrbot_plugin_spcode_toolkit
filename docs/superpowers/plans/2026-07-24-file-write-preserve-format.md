@@ -286,10 +286,9 @@ def _encode_content(content: str, file_format: _TextFileFormat) -> bytes:
             stderr=f"content cannot be encoded as {file_format.encoding}: {exc}",
         )
 
-    if created:
-        target.parent.mkdir(parents=True, exist_ok=True)
-
     try:
+        if created:
+            target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(output_bytes)
     except OSError as exc:
         logger.exception("[file-write] failed to write %s", target)
@@ -318,7 +317,7 @@ def _encode_content(content: str, file_format: _TextFileFormat) -> bytes:
 将成功响应中的：
 
 ```python
-size=len(content_bytes)
+size=len(output_bytes)
 ```
 
 改为：

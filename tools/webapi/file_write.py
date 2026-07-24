@@ -209,7 +209,8 @@ async def handle(
                 stderr=str(exc),
             )
 
-    # WHY: 必须先在内存中完成编码,编码失败时不能截断或覆盖原文件。
+    # WHY: 编码失败属于用户输入问题(内容无法用原文件编码表示),
+    # 不是服务器内部错误,因此不打印堆栈;原文件保持不变。
     try:
         output_bytes = _encode_content(content, file_format)
     except (UnicodeEncodeError, LookupError) as exc:

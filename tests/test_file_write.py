@@ -169,6 +169,40 @@ async def test_tied_line_endings_prefer_crlf(plugin: Any, tmp_path: Path) -> Non
     assert target.read_bytes() == b"x\r\ny\r\n"
 
 
+async def test_preserves_lone_cr_line_endings(plugin: Any, tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    target = tmp_path / "mac.txt"
+    target.write_bytes(b"a\rb\rc\r")
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _fw.handle(
+        plugin,
+        umo="u:m",
+        body={"path": "mac.txt", "content": "x\ny\n"},
+    )
+
+    assert result["data"]["saved"] is True
+    assert target.read_bytes() == b"x\ry\r"
+
+
+async def test_existing_empty_file_uses_default_format(
+    plugin: Any, tmp_path: Path
+) -> None:
+    _init_git_repo(tmp_path)
+    target = tmp_path / "empty.txt"
+    target.write_bytes(b"")
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _fw.handle(
+        plugin,
+        umo="u:m",
+        body={"path": "empty.txt", "content": "hello\n"},
+    )
+
+    assert result["data"]["saved"] is True
+    assert target.read_bytes() == b"hello\n"
+
+
 async def test_unencodable_content_does_not_overwrite_original(
     plugin: Any, tmp_path: Path
 ) -> None:
