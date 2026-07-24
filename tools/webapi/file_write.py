@@ -15,14 +15,16 @@
 避免 ``write_text`` 抛 ``IsADirectoryError``。
 
 防御链与 docs POST 一致: `_git_endpoint_preflight`(5 步) +
-`_validate_repo_relative_file`(4 步);UTF-8 写入;content ≤ 2 MB。
-注意: 非 UTF-8 文件(如 GBK)保存后会被转为 UTF-8(前端编辑区有提示)。
+`_validate_repo_relative_file`(4 步);content ≤ 2 MB。
+2026-07-24 (elecvoid243): 已有文件保持字符编码、UTF-8 BOM 和主导换行格式;
+新建文件继续使用 UTF-8 无 BOM + LF。
 """
 
 from __future__ import annotations
 
 import logging
 import time as _time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,6 +34,7 @@ from ._helpers import (
     _make_envelope,
     _validate_repo_relative_file,
 )
+from .file_browser import _decode_text_bytes
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
@@ -40,6 +43,44 @@ logger = logging.getLogger(__name__)
 
 MAX_PATH_LENGTH = 512
 MAX_CONTENT_BYTES = 2 * 1024 * 1024  # 2 MB,与 docs_crud 对齐
+
+
+@dataclass(frozen=True)
+class _TextFileFormat:
+    """已有文本文件需要保持的字符编码和主导换行格式。"""
+
+    encoding: str
+    newline: str
+
+
+_DEFAULT_TEXT_FILE_FORMAT = _TextFileFormat(encoding="utf-8", newline="\n")
+
+
+def _detect_newline(text: str) -> str:
+    """返回文本主导换行;数量相同时按 CRLF、LF、CR 的顺序选择。"""
+    crlf_count = text.count("\r\n")
+    without_crlf = text.replace("\r\n", "")
+    candidates = (
+        ("\r\n", crlf_count),
+        ("\n", without_crlf.count("\n")),
+        ("\r", without_crlf.count("\r")),
+    )
+    newline, count = max(candidates, key=lambda item: item[1])
+    return newline if count else "\n"
+
+
+def _detect_text_format(raw: bytes) -> _TextFileFormat:
+    """按 file-browser 的解码链探测已有文件编码和主导换行。"""
+    text, encoding = _decode_text_bytes(raw)
+    return _TextFileFormat(encoding=encoding, newline=_detect_newline(text))
+
+
+def _encode_content(content: str, file_format: _TextFileFormat) -> bytes:
+    """把前端文本转换为目标文件原有的换行和字符编码。"""
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+    if file_format.newline != "\n":
+        normalized = normalized.replace("\n", file_format.newline)
+    return normalized.encode(file_format.encoding)
 
 
 def _elapsed(t0: float) -> int:
@@ -146,18 +187,77 @@ async def handle(
             path=path,
         )
 
-    # upsert(2026-07-17): 不存在则新建 — 前端编辑不存在的文件(如仓库
-    # 还没有 .gitignore)时提示"保存后将新建",后端必须兑现该语义。
-    # 自动创建缺失的父目录,与 docs POST 行为一致。
+    # upsert(2026-07-17): 不存在则新建;已有文件在覆盖前读取原始
+    # 字节,检测字符编码、BOM 和主导换行,避免编辑造成整文件格式变化。
     created = not target.exists()
-    if created:
-        target.parent.mkdir(parents=True, exist_ok=True)
+    file_format = _DEFAULT_TEXT_FILE_FORMAT
+    if not created:
+        try:
+            file_format = _detect_text_format(target.read_bytes())
+        except OSError as exc:
+            logger.exception("[file-write] failed to read %s", target)
+            return _make_envelope(
+                success=False,
+                reason=ReasonCode.GIT_ERROR,
+                elapsed_ms=_elapsed(t0),
+                saved=False,
+                created=False,
+                directory=directory,
+                umo=effective_umo,
+                worktree=directory,
+                path=path,
+                stderr=str(exc),
+            )
 
-    # newline="": 写盘不做 \n → os.linesep 转换(Windows 上默认会把 LF
-    # 内容写成 CRLF)。前端 textarea 已把内容规范为 \n,按字节原样落盘,
-    # 与 git 仓库主流的 LF 风格一致。
-    target.write_text(content, encoding="utf-8", newline="")
-    logger.info("[file-write] saved %s (%d bytes)", target, len(content_bytes))
+    # WHY: 必须先在内存中完成编码,编码失败时不能截断或覆盖原文件。
+    try:
+        output_bytes = _encode_content(content, file_format)
+    except (UnicodeEncodeError, LookupError) as exc:
+        logger.warning(
+            "[file-write] content cannot be encoded as %s for %s: %s",
+            file_format.encoding,
+            target,
+            exc,
+        )
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(t0),
+            saved=False,
+            created=created,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
+            path=path,
+            stderr=f"content cannot be encoded as {file_format.encoding}: {exc}",
+        )
+
+    try:
+        if created:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(output_bytes)
+    except OSError as exc:
+        logger.exception("[file-write] failed to write %s", target)
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.GIT_ERROR,
+            elapsed_ms=_elapsed(t0),
+            saved=False,
+            created=created,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
+            path=path,
+            stderr=str(exc),
+        )
+
+    logger.info(
+        "[file-write] saved %s (%d bytes, encoding=%s, newline=%r)",
+        target,
+        len(output_bytes),
+        file_format.encoding,
+        file_format.newline,
+    )
 
     return _make_envelope(
         success=True,
@@ -168,5 +268,5 @@ async def handle(
         umo=effective_umo,
         worktree=directory,
         path=path,
-        size=len(content_bytes),
+        size=len(output_bytes),
     )

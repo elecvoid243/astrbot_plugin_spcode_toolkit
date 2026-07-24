@@ -2,6 +2,7 @@
 
 2026-07-17: workspace file-browser edit feature. Mirrors the
 test_docs_crud.py pattern (real git repo in tmp_path + _make_plugin).
+2026-07-24 (elecvoid243): preserve existing encoding, BOM, and line endings.
 """
 
 from __future__ import annotations
@@ -12,10 +13,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from tests.conftest import _make_plugin
 from tools.project import state as _proj_state
 from tools.webapi import file_write as _fw
+
+from tests.conftest import _make_plugin
 
 pytestmark = pytest.mark.asyncio
 
@@ -45,7 +46,7 @@ async def test_overwrites_existing_code_file(plugin: Any, tmp_path: Path) -> Non
     """Arbitrary extensions (not just .md) are accepted."""
     _init_git_repo(tmp_path)
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "main.py").write_text("print('old')\n", encoding="utf-8")
+    (tmp_path / "src" / "main.py").write_bytes(b"print('old')\n")
     _load_project(plugin, "u:m", str(tmp_path))
 
     result = await _fw.handle(
@@ -57,10 +58,11 @@ async def test_overwrites_existing_code_file(plugin: Any, tmp_path: Path) -> Non
     assert result["data"]["saved"] is True
     assert result["data"]["created"] is False
     assert result["data"]["path"] == "src/main.py"
-    assert result["data"]["size"] == len("print('new')\n".encode("utf-8"))
+    assert result["data"]["size"] == len(b"print('new')\n")
     assert (tmp_path / "src" / "main.py").read_text(encoding="utf-8") == (
         "print('new')\n"
     )
+    assert (tmp_path / "src" / "main.py").read_bytes() == b"print('new')\n"
 
 
 async def test_backslash_path_normalized(plugin: Any, tmp_path: Path) -> None:
@@ -77,6 +79,114 @@ async def test_backslash_path_normalized(plugin: Any, tmp_path: Path) -> None:
 
     assert result["data"]["saved"] is True
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "new"
+
+
+async def test_preserves_utf8_crlf(plugin: Any, tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    target = tmp_path / "main.cpp"
+    target.write_bytes(b"// old\r\nint main() { return 0; }\r\n")
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    content = "// new\nint main() { return 1; }\n"
+    result = await _fw.handle(
+        plugin,
+        umo="u:m",
+        body={"path": "main.cpp", "content": content},
+    )
+
+    assert result["data"]["saved"] is True
+    assert target.read_bytes() == content.replace("\n", "\r\n").encode("utf-8")
+
+
+async def test_preserves_utf8_bom(plugin: Any, tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    target = tmp_path / "bom.cpp"
+    target.write_bytes(b"\xef\xbb\xbf" + "// 旧内容\n".encode())
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    content = "// 新内容\n"
+    result = await _fw.handle(
+        plugin,
+        umo="u:m",
+        body={"path": "bom.cpp", "content": content},
+    )
+
+    assert result["data"]["saved"] is True
+    assert target.read_bytes() == b"\xef\xbb\xbf" + content.encode("utf-8")
+
+
+async def test_preserves_gbk_crlf(plugin: Any, tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    target = tmp_path / "legacy.cpp"
+    target.write_bytes("// 旧内容\r\n".encode("gbk"))
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    content = "// 新内容\nint value = 1;\n"
+    result = await _fw.handle(
+        plugin,
+        umo="u:m",
+        body={"path": "legacy.cpp", "content": content},
+    )
+
+    assert result["data"]["saved"] is True
+    expected = content.replace("\n", "\r\n")
+    assert target.read_bytes().decode("gbk") == expected
+    with pytest.raises(UnicodeDecodeError):
+        target.read_bytes().decode("utf-8")
+
+
+async def test_mixed_line_endings_use_dominant_style(
+    plugin: Any, tmp_path: Path
+) -> None:
+    _init_git_repo(tmp_path)
+    target = tmp_path / "mixed.txt"
+    target.write_bytes(b"a\r\nb\r\nc\n")
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _fw.handle(
+        plugin,
+        umo="u:m",
+        body={"path": "mixed.txt", "content": "x\ny\n"},
+    )
+
+    assert result["data"]["saved"] is True
+    assert target.read_bytes() == b"x\r\ny\r\n"
+
+
+async def test_tied_line_endings_prefer_crlf(plugin: Any, tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    target = tmp_path / "tie.txt"
+    target.write_bytes(b"a\r\nb\n")
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _fw.handle(
+        plugin,
+        umo="u:m",
+        body={"path": "tie.txt", "content": "x\ny\n"},
+    )
+
+    assert result["data"]["saved"] is True
+    assert target.read_bytes() == b"x\r\ny\r\n"
+
+
+async def test_unencodable_content_does_not_overwrite_original(
+    plugin: Any, tmp_path: Path
+) -> None:
+    _init_git_repo(tmp_path)
+    target = tmp_path / "latin1.txt"
+    original = "Café\r\n".encode("latin-1")
+    target.write_bytes(original)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _fw.handle(
+        plugin,
+        umo="u:m",
+        body={"path": "latin1.txt", "content": "你好\n"},
+    )
+
+    assert result["data"]["reason"] == "invalid_param"
+    assert result["data"]["saved"] is False
+    assert target.read_bytes() == original
 
 
 # ── upsert: 不存在则创建(前端"保存后将新建"语义) ──────────────
@@ -101,6 +211,7 @@ async def test_creates_missing_file(plugin: Any, tmp_path: Path) -> None:
     assert result["data"]["saved"] is True
     assert result["data"]["created"] is True
     assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == ".codegraph/\n"
+    assert (tmp_path / ".gitignore").read_bytes() == b".codegraph/\n"
 
 
 async def test_creates_parent_directories_for_new_file(
