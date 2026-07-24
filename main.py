@@ -346,37 +346,34 @@ class SPCodeToolkit(star.Star):
         async for msg in self.codegraph.set_project(event, directory):
             yield msg
 
-    @filter.command("vivado")
-    async def vivado(self, event, subcommand: str = "", arg: str = ""):
-        """/vivado <subcommand> [args...] - vivado 会话管理。
+    @filter.command_group("vivado")
+    def vivado(self):
+        """vivado 会话管理指令组。"""
+        pass
 
-        子命令:
-            status                列出活跃 sessions
-            start [name]          启动 session (默认 name=default)
-            stop <name>           停止 session
-            path                  显示当前 VIVADO_PATH
-        """
-        if not subcommand or subcommand == "status":
-            async for msg in self._vivado.cmd_status(event):
-                yield msg
-        elif subcommand == "start":
-            name = arg or "default"
-            async for msg in self._vivado.cmd_start(event, name):
-                yield msg
-        elif subcommand == "stop":
-            if not arg:
-                yield event.plain_result("❌ /vivado stop <name> - name 不能为空")
-                return
-            async for msg in self._vivado.cmd_stop(event, arg):
-                yield msg
-        elif subcommand == "path":
-            async for msg in self._vivado.cmd_path(event):
-                yield msg
-        else:
-            yield event.plain_result(
-                f"❌ 未知子命令: {subcommand}\n"
-                f"   可用: status | start [name] | stop <name> | path"
-            )
+    @vivado.command("status")
+    async def vivado_status(self, event):
+        """/vivado status - 列出活跃 vivado sessions。"""
+        async for msg in self._vivado.cmd_status(event):
+            yield msg
+
+    @vivado.command("start")
+    async def vivado_start(self, event, name: str = "default"):
+        """/vivado start [name] - 引导启动 vivado session（默认 name=default）。"""
+        async for msg in self._vivado.cmd_start(event, name):
+            yield msg
+
+    @vivado.command("stop")
+    async def vivado_stop(self, event, name: str):
+        """/vivado stop <name> - 引导停止指定 vivado session。"""
+        async for msg in self._vivado.cmd_stop(event, name):
+            yield msg
+
+    @vivado.command("path")
+    async def vivado_path(self, event):
+        """/vivado path - 显示当前 VIVADO_PATH。"""
+        async for msg in self._vivado.cmd_path(event):
+            yield msg
 
     @filter.command_group("agentsmd")
     def agentsmd(self):
