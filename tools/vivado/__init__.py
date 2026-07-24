@@ -10,6 +10,12 @@ import logging
 from typing import TYPE_CHECKING, Callable
 
 from . import state as _state_module
+from .availability import (
+    check_vivado_available,
+    is_vivado_enabled,
+    is_vivado_installed,
+    is_vivado_mcp_running,
+)
 from .bootstrap import bootstrap_mcp, shutdown_mcp
 from .manager import VivadoManager
 from .state import VivadoState
@@ -66,4 +72,9 @@ __all__ = [
     "VivadoState",
     "bootstrap_mcp",
     "shutdown_mcp",
+    # 可用性门控 (PR 2026-07-24)
+    "is_vivado_enabled",
+    "is_vivado_installed",
+    "is_vivado_mcp_running",
+    "check_vivado_available",
 ]
