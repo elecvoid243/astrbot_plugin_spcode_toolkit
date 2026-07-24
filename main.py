@@ -26,6 +26,7 @@ from astrbot.api.star import StarTools, register  # noqa: F401  (re-export for t
 # 业务子系统 import — 详见 docs/superpowers/specs/2026-06-23-main-py-refactor-design.md
 # main.py 在 PR-0~PR-7 拆分后只保留插件入口职责; 业务逻辑全部下沉到 tools/* 子包。
 from .tools._config_filter import ALL_TOOL_NAMES, filter_enabled_tools
+from .tools._external_tools import merge_external_tool_defaults
 from .tools.codegraph import (
     CodegraphManager,
     bootstrap_mcp,
@@ -78,12 +79,12 @@ from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
 
 
 _DEFAULT_CONFIG = {
-    "es_path": "",  # Everything es.exe 路径（Windows）；Linux/macOS 留空
+    "es_path": "",  # Everything es.exe 路径（空值由 AstrBot 内置 external_tools 默认路径填充）
     "git_path": "",  # git 可执行文件绝对路径;留空走系统 PATH
-    "cppcheck_path": "",  # cppcheck.exe 路径（Windows/Linux/macOS）；C/C++ 检查时优先于 cpplint
+    "cppcheck_path": "",  # cppcheck.exe 路径（空值由 AstrBot 内置 external_tools 默认路径填充）
     "cppcheck_shortcircuit": "error",  # cppcheck 短路策略：error/warning/never（仅 auto 模式生效）
     "codegraph_enabled": True,  # 是否启用 codegraph MCP 集成
-    "codegraph_install_dir": "",  # codegraph 安装目录(含 node.exe); 留空则不启动 MCP
+    "codegraph_install_dir": "",  # codegraph 安装目录（空值由 AstrBot 内置 external_tools 默认路径填充）
     "codegraph_project": "",  # codegraph daemon 默认操作的工程根目录
     "agentsmd_enabled": True,  # 是否启用 AGENTS.md 管理
     "inta_shell_max_sessions": 10,  # inta_shell(v2.5) 最大并发会话数
@@ -115,7 +116,7 @@ class SPCodeToolkit(star.Star):
         self.context = context
 
         # 合并配置(拍平嵌套分组,详见 _flatten_config)
-        _config = dict(_DEFAULT_CONFIG)
+        _config = merge_external_tool_defaults(_DEFAULT_CONFIG)
         if config:
             config = self._flatten_config(config)
             for k, v in config.items():
@@ -195,6 +196,7 @@ class SPCodeToolkit(star.Star):
 
         # 异步启动 vivado MCP(PR-2 2026-07-23, task 登记到 tools.vivado.state)
         from .tools.vivado import state as _vivado_state_module
+
         if _config.get("vivado_enabled", True):
             _vivado_state_module.get_state().set_task(
                 asyncio.create_task(self._vivado.bootstrap())

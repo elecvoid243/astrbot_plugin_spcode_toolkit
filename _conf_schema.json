@@ -34,7 +34,7 @@
     "items": {
       "es_path": {
         "description": "Everything CLI (es.exe) 路径",
-        "hint": "留空时自动从 PATH 查找",
+        "hint": "留空时优先使用 AstrBot 根目录/external_tools/Everything/es.exe；不存在时再从 PATH 查找。",
         "type": "string",
         "default": ""
       }
@@ -47,7 +47,7 @@
     "items": {
       "cppcheck_path": {
         "description": "cppcheck.exe 路径",
-        "hint": "C/C++ 文件优先调 cppcheck。留空自动查找。",
+        "hint": "C/C++ 文件优先调 cppcheck。留空时优先使用 AstrBot 根目录/external_tools/cppcheck/cppcheck.exe；不存在时自动查找。",
         "type": "string",
         "default": ""
       },
@@ -113,7 +113,7 @@
       },
       "codegraph_install_dir": {
         "description": "安装目录(含 node.exe)",
-        "hint": "Windows: npm 全局包根目录(如 F:\\github\\tools\\codegraph-win32-x64),须含 node.exe + lib\\dist\\bin\\codegraph.js。留空则不启动 MCP。",
+        "hint": "留空时优先使用 AstrBot 根目录/external_tools/codegraph-win32-x64；该目录下需包含node.exe，以及lib/dist/bin/codegraph.js",
         "type": "string",
         "default": ""
       },
