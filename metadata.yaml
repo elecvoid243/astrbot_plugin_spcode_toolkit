@@ -3,61 +3,74 @@ author: elecvoid243
 display_name: spcode 工具箱
 version: v2.21
 description: |
-  spcode 开发工具箱 — 16 个工具，5 个命令组，vivado-mcp FPGA 集成。
-  code_check / es_search / file_remove / file_compare / inta_shell_*(5个)
-  todo_create / todo_query / todo_add / todo_update / todo_delete / todo_clear
-    (6 个,通过 `todo_list` 组别名一键启用)。
-  v2.0 自动集成 codegraph 官方 MCP server。
-  v2.4 合并 AGENTS.md 管理(/agentsmd)。
-  v2.5 合并交互式 Shell 工具(/inta_shell start|send|read|stop|list)。
-  v2.6 重构 todo_list 单工具为 4 工具 API。
-  v2.6.1 配置页:把 todo_list 4 个子工具收纳为单一 `todo_list` 组别名,与 inta_shell 同等 UX;
-    旧 config 中独立勾选的 todo_* 工具名继续生效,无需手动改。
-  v2.7 新增 /project load|unload 命令组,一键组合 agentsmd+codegraph;
-    加载后自动注入 codegraph 优先使用指引,引导 LLM 走语义搜索而非 astrbot_file_grep_tool。
-  v2.8 新增 /plan 和 /build 命令(opencode plan/build 模式借鉴);
-    /plan 激活时按 plan_mode.blocked_tools 配置从 LLM 工具列表过滤写工具,
-    并在第一轮 LLM 调用时向 user message 注入 plan 模式 reminder(prefix cache 友好);
-    /build 退出 plan 模式,默认状态下完全不修改 LLM 请求,与 AstrBot 默认行为一致。
-  v2.9 todo_create 新增 from_path 参数:从 .md 文件领养(adopt)todo 列表;
-    与 items 参数互斥,需绝对路径,1MB 上限,保留 status/notes 但重排 ID 从 1、
-    改写 sender_key 为当前用户、updated_at = now()。
-  v2.10 新增 GET /spcode/file-browser 端点 — 供 Dashboard 文件浏览器使用。
-    三态判别: type=null 真错误 / type!=null && reason!=null 部分结果 / 否则成功。
-    7 个 reason: path_not_found / permission_denied / special_file(真错误);
-    file_too_large / binary_file(file 部分结果);
-    directory_listing_truncated(directory 部分结果)。
-    5 MiB / 1000 项硬上限;UTF-8 文本直读、二进制嗅探前 8 KB 含 NUL、隐藏 . 项过滤、
-    不跟随 symlink 用 lstat。详见 docs/api/web-api.md §3.5 与 docs/superpowers/specs/2026-06-20。
-  部分实现基于Irmia DevKit插件。
-  v2.11 todo_list 落盘粒度从 sender_key (platform:sender_id) 改为 umo (unified_msg_origin):
-    每个会话通道(私聊/群聊/不同群)各自独立的 todo list,切断跨私聊/群聊的"会话接力"。
-    frontmatter 由 sender_key/platform/sender_id 三字段简化为 umo 单字段;
-    文件名 umo 中的 `:` 替换为 `_`;旧文件(无 umo 字段)按 legacy:<sender_key> 优雅退化,不做主动迁移。
-  v2.12 拆分 todo_modify 为 todo_add / todo_update / todo_delete 三个独立工具。
-    动机:todo_modify 的 mode='add'/'update'/'delete' 三合一设计导致 LLM 误传 mode 字段
-    的失败率约 10%(漏传、拼错、用单数 'add' 写成 'append' 等);拆成 3 个独立工具后,
-    每个工具的 schema 极简、参数互不重叠,LLM 不再需要选 mode,误调用率显著下降。
-    notes 三态语义保持不变(仅 todo_update 适用):未传=保留旧值 / ""=清空 / "xxx"=覆盖。
-    迁移:todo_modify 已删除;老 config 中显式列出的 todo_modify 会被 filter_enabled_tools()
-    报告为 unknown 提示升级。TodoStore.modify() 后端保留(供 tests 验证),3 个新工具直接调
-    s.add() / s.update() / s.delete()。
-  v2.13 新增 GET /spcode/git-status 端点 — 供 Dashboard "工作区" 标签页使用。
-    仿照 /spcode/git-log 与 /spcode/git-diff 的实现模式:5 步 preflight
-    (feature flag / umo / worktree / 目录存在 / git repo 探测) + 1.5s TTL
-    in-memory ETag 缓存。返回当前 branch、upstream (ahead/behind)、所有改动
-    文件 (X/Y 列 + scope 分类:staged / unstaged / intent_to_add / untracked /
-    conflict) 与 summary 计数;空仓库、detached HEAD、无 upstream 等边界均
-    安全降级为 null / 0。前端契约见 docs/webapi-git-workflow-api.md §5.1
-    (含 scope 分类规则表 + 边界场景表 + 与 git-diff 的关系)。
-  v2.20 新增 POST /spcode/btw 端点(2026-07-17) — 一次性独立 LLM 请求
-    ("顺便问问")。复用当前会话历史 + persona system_prompt 命中 prefix cache,
-    但不写入历史(绝不调 update_conversation),无工具(func_tool=None),
-    仅返回 completion_text 纯文本输出。umo 可选:不传或会话不存在时
-    回退为无上下文请求。data 返回 {reply, has_context};失败时返回
-    reason in {no_provider, empty_response, llm_error, invalid_body}。
-    典型场景:Dashboard 非 chat 页面(如 git commit 自动生成消息)的辅助按钮。
-  v2.21 新增 vivado-mcp 集成(2026-07-23):9 新文件,38 条 Web API 路由。
-    /vivado status|start|stop|path 4 个 chat 命令,11 个写工具受 plan 模式保护。
-    GET /spcode/vivado-status 端点,8 个 vivado 专用 ReasonCode,权限基于 L1 鉴权。
+  ## 主要能力
+
+  spcode 工具箱 — 为 LLM Agent 提供面向 C/C++/Python 开发的实用工具集，并配套 38 条
+  `/spcode/*` Web API 供 Dashboard 实时消费。
+
+  - **16 个本地 LLM 工具**：code_check / code_format / es_search / file_remove / file_compare /
+    todo_create / todo_query / todo_add / todo_update / todo_delete / todo_clear /
+    inta_shell_start / inta_shell_send / inta_shell_read / inta_shell_stop / inta_shell_list
+  - **codegraph MCP server**（自动启动）：注入 8 个语义搜索工具
+    （codegraph_search / callers / callees / impact / node / explore / status / files）
+  - **vivado-mcp FPGA 集成** (v2.21+)：注入 21 个 `mcp_vivado__*` 工具
+    含 11 个写工具（受 plan 模式保护，需 `/build` 切换后才能调用）
+  - **6 个 chat 命令入口**：4 个命令组 `/codegraph`（别名 `/cg`）、`/agentsmd`、`/project`、`/vivado`
+    + 2 个独立命令 `/plan`、`/build`（plan/build 模式切换）
+  - **38 条 Web API 路由**（`/spcode/*`）：git 工作区状态 / git 历史 / 文件浏览器 /
+    git worktree 管理 / docs CRUD / btw 一次性 LLM 请求 / vivado-status 快照
+
+  ## 端点选录
+
+  | 类别 | 代表端点 |
+  |------|---------|
+  | 项目状态 | `/spcode/project-status`、`/spcode/plan-mode` |
+  | Git 工作区 | `/spcode/git-status` / `git-diff` / `git-log` / `git-stats` / `git-show` |
+  | Git 工作流 | `/spcode/git-stage` / `git-unstage` / `git-commit` / `git-init` / `git-branch-*` / `git-revert` |
+  | Git Worktree | `/spcode/git-worktree-add` / `remove` / `lock` / `unlock` |
+  | 文件 | `/spcode/file-browser` / `file-binary` / `file-write` / `file-rename` / `file-remove` / `file-search` |
+  | docs 管理 | `/spcode/docs`（POST/PATCH/DELETE） |
+  | MCP 状态 | `/spcode/codegraph-status`、`/spcode/vivado-status` |
+  | 辅助 | `/spcode/btw`（一次性 LLM 请求，命中 prefix cache） |
+
+  ## 安全
+
+  L1 管理员鉴权：整个 spcode 工具箱是**管理员工具集**。非管理员不可见任何工具
+  （含 21 个 `mcp_vivado__*` 写工具与 8 个 `codegraph_*` 读工具）。管理员授权可通过插件配置
+  `allowed_ids`（逗号分隔用户 ID）扩展，与 AstrBot 全局管理员并集生效。
+
+  plan/build 模式：默认状态下 LLM 工具列表与 AstrBot 默认行为一致。
+  `/plan` 激活后按 `plan_mode_blocked_tools` 配置过滤写工具，仅允许只读工具调研；
+  `/build` 恢复全部工具可用。
+
+  ## 前置依赖
+
+  | 能力 | 依赖 | 缺失时行为 |
+  |------|------|-----------|
+  | code_check / code_format | ruff / cppcheck / cpplint / AStyle | 返回安装提示 |
+  | es_search (Windows) | Everything CLI (es.exe) | 返回安装提示 |
+  | es_search (Linux/macOS) | locate / fd / Python 兜底 | 自动降级到 `os.walk` |
+  | codegraph_* | `@colbymchenry/codegraph` (npm) + 配置 `codegraph_install_dir` | 8 个工具均不出现 |
+  | vivado-mcp (v2.21+) | `pip install vivado-mcp` + Vivado IDE 安装 | 21 个工具均不出现；`/vivado` 与 `/spcode/vivado-status` 提示缺失 |
+
+  ## 版本历程（最近 8 个）
+
+  - **v2.21** (2026-07-25) vivado-mcp 集成（9 个新文件、38 Web API 路由、6 状态徽章）
+  - **v2.20** (2026-07-17) `POST /spcode/btw` 一次性独立 LLM 请求
+  - **v2.18.0** (2026-07-16) `GET /spcode/git-repo-check`（独立 preflight）
+  - **v2.17.1** (2026-07-16) `git-init` 支持 `force=true` 在非空目录 init
+  - **v2.17.0** (2026-07-15) 8 个 git 端点：init / branches / branch-create / branch-delete / branch-switch / revert
+  - **v2.16.0** (2026-07-06) `POST /spcode/file-discard-hunk`（按 hunk 丢弃工作区改动）
+  - **v2.15.0** (2026-07-02) `POST /spcode/file-search` + `file-name-search`
+  - **v2.14** (2026-06-25) `code_format` 工具（写入；plan 模式默认被过滤）
+
+  详细变更日志见 `README.md` / `AGENTS.md`。
+
+  ## 文档
+
+  - `README.md` — 完整功能说明 + 工具详解 + 端点列表
+  - `AGENTS.md` — 给 coding agent 看的项目规范（架构、命令、约束）
+  - `docs/superpowers/specs/` — 各端点的设计 spec
+  - `docs/api/` — 前端 Dashboard 消费参考
+
 repo: https://github.com/elecvoid243/astrbot_plugin_spcode_toolkit

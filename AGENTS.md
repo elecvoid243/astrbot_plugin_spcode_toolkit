@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.21** · Author: elecvoid243 · 最后更新: 2026-07-23
+> **当前版本: v2.21** · Author: elecvoid243 · 最后更新: 2026-07-25
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -212,6 +212,14 @@ astrbot_plugin_spcode_toolkit/
     │   ├── manager.py            #   /codegraph init/uninit/set handler
     │   └── state.py              #   模块级状态（task 引用 + per-dir lock）
     │
+    ├── vivado/                   # vivado-mcp FPGA 集成分系统 (v2.21, PR-1~PR-4 2026-07-23/24)
+    │   ├── __init__.py           #   VivadoSubsystem facade + 可用性门控 (is_vivado_enabled 等)
+    │   ├── availability.py       #   is_vivado_enabled/installed/mcp_running + check_vivado_available
+    │   ├── bootstrap.py          #   bootstrap_mcp / shutdown_mcp (std::python -m vivado_mcp)
+    │   ├── inject.py             #   inject_vivado_guidance (on_llm_request 指引)
+    │   ├── manager.py            #   /vivado status|start|stop|path handler
+    │   └── state.py             #   VivadoState 模块级单例 + sessions 缓存 (5s TTL)
+    │
     ├── project/                  # /project load/unload/status 子系统
     │   ├── __init__.py           #   ProjectManager facade
     │   ├── manager.py            #   命令分发 + 状态查询 (get_loaded_project)
@@ -297,6 +305,9 @@ astrbot_plugin_spcode_toolkit/
         ├── file_write.py         #   POST   /spcode/file-write          (2026-07-17, 通用文本保存 upsert)
         ├── file_rename.py        #   POST   /spcode/file-rename         (2026-07-18, 同目录重命名)
         ├── file_remove.py        #   POST   /spcode/file-remove         (2026-07-18, 删除文件)
+        ├── file_binary.py        #   GET    /spcode/file-binary         (2026-07-22, 原始字节流供 BinaryPreview)
+        ├── git_stats.py          #   GET    /spcode/git-stats           (v2.21, 2026-07-18, 变更统计面板)
+        ├── vivado_status.py      #   GET    /spcode/vivado-status       (v2.21, PR-4 2026-07-23, vivado MCP 状态)
         └── docs_crud.py          #   POST/PATCH/DELETE /spcode/docs     (spec B, 三方法复用一路径)
 ```
 
@@ -313,7 +324,7 @@ astrbot_plugin_spcode_toolkit/
 2. **工具层** `tools/`（PR-0~PR-7 拆分自 main.py，子包化）
    - `function_tools/` - 16 个 LLM FunctionTool 类，一文件一工具，`ALL_TOOL_CLASSES` 集中注册表；`main.py` 迭代此列表传给 `context.add_llm_tools(...)`
    - `inta_shell/` - 交互式 Shell 复合工具集（component + tools + session_models + paths + runtime 模块级单例）
-   - `agentsmd/` / `codegraph/` / `project/` / `security/` / `llm_inject/` - 各业务子系统，对外暴露 facade 类
+   - `agentsmd/` / `codegraph/` / `vivado/` / `project/` / `security/` / `llm_inject/` - 各业务子系统，对外暴露 facade 类
    - 下划线前缀模块（`_xxx.py`）：内部模块，不直接注册为 AstrBot 工具，供其他模块复用
    - 顶层 `xxx.py`（如 `code_check.py`、`file_remove.py`）：legacy 业务实现入口，被 `function_tools/` 引用
    - **关键设计**：`main.py` 仅保留插件入口职责，业务逻辑全部下沉到 `tools/*` 子包
@@ -454,6 +465,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/git-status` | GET | 工作区状态（branch/upstream/staged/unstaged/untracked，ETag/304） | `umo?`, `worktree?` |
 | `/spcode/git-log` | GET | git 历史（8 字段标准粒度，ETag/304） | `umo?`, `worktree?`, `n?`, `ref?`, `path?`, `author?`, `since?`, `until?` |
 | `/spcode/git-show` | GET | 某 ref 修改的文件列表（name-status+numstat），可选单文件 patch | `umo?`, `worktree?`, `ref`(默认 `HEAD`), `max_files?`(≤2000), `path?` |
+| `/spcode/git-stats` | GET | 仓库变更统计（按日聚合 + 热点文件 topN + totals + 范围），供 Dashboard stats 面板 | `umo?`, `worktree?`, `ref?`(默认 `HEAD`), `max_commits?`(≤2000), `top_files?`(≤100), `since?`, `until?` |
 | `/spcode/git-file` | GET | 给定 ref 下某文件的完整内容（blob，≤1MB，no-store） | `umo?`, `worktree?`, `ref`(默认 `HEAD`), `path` |
 | `/spcode/git-branches` | GET | 列出 branch（local+remote）+current+default（ETag/304） | `umo?`, `worktree?` |
 | `/spcode/git-branch-create` | POST | 从 HEAD/指定 start_point 创建 branch | body: `{name, start_point?, force?}` |
@@ -466,6 +478,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/git-unstage` | POST | git reset HEAD（指定文件 or all，互斥） | body: `{files:[…]}` \| `{all:true}` |
 | `/spcode/git-commit` | POST | git commit（严格最小，仅 message） | body: `{message:"…"}` |
 | `/spcode/file-browser` | GET | 读取文件内容 / 列出单层目录 | `umo?`, `path`, `worktree?`, `if_none_match?` |
+| `/spcode/file-binary` | GET | 读取白名单文件（PDF/DOCX/XLSX/CSV/MD）原始字节流，支持 `?ref=` 历史版本，no-store（供 Dashboard BinaryPreview） | `umo?`, `path`, `ref?`(默认 `HEAD`), `worktree?` |
 | `/spcode/file-search` | POST | 项目内按内容搜索（python_ripgrep） | body: `{pattern, case_sensitive?, regex?, max_results?, path_filter?, glob_filter?, umo?, worktree?}` |
 | `/spcode/file-name-search` | POST | 项目内按文件名（basename）匹配 | body: `{pattern, case_sensitive?, regex?, max_results?, path_filter?, glob_filter?, umo?, worktree?}` |
 | `/spcode/file-restore` | POST | 恢复文件相对 index/HEAD 的改动（scope 自动检测） | body: `{file, umo?, worktree?}` |
@@ -612,4 +625,4 @@ pytest tests/ --cov=tools                    # 覆盖率
 
 ---
 
-> Author: elecvoid243 · 本文档同步至 v2.20 (2026-07-17)
+> Author: elecvoid243 · 本文档同步至 v2.21 (2026-07-25)

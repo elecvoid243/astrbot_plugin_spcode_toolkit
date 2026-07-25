@@ -1,6 +1,6 @@
 # spcode 工具箱
 
-> **当前版本: v2.20** · 作者: elecvoid243
+> **当前版本: v2.21** · 作者: elecvoid243
 
 AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用工具，并附带一套供 Dashboard 消费的 Web API。
 
@@ -55,9 +55,10 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 **Web API**: `GET /spcode/vivado-status` — 完整快照 (enabled / mcp_running / vivado_path / sessions)
 
 **注意**:
-- 10 个写工具（含烧板 `program_device`）在 plan 模式下被隐藏
+- 11 个写工具（含烧板 `program_device`）在 plan 模式下被隐藏
 - 管理员鉴权: 非管理员看不到 `mcp_vivado__*` 工具（含只读）
 - 烧板操作后果不可逆，务必在 plan 模式调研后切到 build 模式执行
+- `GET /spcode/vivado-status` 返回 `enabled / mcp_running / vivado_path / install_missing / degraded / sessions` 6 字段；前端 Dashboard 据此把徽章渲染为 6 个状态（`ok` 绿 / `degraded` 黄 / `not_installed` / `toolchain_missing` 红 / `not_running` / `disabled` 中性空心）
 
 ## 命令清单
 
@@ -450,7 +451,7 @@ AGENTS.md 是 OpenCode 提出的项目级 LLM 指令文件，功能类似 Cursor
 
 `v3.6+` 起插件向 AstrBot 注册 Dashboard 消费的 HTTP 端点（挂载前缀 `/spcode`），供前端 Dashboard 实时拉取项目状态、文件树、git 信息。
 
-Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()` 中注册，挂载前缀 `/spcode`。当前共 **32 条路由记录**（30 个唯一路径，`/spcode/docs` 一路径复用 POST/PATCH/DELETE 三方法）：
+Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()` 中注册，挂载前缀 `/spcode`。当前共 **38 条路由记录**（36 个唯一路径，`/spcode/docs` 一路径复用 POST/PATCH/DELETE 三方法）：
 
 | 端点 | 方法 | 用途 | 关键参数 |
 |------|------|------|---------|
@@ -461,6 +462,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/git-status` | GET | 工作区状态（branch/upstream/staged/unstaged/untracked，ETag/304） | `umo?`, `worktree?` |
 | `/spcode/git-log` | GET | git 历史（8 字段标准粒度，ETag/304） | `umo?`, `worktree?`, `n?`, `ref?`, `path?`, `author?`, `since?`, `until?` |
 | `/spcode/git-show` | GET | 某 ref 修改的文件列表（name-status+numstat），可选单文件 patch | `umo?`, `worktree?`, `ref`(默认 `HEAD`), `max_files?`(≤2000), `path?` |
+| `/spcode/git-stats` | GET | 仓库变更统计（按日聚合 + 热点文件 topN + totals + 范围），供 Dashboard stats 面板 | `umo?`, `worktree?`, `ref?`(默认 `HEAD`), `max_commits?`(≤2000), `top_files?`(≤100), `since?`, `until?` |
 | `/spcode/git-file` | GET | 给定 ref 下某文件的完整内容（blob，≤1MB，no-store） | `umo?`, `worktree?`, `ref`(默认 `HEAD`), `path` |
 | `/spcode/git-branches` | GET | 列出 branch（local+remote）+current+default（ETag/304） | `umo?`, `worktree?` |
 | `/spcode/git-branch-create` | POST | 从 HEAD/指定 start_point 创建 branch | body: `{name, start_point?, force?}` |
@@ -473,15 +475,20 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/git-unstage` | POST | git reset HEAD（指定文件 or all，互斥） | body: `{files:[…]}` \| `{all:true}` |
 | `/spcode/git-commit` | POST | git commit（严格最小，仅 message） | body: `{message:"…"}` |
 | `/spcode/file-browser` | GET | 读取文件内容 / 列出单层目录 | `umo?`, `path`, `worktree?`, `if_none_match?` |
+| `/spcode/file-binary` | GET | 读取白名单文件（PDF/DOCX/XLSX/CSV/MD）原始字节流，支持 `?ref=` 历史版本，no-store（供 Dashboard BinaryPreview） | `umo?`, `path`, `ref?`(默认 `HEAD`), `worktree?` |
 | `/spcode/file-search` | POST | 项目内按内容搜索（python_ripgrep） | body: `{pattern, case_sensitive?, regex?, max_results?, path_filter?, glob_filter?, umo?, worktree?}` |
 | `/spcode/file-name-search` | POST | 项目内按文件名（basename）匹配 | body: `{pattern, case_sensitive?, regex?, max_results?, path_filter?, glob_filter?, umo?, worktree?}` |
 | `/spcode/file-restore` | POST | 恢复文件相对 index/HEAD 的改动（scope 自动检测） | body: `{file, umo?, worktree?}` |
 | `/spcode/file-discard-hunk` | POST | 按 hunk 丢弃工作区改动（unified diff 文本入参，`git apply --reverse`） | body: `{file, patch_text, umo?, worktree?}` |
+| `/spcode/file-write` | POST | 保存任意 repo 文本文件（不限扩展名；upsert：不存在则新建并自动建父目录，响应带 `created` 标志） | body: `{path, content, umo?, worktree?}` |
+| `/spcode/file-rename` | POST | 同目录重命名任意 repo 文件（不限扩展名；`new_name` 须为纯文件名；目标已存在 `file_exists`，源缺失 `file_not_found`） | body: `{path, new_name, umo?, worktree?}` |
+| `/spcode/file-remove` | POST | 删除任意 repo 文件（不限扩展名；仅文件，目录拒绝；源缺失 `file_not_found`） | body: `{path, umo?, worktree?}` |
 | `/spcode/git-worktree-add` | POST | 新建 git worktree（CLI 旗标平铺） | body: `{path, branch?, create?, force?, detach?, base?}` |
 | `/spcode/git-worktree-remove` | POST | 删除 git worktree（硬禁 main，locked 拒，`force=true` 跳过 dirty） | body: `{path, force?}` |
 | `/spcode/git-worktree-lock` | POST | 锁定 git worktree（可选 `--reason`），main 允许但 git 自身拒绝 | body: `{path, reason?}` |
 | `/spcode/git-worktree-unlock` | POST | 解锁 git worktree，main 允许但 git 自身拒绝 | body: `{path}` |
 | `/spcode/codegraph-status` | GET | codegraph MCP 运行状态 | - |
+| `/spcode/vivado-status` | GET | vivado MCP 运行状态快照（enabled / mcp_running / vivado_path / sessions / degraded） | `umo?` |
 | `/spcode/btw` | POST | 一次性独立 LLM 请求（顺便问问）：复用当前会话历史命中 prefix cache，不回写历史，无工具，纯文本输出 | body: `{prompt, umo?}` |
 | `/spcode/docs` | POST | 创建 / 覆盖 docs 文件（upsert 到工作区） | body: `{umo?, worktree?, path, content}` |
 | `/spcode/docs` | PATCH | 重命名 docs 文件（纯文件系统 mv） | body: `{umo?, worktree?, path, new_path}` |
@@ -601,7 +608,7 @@ astrbot_plugin_spcode_toolkit/
     ├── file_compare.py           # [legacy 入口] 文件差异业务实现
     ├── file_remove.py            # [legacy 入口] 删除业务实现
     ├── todo_list.py              # [legacy 入口] v2.6+ stub，保留兼容
-    └── webapi/                   # Web API 层（31 条路由，每端点一文件）
+    └── webapi/                   # Web API 层（38 条路由，每端点一文件）
         ├── __init__.py           #   ROUTES 路由表 + HANDLERS 别名 + _wrap() 适配器 + register_webapi_routes()
         ├── _helpers.py           #   ReasonCode / _make_envelope / _git_endpoint_preflight / _validate_repo_relative_file / _run_git_async / _JSONResponseCompat / _compute_git_etag / _compute_porcelain_diffs / _git_init_preflight
         ├── project_status.py     #   GET    /spcode/project-status
@@ -637,16 +644,16 @@ astrbot_plugin_spcode_toolkit/
 
 ### 架构分层
 
-1. **入口层** `main.py`：在 AstrBot 启动时被加载；注册 AstrBot 工具（供 LLM 调用）+ 命令（`/codegraph`、`/agentsmd`、`/project`、`/plan`、`/build`）+ 多个 `@filter.on_llm_request()` 钩子（AGENTS.md 注入、codegraph 指引、todo/file_remove/code_check/code_format 指引、L1 鉴权、plan 模式过滤）；读取 `_conf_schema.json` 配置；**L1 鉴权**：整个 spcode 工具箱为管理员工具集，非管理员不可见任何工具
+1. **入口层** `main.py`：在 AstrBot 启动时被加载；注册 AstrBot 工具（供 LLM 调用）+ 命令（`/codegraph`(+别名 `/cg`)、`/agentsmd`、`/project`、`/vivado`、`/plan`、`/build`）+ 多个 `@filter.on_llm_request()` 钩子（AGENTS.md 注入、codegraph 指引、todo/file_remove/code_check/code_format 指引、vivado 指引、L1 鉴权、plan 模式过滤）；读取 `_conf_schema.json` 配置；**L1 鉴权**：整个 spcode 工具箱为管理员工具集，非管理员不可见任何工具
 
 2. **工具层** `tools/`（PR-0~PR-7 拆分自 main.py，子包化）：
    - `function_tools/` - 16 个 LLM FunctionTool 类，一文件一工具，`ALL_TOOL_CLASSES` 集中注册表
    - `inta_shell/` - 交互式 Shell 复合工具集（component + tools + session_models + paths + runtime 单例）
-   - `agentsmd/` / `codegraph/` / `project/` / `security/` / `llm_inject/` - 各业务子系统
+   - `agentsmd/` / `codegraph/` / `vivado/` / `project/` / `security/` / `llm_inject/` - 各业务子系统
    - 下划线前缀模块（`_xxx.py`）：内部模块，不直接注册为 AstrBot 工具
    - 顶层 `xxx.py`（如 `code_check.py`、`file_remove.py`）：legacy 业务实现入口，被 function_tools/ 引用
 
-3. **Web API 层** `tools/webapi/`（v3.6+ 自 main.py 拆出；当前 31 条路由记录 / 29 个唯一路径）：
+3. **Web API 层** `tools/webapi/`（v3.6+ 自 main.py 拆出；当前 38 条路由记录 / 36 个唯一路径）：
    - 每个端点一个文件，handler 命名固定为 `async def handle(plugin, ...) -> dict`（`docs_crud.py` 例外，一文件承载三方法）
    - `__init__.py` 拥有 `ROUTES` 路由表 + `HANDLERS` 别名表 + `_wrap()` 适配器 + `register_webapi_routes()`
    - `main.py.initialize()` 调用一次 `register_webapi_routes(self)` 注册全部路由
@@ -678,4 +685,4 @@ pytest tests/ --cov=tools           # 覆盖率
 
 ---
 
-> Author: elecvoid243 · 本文档同步至 v2.20 (2026-07-17)
+> Author: elecvoid243 · 本文档同步至 v2.21 (2026-07-25)
