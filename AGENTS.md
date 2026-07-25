@@ -329,6 +329,24 @@ astrbot_plugin_spcode_toolkit/
    - 顶层 `xxx.py`（如 `code_check.py`、`file_remove.py`）：legacy 业务实现入口，被 `function_tools/` 引用
    - **关键设计**：`main.py` 仅保留插件入口职责，业务逻辑全部下沉到 `tools/*` 子包
 
+   **`tools/project/state.py` 模块级单例 schema（2026-07-25 更新）**：
+   ```python
+   _loaded_projects: dict[str, dict] = {
+       "<umo>": {
+           "directory": str,             # 项目绝对路径
+           "loaded_at": float,           # 加载时间戳 (time.time())
+           "skipped_substeps": set[str], # 用户 /project load 时显式 opt-out 跳过的子步骤
+                                         # 可选字段，缺失时钩子用 .get("skipped_substeps", set()) 兜底
+                                         # 当前可能值: "agentsmd" / "codegraph"
+       }
+   }
+   ```
+   - `skipped_substeps` 用途：`main.py:_project_inject_codegraph_guidance` 钩子读这个字段
+     决定是否把 `# Use Codegraph` 提示注入到 system_prompt。若 `no_codegraph` 该子步骤未执行，
+     LLM 不应被告知「请用 codegraph_*」（否则会调不存在的 MCP 工具）。
+   - 写入方：`ProjectManager.load_impl` 在末尾 `state.put(umo, {...})` 时按 no_xxx flag 填充
+   - 读取方：`ProjectManager.get_loaded_project` / `webapi/project_status.handle` / `main.py` 钩子
+
 3. **Web API 层** `tools/webapi/`（v3.6+ 自 main.py 拆出；当前 38 条路由记录 / 36 个唯一路径）
    - 每个端点一个文件，handler 命名固定为 `async def handle(plugin, ...) -> dict`
      （`docs_crud.py` 例外：一个文件承载 `handle_post_docs` / `handle_patch_docs` / `handle_delete_docs` 三个方法，复用同一 `/spcode/docs` 路径）

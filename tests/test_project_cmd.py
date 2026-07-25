@@ -216,18 +216,25 @@ def test_project_subcommands_bound_to_instance():
 
 
 def test_project_load_refuses_when_agentsmd_disabled(tmp_path):
-    """agentsmd_enabled=False → 立即拒绝,不动状态,也不调子方法。"""
+    """agentsmd_enabled=False → 立即拒绝,不动状态,也不调子方法。
+
+    2026-07-25: 错误消息从合在一起说"启用 codegraph 和 AGENTS.md"
+    拆成按子系统精准提示 + 给出 no_xxx flag 替代方案。
+    """
     p = tmp_path / "proj"
     p.mkdir()
     plugin = _make_plugin(agentsmd_enabled=False, codegraph_enabled=True)
     mocks = _patch_internal_methods(plugin)
     event = _make_event()
 
-    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+    msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
-    # 新提示:只说"启用 codegraph 和 AGENTS.md",不再暴露变量名
-    assert any("codegraph" in m and "AGENTS.md" in m for m in msgs), (
-        f"应提示启用 codegraph 和 AGENTS.md,实际: {msgs}"
+    # 拆分后的提示:精准指向 AGENTS.md + 提示可加 no_agentsmd flag 绕过
+    assert any("AGENTS.md" in m and "agentsmd_enabled" in m for m in msgs), (
+        f"应提示 AGENTS.md 未启用,实际: {msgs}"
+    )
+    assert any("no_agentsmd" in m for m in msgs), (
+        f"应提示可用 no_agentsmd flag 绕过,实际: {msgs}"
     )
     # 任一子方法都不该被调
     for name, mock in mocks.items():
@@ -237,16 +244,25 @@ def test_project_load_refuses_when_agentsmd_disabled(tmp_path):
 
 
 def test_project_load_refuses_when_codegraph_disabled(tmp_path):
-    """codegraph_enabled=False → 同样拒绝。"""
+    """codegraph_enabled=False → 同样拒绝。
+
+    2026-07-25: 同上,消息拆分 + 提示 no_codegraph flag 绕过。
+    """
     p = tmp_path / "proj"
     p.mkdir()
     plugin = _make_plugin(agentsmd_enabled=True, codegraph_enabled=False)
     mocks = _patch_internal_methods(plugin)
     event = _make_event()
 
-    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+    msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
-    assert any("codegraph" in m and "AGENTS.md" in m for m in msgs)
+    # 拆分后的提示:精准指向 codegraph + 提示可加 no_codegraph flag 绕过
+    assert any("codegraph" in m and "codegraph_enabled" in m for m in msgs), (
+        f"应提示 codegraph 未启用,实际: {msgs}"
+    )
+    assert any("no_codegraph" in m for m in msgs), (
+        f"应提示可用 no_codegraph flag 绕过,实际: {msgs}"
+    )
     for name, mock in mocks.items():
         mock.assert_not_called()
 
@@ -276,7 +292,7 @@ def test_project_load_refuses_when_already_loaded(tmp_path):
     mocks = _patch_internal_methods(plugin)
     event = _make_event(umo="test:umo")
 
-    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+    msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
     assert any("已加载" in m and "/old/proj" in m for m in msgs), (
         f"应提示当前已加载 /old/proj,实际: {msgs}"
@@ -295,8 +311,8 @@ def test_project_load_allows_different_umo_simultaneously(tmp_path):
     event_a = _make_event(umo="umo:a")
     event_b = _make_event(umo="umo:b")
 
-    msgs_a = _collect_async_gen(plugin.project_load(event_a, str(p)))
-    msgs_b = _collect_async_gen(plugin.project_load(event_b, str(p)))
+    msgs_a = _collect_async_gen(plugin.project.load_impl(event_a, str(p)))
+    msgs_b = _collect_async_gen(plugin.project.load_impl(event_b, str(p)))
 
     # 两个 umo 都成功加载
     assert _get_loaded("umo:a") is not None
@@ -314,7 +330,7 @@ def test_project_load_rejects_unsafe_path(tmp_path):
     mocks = _patch_internal_methods(plugin)
     event = _make_event()
 
-    msgs = _collect_async_gen(plugin.project_load(event, "C:/Windows/System32"))
+    msgs = _collect_async_gen(plugin.project.load_impl(event, "C:/Windows/System32"))
 
     assert any("❌" in m and "路径不允许" in m for m in msgs), (
         f"应提示路径不允许,实际: {msgs}"
@@ -332,7 +348,7 @@ def test_project_load_rejects_user_blacklisted_path(tmp_path):
     mocks = _patch_internal_methods(plugin)
     event = _make_event()
 
-    msgs = _collect_async_gen(plugin.project_load(event, str(target)))
+    msgs = _collect_async_gen(plugin.project.load_impl(event, str(target)))
 
     assert any("❌" in m and ("路径不允许" in m or "黑名单" in m) for m in msgs)
     for name, mock in mocks.items():
@@ -350,7 +366,7 @@ def test_project_load_happy_path_calls_all_steps(tmp_path):
     mocks = _patch_internal_methods(plugin)
     event = _make_event(umo="test:umo")
 
-    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+    msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
     # 4 个核心方法都被调用(顺序: agentsmd_init, agentsmd_load, codegraph_init, codegraph_set)
     mocks["init"].assert_called_once()
@@ -415,7 +431,7 @@ def test_project_load_aborts_on_agentsmd_init_error(tmp_path):
     )
     event = _make_event(umo="test:umo")
 
-    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+    msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
     # 1. 失败消息被原样转发
     assert any("❌ 模拟:目录无代码文件" in m for m in msgs), (
@@ -452,7 +468,7 @@ def test_project_load_aborts_on_agentsmd_load_error(tmp_path):
     )
     event = _make_event(umo="test:umo")
 
-    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+    msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
     # init 仍被调(load 之前 init 完成)
     mocks["init"].assert_called_once()
@@ -483,7 +499,7 @@ def test_project_load_aborts_on_codegraph_init_error(tmp_path):
     )
     event = _make_event(umo="test:umo")
 
-    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+    msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
     # 前 3 步都被调
     mocks["init"].assert_called_once()
@@ -516,7 +532,7 @@ def test_project_load_aborts_on_codegraph_set_error(tmp_path):
     )
     event = _make_event(umo="test:umo")
 
-    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+    msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
     # 前 3 步都被调
     mocks["init"].assert_called_once()
@@ -553,7 +569,7 @@ def test_project_load_does_not_abort_on_warning(tmp_path):
     )
     event = _make_event(umo="test:umo")
 
-    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+    msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
     # 后续方法**全部被调**(warning 不中止)
     mocks["init"].assert_called_once()
@@ -581,7 +597,7 @@ def test_project_load_skips_agentsmd_init_if_md_exists(tmp_path):
     mocks = _patch_internal_methods(plugin)
     event = _make_event()
 
-    msgs = _collect_async_gen(plugin.project_load(event, str(p)))
+    msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
     # init 不应被调(load 只读,不重生成)
     mocks["init"].assert_not_called()

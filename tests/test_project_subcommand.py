@@ -260,6 +260,83 @@ def test_handle_get_project_status_returns_unloaded(plugin):
     assert payload["status"] == "ok"
     assert payload["data"]["loaded"] is False
     assert payload["data"]["directory"] is None
+    # 2026-07-25: 新字段在未加载分支应为空 list,而非 key 缺失或 null
+    assert payload["data"]["skipped_substeps"] == []
+
+
+def test_handle_get_project_status_returns_skipped_substeps(plugin):
+    """2026-07-25: endpoint 应暴露 ``skipped_substeps`` 列表(供前端展示)。"""
+    _set_loaded(
+        "webchat:webchat!u!skip",
+        {
+            "directory": "/tmp/skipped",
+            "loaded_at": 1700000000.0,
+            "skipped_substeps": {"codegraph"},
+        },
+    )
+
+    async def runner():
+        return await _project_status.handle(plugin, umo="webchat:webchat!u!skip")
+
+    payload = _run(runner())
+    assert payload["data"]["loaded"] is True
+    # sorted(set) 序列化为 list,值与顺序均可预测
+    assert payload["data"]["skipped_substeps"] == ["codegraph"]
+    from tools.project import state as _proj_state  # noqa: E402
+
+    _proj_state.reset()
+
+
+def test_handle_get_project_status_skipped_substeps_empty_default(plugin):
+    """旧 state 无 ``skipped_substeps`` 字段时,endpoint 默认给空 list 而非报错。"""
+    _set_loaded(
+        "webchat:webchat!u!oldstate",
+        {
+            "directory": "/tmp/oldstate",
+            "loaded_at": 1700000000.0,
+            # 故意不写 skipped_substeps —— 模拟 2026-07-25 之前的旧 state 数据
+        },
+    )
+
+    async def runner():
+        return await _project_status.handle(plugin, umo="webchat:webchat!u!oldstate")
+
+    payload = _run(runner())
+    assert payload["data"]["loaded"] is True
+    assert payload["data"]["skipped_substeps"] == []
+    from tools.project import state as _proj_state  # noqa: E402
+
+    _proj_state.reset()
+
+
+def test_handle_get_project_status_skipped_substeps_recent_fallback(plugin):
+    """无 umo 时,recent(最近一个 loaded) 的 skipped_substeps 也应正确透传。"""
+    _set_loaded(
+        "webchat:webchat!u!recent_old",
+        {
+            "directory": "/tmp/old",
+            "loaded_at": 1.0,
+            "skipped_substeps": {"agentsmd"},
+        },
+    )
+    _set_loaded(
+        "webchat:webchat!u!recent_new",
+        {
+            "directory": "/tmp/new",
+            "loaded_at": 2.0,  # 更新,被 max() 选中
+            "skipped_substeps": {"codegraph"},
+        },
+    )
+
+    async def runner():
+        return await _project_status.handle(plugin)
+
+    payload = _run(runner())
+    assert payload["data"]["umo"] == "webchat:webchat!u!recent_new"
+    assert payload["data"]["skipped_substeps"] == ["codegraph"]
+    from tools.project import state as _proj_state  # noqa: E402
+
+    _proj_state.reset()
 
 
 def test_handle_get_project_status_filters_by_umo(plugin):

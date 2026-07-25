@@ -7,6 +7,12 @@
 
 任一失败 → 抛 ProjectLoadAbort → load_impl 捕获 → return。
 
+可选 flag(2026-07-25 增强):
+- ``no_agentsmd``:跳过步骤 1/3(完整跳过 init+load)
+- ``no_codegraph``:跳过步骤 2/3(完整跳过 init+set)
+不传任何 flag → 完整执行全部 4 个子步骤。两个 flag 同时给 → 仅做
+路径校验 + 状态登记(空壳 load)。flag 顺序无关,允许放在 directory 之后。
+
 业务从 main.py:382-718(_project_router + project_load + _project_load_step
 + _project_load_impl + project_unload + _project_unload_impl + project_status
 + _project_status_impl + get_loaded_project)整段搬过来。
@@ -54,6 +60,9 @@ class ProjectManager:
         and yields its messages. Unknown sub-commands yield a single error
         message.
 
+        ``/project load`` 支持位置参数 ``directory`` 之后跟 0~2 个 flag:
+        ``no_agentsmd`` / ``no_codegraph``(顺序无关,多次出现取并集)。
+
         Args:
             event: AstrBot 事件对象。
             sub_command: 子命令字符串(load / unload / status / ...)。
@@ -67,7 +76,24 @@ class ProjectManager:
             if not args:
                 yield event.plain_result("❌ /project load 需要 <directory> 参数。")
                 return
-            async for msg in self.load_impl(event, args[0]):
+            # 第一个非 flag 元素 = directory,其余元素 = flags(去重)
+            flags = set(args) & {"no_agentsmd", "no_codegraph"}
+            directory = next(
+                (a for a in args if a not in {"no_agentsmd", "no_codegraph"}),
+                None,
+            )
+            if not directory:
+                yield event.plain_result(
+                    "❌ /project load 需要 <directory> 参数。"
+                    "可选 flag: no_agentsmd / no_codegraph。"
+                )
+                return
+            async for msg in self.load_impl(
+                event,
+                directory,
+                no_agentsmd="no_agentsmd" in flags,
+                no_codegraph="no_codegraph" in flags,
+            ):
                 yield msg
             return
         if sub == "unload":
@@ -84,8 +110,15 @@ class ProjectManager:
         )
         return
 
-    async def load_impl(self, event: AstrMessageEvent, directory: str):
-        """Implementation of ``/project load <dir>``.
+    async def load_impl(
+        self,
+        event: AstrMessageEvent,
+        directory: str,
+        *,
+        no_agentsmd: bool = False,
+        no_codegraph: bool = False,
+    ):
+        """Implementation of ``/project load <dir> [no_agentsmd] [no_codegraph]``.
 
         Performs the multi-step project load: feature-flag check, duplicate
         load guard, path safety, agentsmd init+load, codegraph init+set,
@@ -96,23 +129,43 @@ class ProjectManager:
         也不会 yield "✅ 项目已加载"。``⚠️`` 不算失败
         (见 :func:`project_load_step`)。
 
+        跳过参数(均默认 ``False``,即完整执行):
+        - ``no_agentsmd``:跳过步骤 1/3 的 init + load(不动 agentsmd 子系统)。
+          对应的 feature-flag 校验(``agentsmd_enabled``)对该步骤不再生效,
+          用户显式选择跳过即跳过,与全局开关解耦。
+        - ``no_codegraph``:跳过步骤 2/3 的 init + set(不动 codegraph 子系统)。
+          同上,``codegraph_enabled`` 对该步骤不再生效。
+        两个 flag 同时给 → 仅做路径校验 + 状态登记(空壳 load)。
+
         Args:
             event: AstrBot 事件对象。
             directory: 用户提供的项目目录路径。
+            no_agentsmd: 是否跳过 AGENTS.md 子步骤。
+            no_codegraph: 是否跳过 codegraph 子步骤。
 
         Yields:
             Plain text messages for the user。
         """
         umo = event.unified_msg_origin
-        # 1. Feature flag 校验
-        agentsmd_on = self._plugin._config.get("agentsmd_enabled", True)
-        codegraph_on = self._plugin._config.get("codegraph_enabled", True)
-        if not (agentsmd_on and codegraph_on):
-            yield event.plain_result(
-                "❌ /project 命令需要先启用 codegraph 和 AGENTS.md 功能。\n"
-                "请在插件配置中打开这两项后再试一次。"
-            )
-            return
+        # 1. Feature flag 校验(仅校验"用户希望执行"的子集)
+        #    当用户显式 no_xxx 时,即使全局开关关闭也不应阻拦
+        #    (本步"该功能未启用"的判断就被用户主动 opt-out 取代了)。
+        if not no_agentsmd:
+            agentsmd_on = self._plugin._config.get("agentsmd_enabled", True)
+            if not agentsmd_on:
+                yield event.plain_result(
+                    "❌ AGENTS.md 功能未启用,但 /project load 仍请求执行 agentsmd 步骤。\n"
+                    "请在插件配置中打开 agentsmd_enabled,或加 no_agentsmd flag。"
+                )
+                return
+        if not no_codegraph:
+            codegraph_on = self._plugin._config.get("codegraph_enabled", True)
+            if not codegraph_on:
+                yield event.plain_result(
+                    "❌ codegraph 功能未启用,但 /project load 仍请求执行 codegraph 步骤。\n"
+                    "请在插件配置中打开 codegraph_enabled,或加 no_codegraph flag。"
+                )
+                return
 
         # 2. 重复 load 拦截
         if _state.get(umo) is not None:
@@ -137,64 +190,101 @@ class ProjectManager:
         # 4. 多步加载(任一子步骤失败 → 立即中止,不再登记 state)
         try:
             # 步骤 1/3: agentsmd(init 条件性 + load)
-            agents_md_path = target / "AGENTS.md"
-            if not agents_md_path.exists():
+            if no_agentsmd:
                 yield event.plain_result(
-                    f"⏳ [1/3] AGENTS.md 不存在,正在 init: {target}"
+                    "⏭️ [1/3] AGENTS.md 步骤已跳过(用户指定 no_agentsmd)。"
                 )
+            else:
+                agents_md_path = target / "AGENTS.md"
+                if not agents_md_path.exists():
+                    yield event.plain_result(
+                        f"⏳ [1/3] AGENTS.md 不存在,正在 init: {target}"
+                    )
+                    async for msg in project_load_step(
+                        event,
+                        self._plugin.agentsmd.init(event, str(target)),
+                        "[1/3] AGENTS.md 初始化",
+                    ):
+                        yield msg
+                else:
+                    yield event.plain_result(
+                        f"ℹ️ [1/3] AGENTS.md 已存在,跳过 init: {agents_md_path}"
+                    )
+                yield event.plain_result(f"⏳ [1/3] 正在 load AGENTS.md: {target}")
                 async for msg in project_load_step(
                     event,
-                    self._plugin.agentsmd.init(event, str(target)),
-                    "[1/3] AGENTS.md 初始化",
+                    self._plugin.agentsmd.load(event, str(target)),
+                    "[1/3] AGENTS.md 加载",
                 ):
                     yield msg
-            else:
-                yield event.plain_result(
-                    f"ℹ️ [1/3] AGENTS.md 已存在,跳过 init: {agents_md_path}"
-                )
-            yield event.plain_result(f"⏳ [1/3] 正在 load AGENTS.md: {target}")
-            async for msg in project_load_step(
-                event,
-                self._plugin.agentsmd.load(event, str(target)),
-                "[1/3] AGENTS.md 加载",
-            ):
-                yield msg
 
             # 步骤 2/3: codegraph init + set(PR-6 委托给 manager)
-            yield event.plain_result(f"⏳ [2/3] codegraph init: {target}")
-            async for msg in project_load_step(
-                event,
-                self._plugin.codegraph.init(event, str(target)),
-                "[2/3] codegraph init",
-            ):
-                yield msg
+            if no_codegraph:
+                yield event.plain_result(
+                    "⏭️ [2/3] codegraph 步骤已跳过(用户指定 no_codegraph)。"
+                )
+            else:
+                yield event.plain_result(f"⏳ [2/3] codegraph init: {target}")
+                async for msg in project_load_step(
+                    event,
+                    self._plugin.codegraph.init(event, str(target)),
+                    "[2/3] codegraph init",
+                ):
+                    yield msg
 
-            yield event.plain_result(f"⏳ [2/3] codegraph set: {target}")
-            async for msg in project_load_step(
-                event,
-                self._plugin.codegraph.set_project(event, str(target)),
-                "[2/3] codegraph set",
-            ):
-                yield msg
+                yield event.plain_result(f"⏳ [2/3] codegraph set: {target}")
+                async for msg in project_load_step(
+                    event,
+                    self._plugin.codegraph.set_project(event, str(target)),
+                    "[2/3] codegraph set",
+                ):
+                    yield msg
         except ProjectLoadAbort:
             return
 
         # 5. 记录状态(仅在所有子步骤都成功后才登记)
+        #    同步记录用户显式 opt-out 的子步骤(2026-07-25),
+        #    on_llm_request 钩子据此决定是否注入对应子系统的提示文本。
         loaded_at_ts = _time.time()
+        skipped: set[str] = set()
+        if no_agentsmd:
+            skipped.add("agentsmd")
+        if no_codegraph:
+            skipped.add("codegraph")
         _state.put(
             umo,
             {
                 "directory": str(target),
                 "loaded_at": loaded_at_ts,
+                "skipped_substeps": skipped,
             },
         )
 
+        # 6. 总结消息(根据跳过的步骤动态调整)
+        if no_agentsmd and no_codegraph:
+            summary_lines = "  - 设定工作目录(无子步骤)"
+        elif no_agentsmd:
+            summary_lines = (
+                "  - 设定工作目录\n"
+                "  - 载入 codegraph 索引\n"
+                "  - (已跳过) AGENTS.md 注入"
+            )
+        elif no_codegraph:
+            summary_lines = (
+                "  - 设定工作目录\n"
+                "  - AGENTS.md 注入到 system_prompt\n"
+                "  - (已跳过) codegraph 索引"
+            )
+        else:
+            summary_lines = (
+                "  - 设定工作目录\n"
+                "  - AGENTS.md 注入到 system_prompt\n"
+                "  - 载入 codegraph 索引"
+            )
         yield event.plain_result(
             f"✅ 项目已加载: {target}\n"
             f"已自动进行如下步骤:\n"
-            f"  - 设定工作目录\n"
-            f"  - AGENTS.md 注入到 system_prompt\n"
-            f"  - 载入 codegraph 索引\n"
+            f"{summary_lines}\n"
             f"\n若要卸载，请执行`/project unload`\n"
         )
 

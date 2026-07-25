@@ -31,9 +31,17 @@ async def handle(
                     "directory": str | None,
                     "loaded_at": float | None,
                     "umo": str | None,
-                    "all_loaded_count": int
+                    "all_loaded_count": int,
+                    "skipped_substeps": list[str]  # (2026-07-25) 新增
                 }
             }
+
+    字段说明:
+        - ``skipped_substeps``: 用户在 ``/project load`` 时显式 opt-out
+          跳过的子步骤名列表。可能值: ``"agentsmd"`` / ``"codegraph"``。
+          空 list 表示完整执行了所有子步骤。
+          前端可据此在 dashboard 上显示「项目已加载,但跳过了 AGENTS.md/codegraph」
+          之类的提示。
 
     PR-7 (2026-06-23): 数据源从 ``plugin._loaded_projects`` 迁移到
     ``tools.project.state`` 模块级单例(handler 调用
@@ -66,6 +74,7 @@ async def handle(
                     "loaded_at": None,
                     "umo": umo_param,
                     "all_loaded_count": all_count,
+                    "skipped_substeps": [],
                 },
             }
         return {
@@ -76,6 +85,12 @@ async def handle(
                 "loaded_at": info.get("loaded_at"),
                 "umo": umo_param,
                 "all_loaded_count": all_count,
+                # 2026-07-25: 暴露给前端,空 list 表示未跳过任何子步骤。
+                # 旧 state(无 skipped_substeps 字段)用 .get 兜底默认空 set,
+                # 与行为契约一致(默认 load = 未跳过任何子步骤)。
+                "skipped_substeps": sorted(
+                    info.get("skipped_substeps", set())
+                ),
             },
         }
 
@@ -93,6 +108,7 @@ async def handle(
                 "loaded_at": None,
                 "umo": None,
                 "all_loaded_count": 0,
+                "skipped_substeps": [],
             },
         }
     # Pick the entry with the largest loaded_at (most recent).
@@ -108,5 +124,8 @@ async def handle(
             "loaded_at": recent_info.get("loaded_at"),
             "umo": recent_umo,
             "all_loaded_count": len(all_items),
+            "skipped_substeps": sorted(
+                recent_info.get("skipped_substeps", set())
+            ),
         },
     }

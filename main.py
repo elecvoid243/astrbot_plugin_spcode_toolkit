@@ -301,27 +301,106 @@ class SPCodeToolkit(star.Star):
         pass
 
     @filter.command_group("project")
-    def project(self, event, sub_command: str = "", *args):
-        """``/project`` 指令组的统一入口(实际分发由 ProjectManager.handle_subcommand 处理)。"""
-        return None
+    def project(self):
+        """``/project`` 指令组(无 args)。
+
+        实际分发由子指令 :meth:`project_load` / :meth:`project_unload` /
+        :meth:`project_status` 各自完成。它们从 ``event.get_message_str()``
+        自己剥前缀、解析剩余 tokens、转发到 ``ProjectManager`` 的 *_impl。
+
+        WHY (2026-07-26): AstrBot 当前版本(``astrbot.core.star.filter.command``)
+        对 ``*args`` / ``*flags`` (VAR_POSITIONAL) 行为不一致 —— 它们进
+        handler_params 但 validate 阶段抛 ``TypeError: _empty() takes no arguments``,
+        导致带 flag 的 ``/project load <dir> no_agentsmd`` 被 framework 抛
+        「参数 flags 类型错误」而不是分发到 handler。参考
+        ``astrbot_plugin_compact`` 的 ``_extract_command_body`` 方案:
+        子指令 handler 仅接受 ``(self, event)``,完全跳过 framework 的
+        参数解析,内部从 ``event.get_message_str()`` 拿原文自己分词。
+        """
+        pass
+
+    @staticmethod
+    def _extract_project_command_tokens(event, sub_command: str) -> list[str]:
+        """从 AstrMessageEvent 中提取 ``/project <sub_command>`` 之后的 tokens。
+
+        不依赖 AstrBot 的 ``GreedyStr``(该类型当前版本在
+        ``CommandFilter.validate_and_convert_params`` 中存在
+        ``pv is GreedyStr`` 身份比较 bug,对实例恒判 False;且
+        ``*args``/``*flags`` 完全不识别)。
+
+        流程:
+        1. ``event.get_message_str()`` 取原始字符串
+        2. 剥掉 wake_prefix(通常为 ``/``)
+        3. 剥掉 ``project <sub_command>`` 前缀(大小写不敏感)
+        4. ``.split()`` → tokens(空字符串过滤)
+
+        Args:
+            event: AstrBot 消息事件。
+            sub_command: 子命令名(load / unload / status)。
+
+        Returns:
+            tokens 列表。无参子命令(unload / status)返回 ``[]``。
+        """
+        raw = (event.get_message_str() or "").strip()
+        # 1. 剥掉首字符 wake_prefix(通常为 "/")—— AstrBot 的 ``filter()``
+        #    内部已经把它和命令前缀剥掉了,但 ``get_message_str()`` 仍保留
+        #    原消息,这里再做一次清理保证幂等。
+        if raw.startswith("/"):
+            raw = raw[1:].lstrip()
+        # 2. 剥掉 "project <sub_command>"
+        cmd_prefix = f"project {sub_command}".lower()
+        if raw.lower().startswith(cmd_prefix):
+            raw = raw[len(cmd_prefix) :].lstrip()
+        return [tok for tok in raw.split(" ") if tok]
 
     @project.command("load")
-    async def project_load(self, event, directory: str):
-        """/project load <directory>(委托给 ``ProjectManager.load_impl``)。"""
-        async for msg in self.project.load_impl(event, directory):
+    async def project_load(self, event):
+        """/project load <directory> [no_agentsmd] [no_codegraph]
+
+        可选 flags(均放在 directory 之后,顺序无关):
+        - ``no_agentsmd``: 跳过 AGENTS.md 全部子步骤(步骤 1/3 的 init + load)
+        - ``no_codegraph``: 跳过 codegraph 全部子步骤(步骤 2/3 的 init + set)
+
+        不传任何 flag 时,完整执行 4 个子步骤 + 状态登记。
+
+        实现说明 (2026-07-26):
+        - 仅签名 ``(self, event)``,**不**在 args 列表里声明
+          ``directory: str`` 或 ``*flags``。原因:AstrBot framework 的
+          ``CommandFilter.validate_and_convert_params`` 对
+          VAR_POSITIONAL 行为不友好,会对 ``/project load <dir> no_agentsmd``
+          抛 ``TypeError`` 并把整个 handler 拒绝。
+        - 从 ``event.get_message_str()`` 拿全部 tokens,内部 ``.split()``,
+          第一个非 flag 元素作为 directory,其余 in ``{"no_agentsmd",
+          "no_codegraph"}`` 作为 flag。
+        - 委托给 :meth:`tools.project.ProjectManager.handle_subcommand`,
+          保持 ``load_impl`` 的单入口语义。
+
+        Failure modes:
+        - 无 tokens → yield 错误消息并 return(由 handle_subcommand 处理)。
+        - tokens 全是 flag(如 ``/project load no_agentsmd no_codegraph``)→
+          yield 错误消息并 return(directory 缺失)。
+        """
+        tokens = self._extract_project_command_tokens(event, "load")
+        async for msg in self.project.handle_subcommand(event, "load", *tokens):
             yield msg
         return
 
     @project.command("unload")
     async def project_unload(self, event):
-        """/project unload(委托给 ``ProjectManager.unload_impl``)。"""
+        """/project unload(委托给 ``ProjectManager.unload_impl``)。
+
+        同样仅签名 ``(self, event)``(见 :meth:`project_load` 的实现说明)。
+        """
         async for msg in self.project.unload_impl(event):
             yield msg
         return
 
     @project.command("status")
     async def project_status(self, event):
-        """/project status(委托给 ``ProjectManager.status_impl``)。"""
+        """/project status(委托给 ``ProjectManager.status_impl``)。
+
+        同样仅签名 ``(self, event)``(见 :meth:`project_load` 的实现说明)。
+        """
         async for msg in self.project.status_impl(event):
             yield msg
         return
@@ -535,6 +614,14 @@ class SPCodeToolkit(star.Star):
     ):
         """/project load 后,把 codegraph 优先使用指引注入到 system_prompt 末尾。
 
+        跳过条件(任一满足即不注入):
+        1. ``codegraph_enabled=False`` 全局禁用
+        2. 当前 umo 未加载任何 project
+        3. (2026-07-25) 用户在 ``/project load`` 时显式传 ``no_codegraph`` —
+           codegraph 工具实际未启动,不应让 LLM 拿到「请用 codegraph_*」
+           提示而尝试调用不存在的工具。读取 ``state.skipped_substeps``
+           字段判断。
+
         PR-7 (2026-06-23): 已加载项目的存储已从 ``self._loaded_projects`` 迁到
         ``tools.project.state`` 模块级单例。沿用 ``get_loaded_project()``
         公开接口,避免直接触达内部 state。
@@ -542,7 +629,11 @@ class SPCodeToolkit(star.Star):
         if not self._config.get("codegraph_enabled", True):
             return
         umo = event.unified_msg_origin
-        if self.get_loaded_project(umo) is None:
+        loaded = self.get_loaded_project(umo)
+        if loaded is None:
+            return
+        # 2026-07-25: 用户在 /project load 时显式 no_codegraph → 跳过注入
+        if "codegraph" in loaded.get("skipped_substeps", set()):
             return
         if inject_guidance(req, PROJECT_CODEGRAPH_GUIDANCE, PROJECT_GUIDANCE_MARKER):
             logger.debug(
