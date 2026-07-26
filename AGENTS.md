@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.21** · Author: elecvoid243 · 最后更新: 2026-07-25
+> **当前版本: v2.21.1** · Author: elecvoid243 · 最后更新: 2026-07-26
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -468,7 +468,7 @@ astrbot_plugin_spcode_toolkit/
 10. **路径安全**：任何涉及用户输入路径的代码，先调用 `_path_safety` 校验，**不要**自己实现路径判断
 11. **Web API 参数安全**：`?worktree=` 等用户控制的路径参数，必须经过 `_validate_worktree_param`（位于 `tools/_helpers.py`）的 6 步防御链：**关键不变量 - git-common-dir 不匹配 = 直接拒绝**
 12. **配置拍平**：`_conf_schema.json` 是分组结构，`main.py._flatten_config()` 会把嵌套分组拍平为顶层键（如 `codegraph.codegraph_enabled` -> `codegraph_enabled`）。新增配置项时保持此约定
-13. **版本号统一**：当前版本统一为 **v2.21**。发布时同步更新 `metadata.yaml` 的 `version` 字段
+13. **版本号统一**：当前版本统一为 **v2.21.1**。发布时同步更新 `metadata.yaml` 的 `version` 字段
 
 ## Web API 端点（供 Dashboard 消费）
 

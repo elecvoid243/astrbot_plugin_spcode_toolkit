@@ -158,6 +158,62 @@ def _get_shortcircuit_mode() -> str:
     return env_mode if env_mode in _VALID_SHORTCIRCUIT_MODES else _SHORTCIRCUIT_ERROR
 
 
+# cppcheck 启用的额外检查类目(v2.21.1+, 用户可配置;空=只报 error)
+# 对应 _conf_schema.json 的 cppcheck_enable.options
+_VALID_CPPCHECK_ENABLE = frozenset(
+    {"warning", "style", "performance", "portability"}
+)
+
+
+def _get_cppcheck_enable() -> list[str]:
+    """读取 cppcheck 启用的额外检查类目(空列表 = 不传 --enable, 仅报 error)。
+
+    优先级: 模块级覆盖 > 环境变量 > DEFAULT_CONFIG > []。
+    不合法值会被静默丢弃（schema 校验应保证只进来合法值, 此为兜底）。
+
+    Returns:
+        合法类目列表（顺序保留, 去重）;空 = 仅报 error。
+    """
+    # 1) 模块级覆盖（测试或独立运行时临时覆盖 `code_check.CPPCHECK_ENABLE = [...]`）
+    module_mode = globals().get("CPPCHECK_ENABLE")
+    if isinstance(module_mode, (list, tuple)):
+        seen: set[str] = set()
+        out: list[str] = []
+        for x in module_mode:
+            if isinstance(x, str) and x in _VALID_CPPCHECK_ENABLE and x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+
+    # 2) 环境变量（main.py 在 __init__ 时注入;逗号分隔字符串）
+    env_mode = os.environ.get("CPPCHECK_ENABLE", "")
+    if env_mode:
+        seen = set()
+        out = []
+        for x in (s.strip() for s in env_mode.split(",")):
+            if x and x in _VALID_CPPCHECK_ENABLE and x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+
+    # 3) DEFAULT_CONFIG（ast_bot_conf_schema.json 的 cppcheck_enable 拍平键）
+    try:
+        from ._config import DEFAULT_CONFIG
+
+        cfg = DEFAULT_CONFIG.get("cppcheck_enable", [])
+    except Exception:
+        cfg = []
+    if isinstance(cfg, (list, tuple)):
+        seen = set()
+        out = []
+        for x in cfg:
+            if isinstance(x, str) and x in _VALID_CPPCHECK_ENABLE and x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+    return []
+
+
 # cppcheck 单行输出格式: "<path>:<lineno>:<col>:  <severity>: <message>  [<id>]"
 # 例: "src/foo.cpp:6:12: error: Mismatching allocation and deallocation: p
 #                     [mismatchAllocDealloc]"
@@ -245,14 +301,19 @@ def _run_cppcheck(p: Path) -> dict | None:
     if not cppcheck_cmd:
         return None  # 未安装，让 caller 跑 cpplint
     try:
+        # v2.21.1+: --enable 类目由 cppcheck_enable 配置驱动
+        # 默认空=不传 --enable (cppcheck 只报 error);用户多选可启用额外类目
+        enable_categories = _get_cppcheck_enable()
+        extra_args: list[str] = []
+        if enable_categories:
+            extra_args.append(f"--enable={','.join(enable_categories)}")
+        extra_args += [
+            "--quiet",  # 抑制 "Checking ... " 进度信息
+            "--inline-suppr",  # 支持代码内 // cppcheck-suppress 注释
+            str(p),
+        ]
         r = subprocess.run(
-            cppcheck_cmd
-            + [
-                "--enable=warning,style,performance,portability",
-                "--quiet",  # 抑制 "Checking ... " 进度信息
-                "--inline-suppr",  # 支持代码内 // cppcheck-suppress 注释
-                str(p),
-            ],
+            cppcheck_cmd + extra_args,
             capture_output=True,
             text=True,
             # WHY: cppcheck.exe 是 Windows 原生 C++ 程序，stderr/stdout 遵循系统 ANSI

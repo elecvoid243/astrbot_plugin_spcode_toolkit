@@ -1,7 +1,7 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: v2.21
+version: v2.21.1
 description: |
   ## 主要能力
 
@@ -55,6 +55,7 @@ description: |
 
   ## 版本历程（最近 8 个）
 
+  - **v2.21.1** (2026-07-26) `cppcheck_enable` 配置项（用户多选 warning/style/performance/portability，默认空 = 仅报 error）
   - **v2.21** (2026-07-25) vivado-mcp 集成（9 个新文件、38 Web API 路由、6 状态徽章）
   - **v2.20** (2026-07-17) `POST /spcode/btw` 一次性独立 LLM 请求
   - **v2.18.0** (2026-07-16) `GET /spcode/git-repo-check`（独立 preflight）

@@ -32,6 +32,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "git_path": "",  # git 可执行文件绝对路径;留空走系统 PATH
     "cppcheck_path": "",  # cppcheck.exe 路径(Windows/Linux/macOS);C/C++ 检查时优先于 cpplint
     "cppcheck_shortcircuit": "error",  # cppcheck 短路策略:error/warning/never(仅 auto 模式生效)
+    "cppcheck_enable": [],  # cppcheck 启用的额外检查类目(空=只报 error):warning/style/performance/portability
     "codegraph_enabled": True,  # 是否启用 codegraph MCP 集成
     "codegraph_install_dir": "",  # codegraph 安装目录(含 node.exe);留空则不启动 MCP
     "codegraph_project": "",  # codegraph daemon 默认操作的工程根目录

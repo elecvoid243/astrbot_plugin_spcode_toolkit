@@ -57,6 +57,13 @@
         "type": "string",
         "options": ["error", "warning", "never"],
         "default": "error"
+      },
+      "cppcheck_enable": {
+        "description": "cppcheck 启用的额外检查类别",
+        "hint": "默认空=只报 error 级别问题。多选启用 warning/style/performance/portability 额外检查。cppcheck 的 error 级别无需启用,始终会报。",
+        "type": "list",
+        "options": ["warning", "style", "performance", "portability"],
+        "default": []
       }
     }
   },
