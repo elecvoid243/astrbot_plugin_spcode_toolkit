@@ -59,3 +59,50 @@ async def handle(
             "all_active_count": plugin._plan.count_active(),
         },
     }
+
+
+async def handle_set(
+    plugin: "SPCodeToolkit",
+    *,
+    umo: str | None = None,
+    body: dict | None = None,
+) -> dict:
+    """Web API handler for ``POST /spcode/plan-mode``.
+
+    v2.22.0 (2026-07-27): dashboard 的 plan/build chip 改为直接调本
+    端点切换模式,不再向聊天框注入 ``/plan`` / ``/build`` 用户消息。
+    切换后的 reminder 注入与工具过滤仍由 ``on_llm_request`` 钩子
+    按 ``_plan_mode[umo]`` 状态驱动,与本端点解耦。
+
+    Body:
+        umo (str, required): 要切换的会话 unified_msg_origin。
+            ``_wrap`` 适配器会从 JSON body 中同名字段注入。
+        active (bool, required): True → plan 模式,False → build 模式。
+
+    Returns:
+        与 GET 相同的 envelope,额外带 ``changed`` 字段表示状态是否
+        发生了翻转(幂等重复调用时为 False)。参数缺失/非法时返回
+        ``{"status": "error", "message": ...}``。
+    """
+    active = (body or {}).get("active")
+    if not umo:
+        return {"status": "error", "message": "missing required field: umo"}
+    if not isinstance(active, bool):
+        return {
+            "status": "error",
+            "message": "missing or invalid field: active (bool required)",
+        }
+    was_active = plugin._plan.is_active(umo)
+    if active:
+        plugin._plan.activate(umo)
+    else:
+        plugin._plan.deactivate(umo)
+    return {
+        "status": "ok",
+        "data": {
+            "active": plugin._plan.is_active(umo),
+            "umo": umo,
+            "all_active_count": plugin._plan.count_active(),
+            "changed": was_active != active,
+        },
+    }

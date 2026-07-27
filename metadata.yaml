@@ -1,11 +1,11 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: v2.21.1
+version: v2.22.0
 description: |
   ## 主要能力
 
-  spcode 工具箱 — 为 LLM Agent 提供面向 C/C++/Python 开发的实用工具集，并配套 38 条
+  spcode 工具箱 — 为 LLM Agent 提供面向 C/C++/Python 开发的实用工具集，并配套 39 条
   `/spcode/*` Web API 供 Dashboard 实时消费。
 
   - **16 个本地 LLM 工具**：code_check / code_format / es_search / file_remove / file_compare /
@@ -17,8 +17,9 @@ description: |
     含 11 个写工具（受 plan 模式保护，需 `/build` 切换后才能调用）
   - **6 个 chat 命令入口**：4 个命令组 `/codegraph`（别名 `/cg`）、`/agentsmd`、`/project`、`/vivado`
     + 2 个独立命令 `/plan`、`/build`（plan/build 模式切换）
-  - **38 条 Web API 路由**（`/spcode/*`）：git 工作区状态 / git 历史 / 文件浏览器 /
-    git worktree 管理 / docs CRUD / btw 一次性 LLM 请求 / vivado-status 快照
+  - **39 条 Web API 路由**（`/spcode/*`）：git 工作区状态 / git 历史 / 文件浏览器 /
+    git worktree 管理 / docs CRUD / btw 一次性 LLM 请求 / vivado-status 快照 /
+    plan-mode 查询与切换
 
   ## 端点选录
 
@@ -55,6 +56,7 @@ description: |
 
   ## 版本历程（最近 8 个）
 
+  - **v2.22.0** (2026-07-27) `POST /spcode/plan-mode`：dashboard plan/build chip 直调 API 切换模式，不再向聊天框注入 `/plan` `/build` 用户消息（旧版插件自动回退到发命令）
   - **v2.21.1** (2026-07-26) `cppcheck_enable` 配置项（用户多选 warning/style/performance/portability，默认空 = 仅报 error）
   - **v2.21** (2026-07-25) vivado-mcp 集成（9 个新文件、38 Web API 路由、6 状态徽章）
   - **v2.20** (2026-07-17) `POST /spcode/btw` 一次性独立 LLM 请求

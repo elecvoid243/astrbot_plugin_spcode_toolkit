@@ -457,6 +457,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 |------|------|------|---------|
 | `/spcode/project-status` | GET | 当前加载项目状态 | `umo?` |
 | `/spcode/plan-mode` | GET | 当前 plan-mode 状态（严格 per-session，不回退） | `umo?` |
+| `/spcode/plan-mode` | POST | 切换当前会话 plan/build 模式（dashboard chip 直调，不产生聊天消息；v2.22.0+） | body: `umo`, `active`(bool) |
 | `/spcode/git-worktrees` | GET | 列出 worktree | `umo?` |
 | `/spcode/git-diff` | GET | 工作区 diff（ETag/304） | `umo?`, `worktree?` |
 | `/spcode/git-status` | GET | 工作区状态（branch/upstream/staged/unstaged/untracked，ETag/304） | `umo?`, `worktree?` |
@@ -612,7 +613,7 @@ astrbot_plugin_spcode_toolkit/
         ├── __init__.py           #   ROUTES 路由表 + HANDLERS 别名 + _wrap() 适配器 + register_webapi_routes()
         ├── _helpers.py           #   ReasonCode / _make_envelope / _git_endpoint_preflight / _validate_repo_relative_file / _run_git_async / _JSONResponseCompat / _compute_git_etag / _compute_porcelain_diffs / _git_init_preflight
         ├── project_status.py     #   GET    /spcode/project-status
-        ├── plan_mode.py          #   GET    /spcode/plan-mode
+        ├── plan_mode.py          #   GET    /spcode/plan-mode; POST /spcode/plan-mode (v2.22.0 切换)
         ├── git_worktrees.py      #   GET    /spcode/git-worktrees
         ├── git_diff.py           #   GET    /spcode/git-diff
         ├── git_status.py         #   GET    /spcode/git-status          (v2.13)

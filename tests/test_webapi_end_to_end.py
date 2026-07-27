@@ -167,9 +167,10 @@ def test_routes_table_has_thirty_endpoints() -> None:
     # 30 entries total: 11 GET + 17 POST + 1 PATCH + 1 DELETE
     # + file-binary (GET) + file-rename (POST) + file-remove (POST)
     # + git-stats (GET) + file-write (POST) + vivado-status (GET)
+    # v2.22.0 (2026-07-27): +1 POST (plan-mode 切换,与 GET 同路径)
     methods = [m for entry in ROUTES for m in entry[1]]
     assert methods.count("GET") == 15  # +file-binary +vivado-status
-    assert methods.count("POST") == 21
+    assert methods.count("POST") == 22  # +plan-mode (v2.22.0)
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
 
@@ -394,8 +395,9 @@ def test_register_webapi_routes_calls_context_thirty_two_times() -> None:
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    # 38 entries: 35 (pre) + file-binary (2026-07-22) + git-stats + vivado-status (PR-4)
-    assert plugin.context.register_web_api.call_count == 38
+    # 39 entries: 35 (pre) + file-binary (2026-07-22) + git-stats + vivado-status (PR-4)
+    # + plan-mode POST (v2.22.0, 2026-07-27)
+    assert plugin.context.register_web_api.call_count == 39
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -412,9 +414,10 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 38 routes (+file-binary +git-stats +vivado-status).
+    # Should not raise; should attempt all 39 routes
+    # (+file-binary +git-stats +vivado-status +plan-mode POST v2.22.0).
     register_webapi_routes(plugin)
-    assert call_count == 38
+    assert call_count == 39
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

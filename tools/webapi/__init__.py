@@ -109,6 +109,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "获取 spcode 当前 plan-mode 状态(只读)",
     ),
     (
+        "/spcode/plan-mode",  # v2.22.0 (2026-07-27)
+        ["POST"],
+        plan_mode.handle_set,
+        "切换当前会话 plan/build 模式(dashboard chip 直调,不发聊天消息)",
+    ),
+    (
         "/spcode/git-worktrees",
         ["GET"],
         git_worktrees.handle,
@@ -330,6 +336,7 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
 HANDLERS: dict[str, Callable] = {
     "handle_get_project_status": project_status.handle,
     "handle_get_plan_mode": plan_mode.handle,
+    "handle_post_plan_mode": plan_mode.handle_set,  # v2.22.0 (2026-07-27)
     "handle_get_git_worktrees": git_worktrees.handle,
     "handle_get_git_diff": git_diff.handle,
     "handle_get_git_status": git_status.handle,  # v2.13 (2026-06-24)
@@ -446,7 +453,7 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
 
 def register_webapi_routes(plugin: SPCodeToolkit) -> None:
-    """Register all 26 ``/spcode/*`` routes against ``plugin.context``.
+    """Register all 39 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
     but never raised — a single broken endpoint should not block
