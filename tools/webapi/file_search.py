@@ -221,12 +221,22 @@ async def handle(
     search_path = os.path.join(directory, path_filter) if path_filter else directory
 
     # 6. 调用 python_ripgrep.search(包在 to_thread + 5s 超时里,保持事件循环空闲)
+    # 2026-07-27 fix (elecvoid243): 必须显式 heading=False。缺省 None 时
+    # ripgrep 按"宿主进程 stdout 是否 tty"自动决定 —— AstrBot 服务器跑在
+    # 控制台窗口(tty)时会输出 heading 格式:
+    #   ``F:\path\file.py\n402:    assert ... "T21:00:00"\r\n``
+    # 即裸文件名行 + 无路径的 ``line:content`` 行。后者匹配 _RG_LINE_RE 时
+    # 会拿内容里的第一个 ``:\d+:``(如时间戳的 ``:00:``)当行号分隔符,
+    # 把 ``402:    assert ...T21`` 整段误判为 path → 前端拼出
+    # ``<root>/402: assert ...`` 的坏路径,file-browser 报 path_not_found。
+    # 显式 heading=False 钉死为 ``path:line:content`` 逐行格式,与 tty 无关。
     def _do_search() -> list[str]:
         return rg_search(
             patterns=[rg_pattern],
             paths=[search_path] if search_path else None,
             globs=[glob_filter] if glob_filter else None,
             line_number=True,
+            heading=False,
         )
 
     try:
@@ -264,36 +274,44 @@ async def handle(
         )
 
     # 7. 解析结果(绝对路径 → 相对 directory 的 POSIX 路径)
+    # 2026-07-27 fix (elecvoid243): python_ripgrep.search 的返回值按
+    # "文件"分块 —— 每个元素是一个文件的全部命中行用 "\r\n" 拼接的
+    # 多行字符串,而不是一行一个 match。旧实现直接对整个元素套
+    # _RG_LINE_RE;该正则无 re.MULTILINE,"." 不匹配 "\n"、"$" 只锚定
+    # 整串末尾,任何多行 chunk 都匹配失败被 continue 丢弃 —— 只有
+    # 恰好 1 个命中的文件能幸存,常见 pattern 下结果恒为空。
+    # 修复:先 splitlines() 把 chunk 拆成单行再逐行匹配。
     dir_prefix = os.path.normpath(directory).replace("\\", "/")
     dir_prefix_lc = dir_prefix.lower() + "/"
     results: list[dict[str, Any]] = []
     truncated = False
     for raw in raw_lines:
-        if len(results) >= max_results:
-            truncated = True
+        for line_str in raw.splitlines():
+            if len(results) >= max_results:
+                truncated = True
+                break
+            m = _RG_LINE_RE.match(line_str)
+            if m is None:
+                continue
+            abs_path = m.group("path")
+            # ripgrep 输出是 POSIX 分隔符(它内部用 / 打印)
+            rel_path = abs_path.replace("\\", "/")
+            if dir_prefix and rel_path.lower().startswith(dir_prefix_lc):
+                rel_path = rel_path[len(dir_prefix) + 1 :]
+            line_no = int(m.group("line"))
+            # column 默认 1 — python_ripgrep 的 line_number 格式不带列偏移
+            # (该库未暴露 column 字段;若要带列需改用 rg --json 路径)
+            content = m.group("content")
+            results.append(
+                {
+                    "path": rel_path,
+                    "line": line_no,
+                    "column": 1,
+                    "snippet": content,  # 整行作为 snippet(已含 match)
+                }
+            )
+        if truncated:
             break
-        # python_ripgrep 返回每行末尾带 "\n"(见 _do_search 调用),裁掉
-        line_str = raw.rstrip("\r\n")
-        m = _RG_LINE_RE.match(line_str)
-        if m is None:
-            continue
-        abs_path = m.group("path")
-        # ripgrep 输出是 POSIX 分隔符(它内部用 / 打印)
-        rel_path = abs_path.replace("\\", "/")
-        if dir_prefix and rel_path.lower().startswith(dir_prefix_lc):
-            rel_path = rel_path[len(dir_prefix) + 1 :]
-        line_no = int(m.group("line"))
-        # column 默认 1 — python_ripgrep 的 line_number 格式不带列偏移
-        # (该库未暴露 column 字段;若要带列需改用 rg --json 路径)
-        content = m.group("content")
-        results.append(
-            {
-                "path": rel_path,
-                "line": line_no,
-                "column": 1,
-                "snippet": content,  # 整行作为 snippet(已含 match)
-            }
-        )
 
     return _JSONResponseCompat(
         _make_envelope(

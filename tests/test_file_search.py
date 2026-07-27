@@ -399,4 +399,83 @@ async def test_no_backend_field_in_success_response(mock_plugin, write_files):
     assert "backend" not in data
 
 
+# ── Tests: real python_ripgrep chunk shape (2026-07-27 regression) ──
+
+
+@pytest.mark.asyncio
+async def test_multi_hit_file_chunk_not_dropped(mock_plugin, write_files):
+    """Regression (2026-07-27, elecvoid243): python_ripgrep.search returns
+    ONE element PER FILE, with all of that file's hit lines joined by
+    ``\\r\\n`` inside the element — not one element per match line.
+
+    The pre-fix parser applied the single-line regex to the whole
+    element; without re.MULTILINE any multi-line chunk failed to match
+    and was silently dropped, so files with >1 hit vanished from the
+    results (the UI showed 0 matches for almost every pattern). The
+    parser now splitlines() each chunk before matching.
+    """
+    tmp_path = Path(mock_plugin.get_loaded_project.return_value["directory"])
+    # Real-world shape: element 1 = auth.py with 3 hits in ONE string,
+    # element 2 = README.md with a single hit.
+    chunk_auth = (
+        f"{tmp_path / 'auth.py'}:1:def validate_user(token: str) -> bool:\r\n"
+        f"{tmp_path / 'auth.py'}:5:    return validate_user(t)\r\n"
+        f"{tmp_path / 'auth.py'}:9:# validate_user is the entry point\r\n"
+    )
+    chunk_readme = f"{tmp_path / 'README.md'}:2:Use validate_user to check tokens.\r\n"
+    with patch.object(
+        file_search, "rg_search", return_value=[chunk_auth, chunk_readme]
+    ):
+        result = await file_search.handle(
+            mock_plugin, umo="test:umo", body={"pattern": "validate_user"}
+        )
+    data = result.get("data") if hasattr(result, "get") else result["data"]
+    assert data["reason"] is None
+    assert data["result_count"] == 4
+    auth_hits = [r for r in data["results"] if r["path"] == "auth.py"]
+    assert [r["line"] for r in auth_hits] == [1, 5, 9]
+    assert any(
+        r["path"] == "README.md" and r["line"] == 2 for r in data["results"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_rg_search_called_with_heading_false(mock_plugin, write_files):
+    """Regression (2026-07-27, elecvoid243): the handler MUST pin
+    ``heading=False``. Default (None) lets ripgrep auto-enable heading
+    when the HOST process stdout is a tty (the AstrBot server console),
+    which yields ``<bare path>\\n<line>:<content>`` lines — the parser
+    then mistakes the first ``:\\d+:`` inside the CONTENT (e.g. the
+    ``:00:`` in an ISO timestamp) for the line-number separator and
+    returns ``path="402: assert ...T21"`` garbage."""
+    tmp_path = Path(mock_plugin.get_loaded_project.return_value["directory"])
+    matches = [_fmt(str(tmp_path / "auth.py"), 1, "validate_user")]
+    with patch.object(file_search, "rg_search", return_value=matches) as m:
+        await file_search.handle(
+            mock_plugin, umo="test:umo", body={"pattern": "validate_user"}
+        )
+    assert m.call_count == 1
+    assert m.call_args.kwargs.get("heading") is False
+
+
+@pytest.mark.asyncio
+async def test_truncation_counts_lines_inside_chunk(mock_plugin, write_files):
+    """max_results clamps per match LINE, even when several lines live
+    inside the same per-file chunk."""
+    tmp_path = Path(mock_plugin.get_loaded_project.return_value["directory"])
+    chunk = "".join(
+        f"{tmp_path / 'auth.py'}:{i}:line {i} validate_user\r\n" for i in range(1, 6)
+    )
+    with patch.object(file_search, "rg_search", return_value=[chunk]):
+        result = await file_search.handle(
+            mock_plugin,
+            umo="test:umo",
+            body={"pattern": "validate_user", "max_results": 3},
+        )
+    data = result.get("data") if hasattr(result, "get") else result["data"]
+    assert data["result_count"] == 3
+    assert data["truncated"] is True
+    assert [r["line"] for r in data["results"]] == [1, 2, 3]
+
+
 # Author: spcode_impl, 2026-07-02 15:50
