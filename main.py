@@ -99,6 +99,9 @@ _DEFAULT_CONFIG = {
     # 注入到 CodeFormatTool 实例属性 default_style / default_indent)
     "default_style": "allman",  # astyle 默认风格
     "default_indent": 4,  # astyle 默认缩进空格数
+    # v2.9.x (2026-07-27): /plan /build 命令的模式切换提示文本开关。
+    # True = 保持原行为(yield 提示到消息页面);False = 静默切换。
+    "plan_mode_command_feedback": True,
 }
 
 
@@ -757,17 +760,33 @@ class SPCodeToolkit(star.Star):
 
     @filter.command("plan")
     async def plan(self, event):
-        """/plan — 进入 plan 模式(过滤写工具,提示 LLM 调研而非动手)。"""
+        """/plan — 进入 plan 模式(过滤写工具,提示 LLM 调研而非动手)。
+
+        v2.9.x (2026-07-27): 常规切换提示受 plan_mode_command_feedback
+        配置门控(False = 静默切换,不 yield 任何消息)。配置异常警告
+        (blocked 为空)不受门控,始终提示。
+        """
         umo = event.unified_msg_origin
         was_active = self._plan.is_active(umo)
         self._plan.activate(umo)
         blocked = self._config.get("plan_mode_blocked_tools") or []
+        show_feedback = bool(self._config.get("plan_mode_command_feedback", True))
         if not blocked:
+            # 配置异常警告:即使关闭了常规反馈也要提示,否则用户无从
+            # 得知 plan 模式实际没有过滤任何工具。
             yield event.plain_result(
                 "⚠️ plan 模式已激活,但 plan_mode_blocked_tools 为空。\n"
                 "将不会过滤任何工具。请在插件配置中填写要过滤的工具名。\n"
                 "使用 /build 退出 plan 模式。"
             )
+            return
+        if not show_feedback:
+            # 2026-07-27 fix: 静默模式也必须终止事件 — AstrBot 的
+            # ProcessStage 在命令 handler 没有任何产出(无 yield /
+            # 无 result)时,会把 "/plan" 当普通文本回落给 LLM,
+            # 导致命令看似失效。stop_event() 标记"已处理"后,
+            # ResultDecorateStage 直接 return,不发送任何消息。
+            event.stop_event()
             return
         if was_active:
             yield event.plain_result(
@@ -785,9 +804,18 @@ class SPCodeToolkit(star.Star):
 
     @filter.command("build")
     async def build(self, event):
-        """/build — 退出 plan 模式(回到默认 build 模式,全部工具可用)。"""
+        """/build — 退出 plan 模式(回到默认 build 模式,全部工具可用)。
+
+        v2.9.x (2026-07-27): 提示文本受 plan_mode_command_feedback
+        配置门控(False = 静默切换,不 yield 任何消息)。
+        """
         umo = event.unified_msg_origin
         was_active = self._plan.deactivate(umo)
+        if not bool(self._config.get("plan_mode_command_feedback", True)):
+            # 2026-07-27 fix: 同 plan 命令 — 静默也要 stop_event(),
+            # 否则 "/build" 会被框架当普通文本发给 LLM。
+            event.stop_event()
+            return
         if was_active:
             yield event.plain_result(
                 f"✅ plan 模式已关闭 (会话 {umo})。所有工具现已可用。"

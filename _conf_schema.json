@@ -236,6 +236,12 @@
         "hint": "支持将 {blocked} 占位符替换为实际的黑名单列表。留空则不注入。建议放友好的简短指引,不放长篇规则。",
         "type": "text",
         "default": "Plan mode is active. The following tools have been removed from your tool list: {blocked}. You can only use read-only tools to explore and gather information. When done planning, present your approach to the user and wait for approval before any write operation."
+      },
+      "plan_mode_command_feedback": {
+        "description": "执行 /plan 和 /build 指令时，是否在消息页面显示模式切换提示文本",
+        "hint": "设为 false 后，/plan 和 /build 静默切换模式，不再向前端发送提示消息。注意：plan_mode_blocked_tools 为空时的配置异常警告不受此开关影响，始终显示。",
+        "type": "bool",
+        "default": true
       }
     }
   },
