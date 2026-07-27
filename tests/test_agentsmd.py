@@ -247,54 +247,32 @@ def test_build_injection_ends_with_content():
     assert s.endswith("body text")
 
 
-# ── v2.8 新增: build_injection(directory=...) ────────────────
+# ── v2.22 (2026-07-27): build_injection 与路径注入解耦 ────────────────
 
 
-def test_build_injection_includes_directory_when_provided():
-    """v2.8: 提供 directory 时,输出含项目路径声明 + git worktree 指引。
+def test_build_injection_has_no_directory_param():
+    """v2.22: build_injection 删除 directory 参数(路径注入移到 project 子系统)。
 
-    WHY: 措辞由简短 "项目路径:" 改为更详细的 "你正在处理的项目工作路径为: ..."
-    以与 main.py system_prompt 钩子 (SPCodeToolkit._agentsmd_inject_to_llm_request)
-    注入到 LLM 的实际格式保持一致。
+    此前(v2.8~v2.21)路径前缀由 build_injection(content, directory=...)
+    附带注入;解耦后 /project load no_agentsmd 也要能注入路径,
+    路径注入改由 tools/project/inject.py 独立负责。
     """
-    s = build_injection("# My Content", directory="/home/user/myproject")
-    assert "你正在处理的项目工作路径为: /home/user/myproject" in s
-    assert "优先使用git worktree" in s
-    # 既有内容也保留
+    import inspect
+
+    sig = inspect.signature(build_injection)
+    assert "directory" not in sig.parameters, (
+        "build_injection 不应再接受 directory 参数 — "
+        "路径注入已解耦到 project 子系统(tools/project/inject.py)"
+    )
+
+
+def test_build_injection_output_has_no_path_prefix():
+    """v2.22: build_injection 输出只含 marker + 内容,不含路径前缀。"""
+    s = build_injection("# My Content")
+    assert "项目工作路径为" not in s
+    assert "优先使用git worktree" not in s
+    assert INJECTION_MARKER in s
     assert "# My Content" in s
-    assert INJECTION_MARKER in s
-
-
-def test_build_injection_omits_directory_when_empty():
-    """v2.8: directory 为空字符串时,不含路径块(向后兼容)。"""
-    s = build_injection("body", directory="")
-    assert "项目工作路径为" not in s
-    assert "优先使用git worktree" not in s
-    assert INJECTION_MARKER in s
-    assert "body" in s
-
-
-def test_build_injection_omits_directory_by_default():
-    """v2.8: 不传 directory 参数时,行为与 v2.7 完全一致。"""
-    s = build_injection("body")
-    assert "项目工作路径为" not in s
-    assert "优先使用git worktree" not in s
-    assert INJECTION_MARKER in s
-
-
-def test_build_injection_path_before_marker():
-    """v2.8: 路径块必须放在 INJECTION_MARKER 之前。"""
-    s = build_injection("# Content", directory="/proj")
-    path_pos = s.find("你正在处理的项目工作路径为: /proj")
-    marker_pos = s.find(INJECTION_MARKER)
-    assert path_pos != -1 and marker_pos != -1
-    assert path_pos < marker_pos, "路径块必须先于 marker 出现"
-
-
-def test_build_injection_path_before_content():
-    """v2.8: 路径块必须放在 AGENTS.md 内容之前。"""
-    s = build_injection("# CONTENT_MARKER", directory="/proj")
-    assert s.find("你正在处理的项目工作路径为: /proj") < s.find("# CONTENT_MARKER")
 
 
 # ── resolve_init_template ───────────────────────────

@@ -23,7 +23,6 @@ from ._core import (
     DEFAULT_INJECTION_HEADER,
     INJECTION_MARKER,
     KEY_PROJECT_FILES,
-    PROJECT_PATH_PREFIX_TEMPLATE,
     _SKIP_DIRS,  # noqa: F401  (向后兼容 — 老代码 from tools import agentsmd; a._SKIP_DIRS)
     build_injection,
     generate_agents_md_via_llm,
@@ -45,7 +44,6 @@ __all__ = [
     "DEFAULT_INJECTION_HEADER",
     "INJECTION_MARKER",
     "KEY_PROJECT_FILES",
-    "PROJECT_PATH_PREFIX_TEMPLATE",
     # helpers
     "build_injection",
     "generate_agents_md_via_llm",

@@ -334,16 +334,12 @@ class AgentsmdHandlers:
         if INJECTION_MARKER in (req.system_prompt or ""):
             return
 
-        # v2.8: 注入项目目录路径(在 AGENTS.md 内容之前)
-        directory = state.directory
+        # v2.22 (2026-07-27): 项目路径注入已解耦到 project 子系统
+        # (tools/project/inject.py),本钩子只注入 AGENTS.md 内容。
         if req.system_prompt is None or req.system_prompt == "":
-            req.system_prompt = build_injection(content, directory=directory).lstrip(
-                "\n"
-            )
+            req.system_prompt = build_injection(content).lstrip("\n")
         else:
-            req.system_prompt = req.system_prompt + build_injection(
-                content, directory=directory
-            )
+            req.system_prompt = req.system_prompt + build_injection(content)
 
         logger.debug(
             f"[agentsmd] 已向会话 {umo} 的 system_prompt 注入 AGENTS.md "

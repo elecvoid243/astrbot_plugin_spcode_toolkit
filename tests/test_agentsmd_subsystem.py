@@ -248,6 +248,39 @@ async def test_on_llm_request_injects_marker():
     assert req.system_prompt.startswith("original system")
 
 
+async def test_on_llm_request_does_not_inject_path():
+    """v2.22 (2026-07-27): agentsmd 钩子不再注入项目路径前缀。
+
+    路径注入已解耦到 project 子系统(tools/project/inject.py)。
+    即使 AgentsState.directory 有值,on_llm_request 也只应注入
+    INJECTION_MARKER + AGENTS.md 内容。
+    """
+    fake_plugin = MagicMock()
+    fake_plugin._config = {"agentsmd_enabled": True}
+    mgr = AgentsStateManager()
+    mgr.set(
+        "umo-1",
+        AgentsState(
+            path="p",
+            directory="/proj/demo",
+            last_content="AGENTS_BODY",
+            mtime=1.0,
+        ),
+    )
+    h = AgentsmdHandlers(
+        state=mgr,
+        plugin_getter=lambda: fake_plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
+    ev = _make_event("umo-1")
+    req = _make_req("")
+    await h.on_llm_request(ev, req)
+    assert INJECTION_MARKER in req.system_prompt
+    assert "AGENTS_BODY" in req.system_prompt
+    assert "项目工作路径为" not in req.system_prompt
+    assert "优先使用git worktree" not in req.system_prompt
+
+
 async def test_on_llm_request_idempotent_with_marker():
     fake_plugin = MagicMock()
     fake_plugin._config = {"agentsmd_enabled": True}
@@ -484,7 +517,6 @@ async def test_package_exposes_all_expected_symbols():
         "DEFAULT_INJECTION_HEADER",
         "INJECTION_MARKER",
         "KEY_PROJECT_FILES",
-        "PROJECT_PATH_PREFIX_TEMPLATE",
         "_SKIP_DIRS",
         "build_injection",
         "generate_agents_md_via_llm",
@@ -500,3 +532,10 @@ async def test_package_exposes_all_expected_symbols():
     }
     for name in expected:
         assert hasattr(pkg, name), f"tools.agentsmd missing symbol: {name}"
+    # v2.22 (2026-07-27): 路径注入与 agentsmd 解耦,
+    # PROJECT_PATH_PREFIX_TEMPLATE 已移除(由 tools/_guidance_text.py 的
+    # PROJECT_PATH_GUIDANCE_TEMPLATE 取代)。
+    assert not hasattr(pkg, "PROJECT_PATH_PREFIX_TEMPLATE"), (
+        "PROJECT_PATH_PREFIX_TEMPLATE 应从 tools.agentsmd 移除 — "
+        "路径注入已解耦到 project 子系统"
+    )

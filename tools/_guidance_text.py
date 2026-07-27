@@ -13,6 +13,19 @@ from __future__ import annotations
 # /project load 后注入到 system_prompt 末尾的指引。
 PROJECT_GUIDANCE_MARKER: str = "# Use Codegraph"
 
+# /project load 后注入到 system_prompt 末尾的项目路径声明。
+# v2.22 (2026-07-27): 从 agentsmd 子系统解耦 — 此前该文本由
+# agentsmd/_core.py 的 PROJECT_PATH_PREFIX_TEMPLATE 持有,依附于
+# /agentsmd load;解耦后由 project 子系统(tools/project/inject.py)
+# 独立注入,/project load no_agentsmd 也能注入路径。
+# 文本措辞与 v2.8~v2.21 完全一致(仅所有权迁移)。
+PROJECT_PATH_MARKER: str = "你正在处理的项目工作路径为"
+
+PROJECT_PATH_GUIDANCE_TEMPLATE: str = """
+你正在处理的项目工作路径为: {directory}。
+在对项目进行修改、写入等操作时，优先使用git worktree（如果可用）
+"""
+
 PROJECT_CODEGRAPH_GUIDANCE: str = f"""
 {PROJECT_GUIDANCE_MARKER}
 A codegraph project is loaded. When dealing with the code for this project:

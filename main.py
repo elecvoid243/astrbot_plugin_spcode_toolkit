@@ -42,6 +42,7 @@ from .tools._path_safety import is_path_safe as _is_path_safe
 from .tools.security import PlanModeController, check_is_admin
 from .tools.llm_inject import inject_guidance
 from .tools.agentsmd import AgentsmdSubsystem
+from .tools.project.inject import inject_project_path
 from .tools._guidance_text import (
     PROJECT_GUIDANCE_MARKER,
     PROJECT_CODEGRAPH_GUIDANCE,
@@ -553,6 +554,31 @@ class SPCodeToolkit(star.Star):
             return
         async for msg in self.agentsmd.update(event):
             yield msg
+
+    @filter.on_llm_request()
+    async def _project_inject_path(
+        self, event: AstrMessageEvent, req: ProviderRequest
+    ):
+        """/project load 后,每次 LLM 请求前把项目工作路径注入 system_prompt 末尾。
+
+        委托给 ``tools/project/inject.py:inject_project_path``。
+        与 ``_agentsmd_inject_to_llm_request`` 解耦(v2.22 2026-07-27):
+        路径注入只看 ``tools.project.state``,不看 agentsmd state,
+        也不看 ``skipped_substeps`` — ``/project load no_agentsmd``
+        的空壳 load 同样注入路径。
+
+        WHY 定义在 ``_agentsmd_inject_to_llm_request`` 之前:
+            AstrBot 按注册(定义)顺序执行 OnLLMRequestEvent 钩子。
+            路径钩子先执行 → 路径行追加在前,AGENTS.md 内容追加在后,
+            与 v2.8~v2.21 的注入顺序(路径前缀在 AGENTS.md 内容前)一致。
+
+        Args:
+            event: AstrBot 消息事件对象。
+            req: LLM 请求对象,直接修改 ``req.system_prompt`` 字段。
+
+        Author: elecvoid243, 2026-07-27
+        """
+        inject_project_path(event, req)
 
     @filter.on_llm_request()
     async def _agentsmd_inject_to_llm_request(

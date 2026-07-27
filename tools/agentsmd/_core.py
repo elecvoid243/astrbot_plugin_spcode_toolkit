@@ -244,34 +244,27 @@ async def generate_agents_md_via_llm(
     return content if content else DEFAULT_AGENTS_MD
 
 
-# v2.8 新增: 注入路径前缀模板,放在 AGENTS.md 注入位置之前
-# 让 LLM 知道当前会话绑定到哪个项目目录(配合 /agentsmd load 使用)
-# 不带尾随换行:DEFAULT_INJECTION_HEADER 自带 \n\n 前缀,正好形成空行分隔
-PROJECT_PATH_PREFIX_TEMPLATE = "你正在处理的项目工作路径为: {directory}。\n在对项目进行修改、写入等操作时，优先使用git worktree（如果可用）"
+# v2.22 (2026-07-27): PROJECT_PATH_PREFIX_TEMPLATE 已移除。
+# 路径注入与 agentsmd 解耦,改由 project 子系统负责
+# (tools/_guidance_text.py: PROJECT_PATH_GUIDANCE_TEMPLATE +
+# tools/project/inject.py: inject_project_path)。
+# 动机: /project load <dir> no_agentsmd 时也要能注入项目路径。
 
 
-def build_injection(content: str, *, directory: str = "") -> str:
-    """构造注入到 system_prompt 末尾的文本。
-
-    当提供 directory 时,会在 AGENTS.md 内容前注入一行
-    "项目路径: <directory>",便于 LLM 知道当前会话绑定到哪个项目目录。
+def build_injection(content: str) -> str:
+    """构造注入到 system_prompt 末尾的文本(marker 头 + AGENTS.md 内容)。
 
     on_llm_request 钩子调用,marker 检测防重复注入(由调用方配合)。
 
-    输出格式(有 directory):
-        项目路径: <directory>
+    v2.22 (2026-07-27): 删除 ``directory`` 参数 — 项目路径注入
+    已解耦到 project 子系统(tools/project/inject.py),本函数
+    只负责 AGENTS.md 内容本身。
 
-        <INJECTION_MARKER>
-        <content>
-
-    输出格式(无 directory,向后兼容):
+    输出格式:
         <INJECTION_MARKER>
         <content>
     """
-    path_prefix = (
-        PROJECT_PATH_PREFIX_TEMPLATE.format(directory=directory) if directory else ""
-    )
-    return f"{path_prefix}{DEFAULT_INJECTION_HEADER}{content}"
+    return f"{DEFAULT_INJECTION_HEADER}{content}"
 
 
 def resolve_init_template(config: dict | None, default: str = "") -> str:
