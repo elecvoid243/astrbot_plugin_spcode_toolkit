@@ -12,10 +12,37 @@ import os
 import subprocess
 import sys
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from astrbot.api.web import JSONResponse  # _JSONResponseCompat 父类
+
+
+@dataclass
+class ConflictHunk:
+    """Parsed conflict hunk from a file with <<<<<<< markers.
+
+    Fields:
+        index: 0-based hunk ordinal within the file.
+        start_line: 1-based line number of the <<<<<<< line.
+        end_line: 1-based line number of the >>>>>>> line.
+        ours: Content between <<<<<<< and ======= (or |||||||).
+        theirs: Content between ======= and >>>>>>>.
+        base: Content between ||||||| and ======= (diff3 format); None for standard.
+        ours_label: Label after <<<<<<< (e.g. "HEAD").
+        theirs_label: Label after >>>>>>> (e.g. "feature/login").
+    """
+
+    index: int
+    start_line: int
+    end_line: int
+    ours: str
+    theirs: str
+    base: str | None
+    ours_label: str
+    theirs_label: str
+
 
 # pythonw.exe 启动下抑制子进程弹 cmd 黑窗的统一直路常量。
 # WHY: 见 tools/_helpers.py 中同名常量的定义;此处与 tools/_helpers.py
@@ -374,6 +401,22 @@ class ReasonCode:
         "unsupported_media_type"  # file-binary: extension not in MIME_BY_EXT
     )
     INTERNAL_ERROR = "internal_error"  # file-binary: unhandled exception
+
+    # ── v2.22.0 新增：git-merge / cherry-pick / conflict（2026-07-28）──
+    # git-merge (3)
+    MERGE_CONFLICT = "merge_conflict"
+    MERGE_ALREADY_UP_TO_DATE = "merge_already_up_to_date"
+    UNRELATED_HISTORIES = "unrelated_histories"
+
+    # git-cherry-pick (2)
+    CHERRY_PICK_CONFLICT = "cherry_pick_conflict"
+    CHERRY_PICK_EMPTY = "cherry_pick_empty"
+
+    # conflict lifecycle (4)
+    OPERATION_IN_PROGRESS = "operation_in_progress"
+    NO_CONFLICT_IN_PROGRESS = "no_conflict_in_progress"
+    FILE_NOT_CONFLICTED = "file_not_conflicted"
+    UNRESOLVED_CONFLICTS_REMAIN = "unresolved_conflicts_remain"
 
 
 # ── git status --porcelain X/Y 列判定(共享常量)────────────────────
