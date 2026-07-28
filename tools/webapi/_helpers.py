@@ -1142,3 +1142,141 @@ async def _read_operation_ref(
         subject_result.get("stdout", "").strip() if subject_result.get("ok") else ""
     )
     return sha, subject
+
+
+def _parse_conflict_hunks(content: str) -> list[ConflictHunk]:
+    """Parse conflict markers from file content into structured hunks.
+
+    Supports both standard (merge) and diff3 conflict styles.
+    Returns empty list for binary content, empty content, or no markers.
+    """
+    if not content or "\x00" in content:
+        return []
+
+    lines = content.split("\n")
+    hunks: list[ConflictHunk] = []
+    i = 0
+    n = len(lines)
+
+    while i < n:
+        line = lines[i]
+        if line.startswith("<<<<<<< "):
+            ours_label = line[8:].strip()
+            start_line = i + 1  # 1-based
+            ours_parts: list[str] = []
+            base_parts: list[str] = []
+            theirs_parts: list[str] = []
+            base: str | None = None
+            theirs_label = ""
+            state = "ours"
+            j = i + 1
+            while j < n:
+                current = lines[j]
+                if current.startswith("||||||| ") and state == "ours":
+                    state = "base"
+                    j += 1
+                    continue
+                if current.startswith("=======") and state in ("ours", "base"):
+                    if state == "base":
+                        base = "".join(base_parts)
+                    state = "theirs"
+                    j += 1
+                    continue
+                if current.startswith(">>>>>>> "):
+                    theirs_label = current[8:].strip()
+                    end_line = j + 1  # 1-based
+                    hunks.append(
+                        ConflictHunk(
+                            index=len(hunks),
+                            start_line=start_line,
+                            end_line=end_line,
+                            ours="".join(ours_parts),
+                            theirs="".join(theirs_parts),
+                            base=base,
+                            ours_label=ours_label,
+                            theirs_label=theirs_label,
+                        )
+                    )
+                    i = j + 1
+                    break
+                if state == "ours":
+                    ours_parts.append(current + "\n")
+                elif state == "base":
+                    base_parts.append(current + "\n")
+                elif state == "theirs":
+                    theirs_parts.append(current + "\n")
+                j += 1
+            else:
+                # Malformed: no closing >>>>>>> found; skip
+                i += 1
+        else:
+            i += 1
+
+    return hunks
+
+
+_THREE_WAY_MAX_BYTES = 1 * 1024 * 1024  # 1 MB per stage
+
+
+async def _read_three_way(git_bin: str, directory: str, file: str) -> dict:
+    """Read base/ours/theirs versions of a conflicted file via git show :N:<file>.
+
+    Returns:
+        {"base": str|None, "ours": str|None, "theirs": str|None, "truncated": bool}
+    """
+    result: dict = {"base": None, "ours": None, "theirs": None, "truncated": False}
+    for stage, key in (("1", "base"), ("2", "ours"), ("3", "theirs")):
+        r = await _run_git_async(
+            [git_bin, "-C", directory, "show", f":{stage}:{file}"],
+            encoding="utf-8",
+            timeout=5.0,
+        )
+        if r.get("ok"):
+            content = r.get("stdout", "")
+            if len(content.encode("utf-8", errors="replace")) > _THREE_WAY_MAX_BYTES:
+                result["truncated"] = True
+            else:
+                result[key] = content
+        # stage missing (e.g. AA conflict has no base) → leave as None
+    return result
+
+
+def _classify_merge_stderr(stderr: str, stdout: str = "") -> str:
+    """Classify git merge failure output into a ReasonCode."""
+    combined = (stderr + " " + stdout).lower()
+    if "already up to date" in combined or "already up-to-date" in combined:
+        return ReasonCode.MERGE_ALREADY_UP_TO_DATE
+    if "conflict" in combined:
+        return ReasonCode.MERGE_CONFLICT
+    if "unrelated histories" in combined:
+        return ReasonCode.UNRELATED_HISTORIES
+    if "not something we can merge" in combined or "unknown revision" in combined:
+        return ReasonCode.REF_NOT_FOUND
+    if "your local changes" in combined or "would be overwritten" in combined:
+        return ReasonCode.WORKTREE_DIRTY
+    # Delegate to commit classifier for hook/identity errors
+    from .git_commit import _classify_commit_error
+
+    classified = _classify_commit_error(stderr, returncode=-1)
+    if classified != ReasonCode.GIT_ERROR:
+        return classified
+    return ReasonCode.GIT_ERROR
+
+
+def _classify_cherry_pick_stderr(stderr: str) -> str:
+    """Classify git cherry-pick failure output into a ReasonCode."""
+    s = stderr.lower()
+    if "conflict" in s:
+        return ReasonCode.CHERRY_PICK_CONFLICT
+    if "empty commit" in s or "now empty" in s:
+        return ReasonCode.CHERRY_PICK_EMPTY
+    if "bad object" in s or "unknown revision" in s:
+        return ReasonCode.COMMIT_NOT_FOUND
+    if "your local changes" in s or "would be overwritten" in s:
+        return ReasonCode.WORKTREE_DIRTY
+    from .git_commit import _classify_commit_error
+
+    classified = _classify_commit_error(stderr, returncode=-1)
+    if classified != ReasonCode.GIT_ERROR:
+        return classified
+    return ReasonCode.GIT_ERROR
