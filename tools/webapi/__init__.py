@@ -5,6 +5,7 @@ This package owns the 25 ``/spcode/*`` HTTP endpoints consumed by the
 Dashboard / WebUI:
 
   * ``/spcode/project-status``  (GET)
+  * ``/spcode/project-load``    (POST)  # 2026-07-28 — 静默加载项目
   * ``/spcode/plan-mode``       (GET)
   * ``/spcode/git-worktrees``   (GET)
   * ``/spcode/git-diff``        (GET)
@@ -94,6 +95,7 @@ from . import (
     git_worktree_unlock,  # v2.14.0 (2026-06-26)
     git_worktrees,
     plan_mode,
+    project_load,  # 2026-07-28 静默加载项目 (POST /spcode/project-load)
     project_status,
     vivado_status,  # PR-4 2026-07-23
 )
@@ -107,6 +109,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["GET"],
         project_status.handle,
         "获取 spcode 当前会话已加载的项目信息(供 dashboard 调用)",
+    ),
+    (
+        "/spcode/project-load",  # 2026-07-28 静默加载项目
+        ["POST"],
+        project_load.handle,
+        "静默加载项目(dashboard 调用,不在聊天框 yield 用户消息;仿照 plan-mode 切换模式)",
     ),
     (
         "/spcode/plan-mode",
@@ -377,6 +385,7 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
 # 旧方法名 -> 新模块级 handler (for back-compat / introspection)
 HANDLERS: dict[str, Callable] = {
     "handle_get_project_status": project_status.handle,
+    "handle_post_project_load": project_load.handle,  # 2026-07-28 静默加载
     "handle_get_plan_mode": plan_mode.handle,
     "handle_post_plan_mode": plan_mode.handle_set,  # v2.22.0 (2026-07-27)
     "handle_get_git_worktrees": git_worktrees.handle,
@@ -501,11 +510,16 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
 
 def register_webapi_routes(plugin: SPCodeToolkit) -> None:
-    """Register all 39 ``/spcode/*`` routes against ``plugin.context``.
+    """Register all 46 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
     but never raised — a single broken endpoint should not block
     plugin load.
+
+    端点数演进:
+    v2.22.0 (2026-07-27): 39 -> 45 (+plan-mode POST 1 + git-merge/cherry-pick/
+                          conflict 系列 5 端点)
+    2026-07-28: 45 -> 46 (+1 POST /spcode/project-load 静默加载项目)
     """
     for route, methods, handler, desc in ROUTES:
         try:
@@ -558,6 +572,7 @@ __all__ = [
     "git_worktree_unlock",  # v2.14.0
     "git_worktrees",
     "plan_mode",
+    "project_load",  # 2026-07-28 静默加载
     "project_status",
     "vivado_status",  # PR-4 2026-07-23
 ]

@@ -470,13 +470,68 @@ astrbot_plugin_spcode_toolkit/
 12. **配置拍平**：`_conf_schema.json` 是分组结构，`main.py._flatten_config()` 会把嵌套分组拍平为顶层键（如 `codegraph.codegraph_enabled` -> `codegraph_enabled`）。新增配置项时保持此约定
 13. **版本号统一**：当前版本统一为 **v2.22.0**。发布时同步更新 `metadata.yaml` 的 `version` 字段
 
+## Project 加载 — 静默变体 (2026-07-28)
+
+仿照 `plan/build` 模式切换的 webapi 端点设计（`POST /spcode/plan-mode` 的 `handle_set`，
+dashboard 的 plan/build chip 直调），
+新增 `POST /spcode/project-load` 端点供 dashboard 在用户点 "Load Project" 按钮时调用，
+**不**向聊天框 yield 任何用户可见消息。
+
+### 关键组件
+
+- `tools/project/manager.py:ProjectManager.load_impl_silent` — `async def`（非 generator）
+  变体，行为与 `load_impl` 完全一致（feature flag、路径校验、4 步流水线、state 登记），
+  返回结构化 `dict` 而非 yield 用户消息。
+- `tools/webapi/project_load.py` — POST handler，body 校验后调
+  `plugin.project.load_impl_silent(...)` 并把内部 reason 翻译为 `ReasonCode`。
+- `force=true` 时静默卸载已加载项目（绕开 `unload_impl` 的 yield 反馈，
+  走 `_silent_unload` 同步 helper）。
+
+### Envelope
+
+成功：
+```json
+{
+  "success": true,
+  "reason": null,
+  "elapsed_ms": 42,
+  "data": {
+    "loaded": true,
+    "directory": "/abs/path",
+    "loaded_at": 1700000000.0,
+    "umo": "webchat:...",
+    "skipped_substeps": [],
+    "substep_messages": ["...", "✅ 项目已加载: ..."]
+  }
+}
+```
+
+失败：
+```json
+{
+  "success": false,
+  "reason": "git_error",
+  "elapsed_ms": 12,
+  "data": {
+    "loaded": false,
+    "directory": "...",
+    "umo": "...",
+    "skipped_substeps": [],
+    "substep_messages": [...],
+    "previous_directory": "...",
+    "silent_reason": "agentsmd_load_failed"
+  }
+}
+```
+
 ## Web API 端点（供 Dashboard 消费）
 
-Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()` 中注册，挂载前缀 `/spcode`。当前共 **44 条路由记录**（42 个唯一路径，`/spcode/docs` 一路径复用 POST/PATCH/DELETE 三方法）：
+Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()` 中注册，挂载前缀 `/spcode`。当前共 **46 条路由记录**（44 个唯一路径，`/spcode/docs` 一路径复用 POST/PATCH/DELETE 三方法）：
 
 | 端点 | 方法 | 用途 | 关键参数 |
 |------|------|------|---------|
 | `/spcode/project-status` | GET | 当前加载项目状态 | `umo?` |
+| `/spcode/project-load` | POST | 静默加载项目（2026-07-28，仿照 plan-mode 切换模式） | body: `{directory, no_agentsmd?, no_codegraph?, force?, umo}` |
 | `/spcode/plan-mode` | GET | 当前 plan-mode 状态（严格 per-session，不回退） | `umo?` |
 | `/spcode/git-worktrees` | GET | 列出 worktree | `umo?` |
 | `/spcode/git-diff` | GET | 工作区 diff（ETag/304） | `umo?`, `worktree?` |

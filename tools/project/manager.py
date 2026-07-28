@@ -380,3 +380,284 @@ class ProjectManager:
     def get_loaded_project(self, umo: str) -> dict | None:
         """返回指定 umo 的已加载项目信息(供 webapi / dashboard 同步访问)。"""
         return _state.get(umo)
+
+    async def load_impl_silent(
+        self,
+        event: AstrMessageEvent,
+        directory: str,
+        *,
+        no_agentsmd: bool = False,
+        no_codegraph: bool = False,
+    ) -> dict:
+        """``/project load`` 的静默变体,供 webapi 端点调用(2026-07-28 引入)。
+
+        与 :meth:`load_impl` 行为完全一致(feature flag 校验、路径校验、
+        4 步流水线、state 登记),**唯一差异**是不向 ``event`` 产出任何
+        聊天框可见消息——所有步骤结果收集到返回的 ``dict`` 里,供
+        dashboard / API 调用方直接读取。
+
+        为什么需要这个方法?
+            ``/project load`` 是用户通过聊天框输入的交互式命令,需要逐步
+            反馈每个子步骤的进度(``⏳ [1/3] ...``、``❌ ... 失败``、
+            ``✅ 项目已加载``)。但 dashboard 在加载项目时同样需要走完整
+            流水线,如果直接调 ``load_impl``,会让 ``event.plain_result``
+            把这些进度消息注入聊天框,造成不必要的噪音。dashboard 只需要
+            最终结构化结果(成功 / 失败 + 原因 + 数据),由前端自行决定
+            渲染方式(toast / 状态 chip / 错误弹窗)。
+
+        设计:
+            - **不是** ``async generator``——返回 ``dict``,调用方直接
+              ``await plugin.project.load_impl_silent(...)`` 拿到结果。
+            - 内部**仍然**通过 ``project_load_step`` 走 4 步流水线,
+              复用 ProjectLoadAbort 行为。子步骤 yield 的每条消息被
+              收集到 ``substep_messages`` 字段(供调用方排查失败用),
+              **不**经过 ``event.plain_result``(走 ``MagicMock`` 化的
+              silent_event 让 ``plain_result`` 退化为字符串)。
+
+        Args:
+            event: 兼容 ``AstrMessageEvent`` 接口的对象(仅需
+                ``unified_msg_origin`` 属性 + ``plain_result`` 调用)。
+                webapi 端点传 ``MagicMock(unified_msg_origin=umo,
+                plain_result=lambda x: x)`` 即可。
+            directory: 用户提供的项目目录路径。
+            no_agentsmd: 是否跳过 AGENTS.md 子步骤。
+            no_codegraph: 是否跳过 codegraph 子步骤。
+
+        Returns:
+            结构化结果 dict,字段::
+
+                {
+                    "ok": bool,                # 整体成功与否
+                    "directory": str,          # resolve 后的绝对路径(失败时为 "")
+                    "loaded_at": float,        # 成功时为 time.time(),失败为 0
+                    "skipped_substeps": list[str], # 跳过的子步骤名(已 sort)
+                    "substep_messages": list[str], # 全部子步骤 yield 的消息(供调试)
+                    "reason": str | None,      # 失败 reason 码
+                    "previous_directory": str,  # 失败且因"重复 load"时,返回已加载目录
+                }
+        """
+        messages: list[str] = []
+        failed_reason: str | None = None
+        target_str = ""
+        skipped: set[str] = set()
+        previous_directory = ""
+
+        # 1. Feature flag 校验
+        if not no_agentsmd:
+            agentsmd_on = self._plugin._config.get("agentsmd_enabled", True)
+            if not agentsmd_on:
+                return {
+                    "ok": False,
+                    "directory": "",
+                    "loaded_at": 0.0,
+                    "skipped_substeps": [],
+                    "substep_messages": messages,
+                    "reason": "agentsmd_disabled",
+                    "previous_directory": "",
+                }
+        if not no_codegraph:
+            codegraph_on = self._plugin._config.get("codegraph_enabled", True)
+            if not codegraph_on:
+                return {
+                    "ok": False,
+                    "directory": "",
+                    "loaded_at": 0.0,
+                    "skipped_substeps": [],
+                    "substep_messages": messages,
+                    "reason": "codegraph_disabled",
+                    "previous_directory": "",
+                }
+
+        # 2. 重复 load 拦截
+        umo = event.unified_msg_origin
+        if _state.get(umo) is not None:
+            previous_directory = _state.get(umo).get("directory", "")
+            return {
+                "ok": False,
+                "directory": "",
+                "loaded_at": 0.0,
+                "skipped_substeps": [],
+                "substep_messages": messages,
+                "reason": "project_already_loaded",
+                "previous_directory": previous_directory,
+            }
+
+        # 3. 路径解析与安全校验
+        directory = strip_surrounding_quotes(directory)
+        target = Path(directory).resolve()
+        target_str = str(target)
+        ok, reason = is_path_safe(
+            target,
+            user_blacklist=self._plugin._config.get("file_remove_blacklist"),
+        )
+        if not ok:
+            return {
+                "ok": False,
+                "directory": target_str,
+                "loaded_at": 0.0,
+                "skipped_substeps": [],
+                "substep_messages": messages,
+                "reason": "path_unsafe",
+                "previous_directory": "",
+            }
+
+        # 4. 4 步流水线(子步骤 yield 全部收集,不回传 event)
+        try:
+            # 步骤 1/3: agentsmd
+            if no_agentsmd:
+                messages.append(
+                    "⏭️ [1/3] AGENTS.md 步骤已跳过(用户指定 no_agentsmd)。"
+                )
+            else:
+                agents_md_path = target / "AGENTS.md"
+                if not agents_md_path.exists():
+                    messages.append(
+                        f"⏳ [1/3] AGENTS.md 不存在,正在 init: {target}"
+                    )
+                    async for msg in project_load_step(
+                        event,
+                        self._plugin.agentsmd.init(event, str(target)),
+                        "[1/3] AGENTS.md 初始化",
+                    ):
+                        messages.append(_msg_to_text(msg))
+                    if _last_message_failed(messages):
+                        failed_reason = "agentsmd_init_failed"
+                else:
+                    messages.append(
+                        f"ℹ️ [1/3] AGENTS.md 已存在,跳过 init: {agents_md_path}"
+                    )
+                if failed_reason is None:
+                    messages.append(f"⏳ [1/3] 正在 load AGENTS.md: {target}")
+                    async for msg in project_load_step(
+                        event,
+                        self._plugin.agentsmd.load(event, str(target)),
+                        "[1/3] AGENTS.md 加载",
+                    ):
+                        messages.append(_msg_to_text(msg))
+                    if _last_message_failed(messages):
+                        failed_reason = "agentsmd_load_failed"
+
+            # 步骤 2/3: codegraph
+            if failed_reason is None:
+                if no_codegraph:
+                    messages.append(
+                        "⏭️ [2/3] codegraph 步骤已跳过(用户指定 no_codegraph)。"
+                    )
+                else:
+                    messages.append(f"⏳ [2/3] codegraph init: {target}")
+                    async for msg in project_load_step(
+                        event,
+                        self._plugin.codegraph.init(event, str(target)),
+                        "[2/3] codegraph init",
+                    ):
+                        messages.append(_msg_to_text(msg))
+                    if _last_message_failed(messages):
+                        failed_reason = "codegraph_init_failed"
+                    if failed_reason is None:
+                        messages.append(f"⏳ [2/3] codegraph set: {target}")
+                        async for msg in project_load_step(
+                            event,
+                            self._plugin.codegraph.set_project(event, str(target)),
+                            "[2/3] codegraph set",
+                        ):
+                            messages.append(_msg_to_text(msg))
+                        if _last_message_failed(messages):
+                            failed_reason = "codegraph_set_failed"
+        except ProjectLoadAbort:
+            # 子步骤抛 abort 时,failed_reason 已被紧贴 step 的
+            # ``_last_message_failed`` 赋值;此分支仅做防御兜底
+            if failed_reason is None:
+                failed_reason = "agentsmd_load_failed"
+
+        if failed_reason is not None:
+            return {
+                "ok": False,
+                "directory": target_str,
+                "loaded_at": 0.0,
+                "skipped_substeps": sorted(skipped),
+                "substep_messages": messages,
+                "reason": failed_reason,
+                "previous_directory": "",
+            }
+
+        # 5. 记录 state(仅在所有子步骤都成功后才登记)
+        loaded_at_ts = _time.time()
+        if no_agentsmd:
+            skipped.add("agentsmd")
+        if no_codegraph:
+            skipped.add("codegraph")
+        _state.put(
+            umo,
+            {
+                "directory": target_str,
+                "loaded_at": loaded_at_ts,
+                "skipped_substeps": skipped,
+            },
+        )
+
+        # 6. 总结消息(附加到 messages,供调用方调试,不写入聊天框)
+        if no_agentsmd and no_codegraph:
+            summary_lines = "  - 设定工作目录(无子步骤)"
+        elif no_agentsmd:
+            summary_lines = (
+                "  - 设定工作目录\n"
+                "  - 载入 codegraph 索引\n"
+                "  - (已跳过) AGENTS.md 注入"
+            )
+        elif no_codegraph:
+            summary_lines = (
+                "  - 设定工作目录\n"
+                "  - AGENTS.md 注入到 system_prompt\n"
+                "  - (已跳过) codegraph 索引"
+            )
+        else:
+            summary_lines = (
+                "  - 设定工作目录\n"
+                "  - AGENTS.md 注入到 system_prompt\n"
+                "  - 载入 codegraph 索引"
+            )
+        messages.append(
+            f"✅ 项目已加载: {target}\n已自动进行如下步骤:\n{summary_lines}\n"
+        )
+
+        return {
+            "ok": True,
+            "directory": target_str,
+            "loaded_at": loaded_at_ts,
+            "skipped_substeps": sorted(skipped),
+            "substep_messages": messages,
+            "reason": None,
+            "previous_directory": "",
+        }
+
+
+def _msg_to_text(msg) -> str:
+    """把 ``event.plain_result`` 返回值 / 测试 mock 字符串统一规整为 str。
+
+    生产路径:``plain_result`` 返回 ``MessageEventResult``(``chain[0].text`` 是
+    渲染后的纯文本)。测试 mock 路径:``plain_result = lambda x: x`` 直接
+    返回 str。本 helper 用与 :func:`project_load_step` 同样的"防御式抽取"
+    逻辑,保证 silent 路径收集到的 messages 与 yield 出去的字符串内容一致。
+    """
+    if isinstance(msg, str):
+        return msg
+    chain = getattr(msg, "chain", None)
+    if chain:
+        first = chain[0]
+        text = getattr(first, "text", None)
+        if isinstance(text, str):
+            return text
+    return str(msg)
+
+
+def _last_message_failed(messages: list[str]) -> bool:
+    """检查 :func:`project_load_step` 是否刚 yield 过 ``❌`` 开头的失败消息。
+
+    ``project_load_step`` 失败时会 yield 一条 ``❌ <step_label> 失败,/project
+    load 中止。`` 的总结消息,然后抛 ``ProjectLoadAbort``。silent 路径要复用
+    这条约定——把"上一条消息是否以 ❌ 开头"作为子步骤成败信号,避免在
+    silent 路径里重写一遍 step 流程。
+    """
+    if not messages:
+        return False
+    return messages[-1].startswith("❌")
