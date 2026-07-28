@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 from ._helpers import (
     _JSONResponseCompat,
     _compute_git_etag,
+    _detect_conflict_operation,
     _git_endpoint_preflight,
     _make_envelope,
     _run_git_async,
@@ -401,6 +402,9 @@ async def handle(
             "behind": behind,
         }
 
+    # v2.22.0: lightweight conflict state detection
+    operation = await _detect_conflict_operation(git_bin, directory)
+
     return _JSONResponseCompat(
         _make_envelope(
             success=True,
@@ -415,6 +419,8 @@ async def handle(
             summary=summary,
             truncated=truncated,
             max_files=MAX_FILES,
+            operation=operation,
+            in_conflict=operation is not None,
         ),
         status_code=200,
         headers=cache_headers,

@@ -70,11 +70,17 @@ from . import (
     git_branch_delete,  # v2.17.0 (2026-07-16) — PR-E POST endpoint
     git_branch_switch,  # v2.17.0 (2026-07-16) — PR-F POST endpoint
     git_branches,  # v2.17.0 (2026-07-16) — PR-C GET endpoint
+    git_cherry_pick,  # v2.22.0 (2026-07-28)
     git_commit,
+    git_conflict_abort,  # v2.22.0 (2026-07-28)
+    git_conflict_continue,  # v2.22.0 (2026-07-28)
+    git_conflict_resolve,  # v2.22.0 (2026-07-28)
+    git_conflict_status,  # v2.22.0 (2026-07-28)
     git_diff,
     git_file,  # spec B (2026-07-11): GET /spcode/git-file
     git_init,  # v2.17.0 (2026-07-16) - PR-B POST endpoint
     git_log,
+    git_merge,  # v2.22.0 (2026-07-28)
     git_repo_check,  # v2.18.0 (2026-07-16) - GET git 仓库探测
     git_revert,  # v2.17.0 (2026-07-16) - PR-G POST endpoint
     git_show,
@@ -330,6 +336,42 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         vivado_status.handle,
         "获取 vivado MCP 运行状态快照(供 dashboard 显示)",
     ),
+    (
+        "/spcode/git-merge",  # v2.22.0 (2026-07-28)
+        ["POST"],
+        git_merge.handle,
+        "git merge <source>（合并分支/tag/SHA 到当前 HEAD）",
+    ),
+    (
+        "/spcode/git-cherry-pick",  # v2.22.0 (2026-07-28)
+        ["POST"],
+        git_cherry_pick.handle,
+        "git cherry-pick <ref>（拣选单 commit 到当前 HEAD）",
+    ),
+    (
+        "/spcode/git-conflict-status",  # v2.22.0 (2026-07-28)
+        ["GET"],
+        git_conflict_status.handle,
+        "查询当前冲突状态（操作类型 + 冲突文件 + hunk 详情 + 三路原文）",
+    ),
+    (
+        "/spcode/git-conflict-resolve",  # v2.22.0 (2026-07-28)
+        ["POST"],
+        git_conflict_resolve.handle,
+        "解决冲突文件（按 hunk 选择 / 整文件 ours/theirs / custom content）",
+    ),
+    (
+        "/spcode/git-conflict-continue",  # v2.22.0 (2026-07-28)
+        ["POST"],
+        git_conflict_continue.handle,
+        "冲突全部解决后继续完成 merge/cherry-pick/revert",
+    ),
+    (
+        "/spcode/git-conflict-abort",  # v2.22.0 (2026-07-28)
+        ["POST"],
+        git_conflict_abort.handle,
+        "中止当前 merge/cherry-pick/revert 操作",
+    ),
 ]
 
 # 旧方法名 -> 新模块级 handler (for back-compat / introspection)
@@ -371,6 +413,12 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_file_rename": file_rename.handle,  # 2026-07-18
     "handle_post_file_remove": file_remove.handle,  # 2026-07-18
     "handle_get_vivado_status": vivado_status.handle,  # PR-4 2026-07-23
+    "handle_post_git_merge": git_merge.handle,  # v2.22.0 (2026-07-28)
+    "handle_post_git_cherry_pick": git_cherry_pick.handle,  # v2.22.0 (2026-07-28)
+    "handle_get_git_conflict_status": git_conflict_status.handle,  # v2.22.0 (2026-07-28)
+    "handle_post_git_conflict_resolve": git_conflict_resolve.handle,  # v2.22.0 (2026-07-28)
+    "handle_post_git_conflict_continue": git_conflict_continue.handle,  # v2.22.0 (2026-07-28)
+    "handle_post_git_conflict_abort": git_conflict_abort.handle,  # v2.22.0 (2026-07-28)
 }
 
 

@@ -7,9 +7,25 @@ We mock it before any tools.webapi import to avoid ModuleNotFoundError.
 import sys
 from unittest.mock import MagicMock
 
+
 # Mock astrbot.api.web before any tools.webapi import triggers it
+class _FakeJSONResponse:
+    """Minimal stand-in for astrbot.api.web.JSONResponse in tests."""
+
+    def __init__(self, content=None, status_code=200, headers=None):
+        self._content = content
+        self.status_code = status_code
+        self.headers = headers or {}
+
+    def __getitem__(self, key):
+        return self._content[key]
+
+    def get(self, key, default=None):
+        return self._content.get(key, default)
+
+
 _web_mock = MagicMock()
-_web_mock.JSONResponse = type("JSONResponse", (), {})
+_web_mock.JSONResponse = _FakeJSONResponse
 sys.modules.setdefault("astrbot.api.web", _web_mock)
 sys.modules.setdefault("astrbot.api", MagicMock(web=_web_mock))
 
