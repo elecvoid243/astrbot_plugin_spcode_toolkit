@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.21.1** · Author: elecvoid243 · 最后更新: 2026-07-26
+> **当前版本: v2.22.0** · Author: elecvoid243 · 最后更新: 2026-07-28
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -267,7 +267,7 @@ astrbot_plugin_spcode_toolkit/
     ├── file_remove.py            # [legacy 入口] 删除业务实现
     ├── todo_list.py              # [legacy 入口] v2.6+ stub，保留兼容
     │
-    └── webapi/                   # Web API 层（38 条路由记录 / 36 个唯一路径，每端点一文件）
+    └── webapi/                   # Web API 层（44 条路由记录 / 42 个唯一路径，每端点一文件）
         ├── __init__.py           #   ROUTES 路由表 + HANDLERS 别名 + _wrap() 适配器 + register_webapi_routes()
         ├── _helpers.py           #   ReasonCode / _make_envelope / _git_endpoint_preflight /
         │                         #   _git_init_preflight / _validate_repo_relative_file /
@@ -347,7 +347,7 @@ astrbot_plugin_spcode_toolkit/
    - 写入方：`ProjectManager.load_impl` 在末尾 `state.put(umo, {...})` 时按 no_xxx flag 填充
    - 读取方：`ProjectManager.get_loaded_project` / `webapi/project_status.handle` / `main.py` 钩子
 
-3. **Web API 层** `tools/webapi/`（v3.6+ 自 main.py 拆出；当前 38 条路由记录 / 36 个唯一路径）
+3. **Web API 层** `tools/webapi/`（v3.6+ 自 main.py 拆出；当前 44 条路由记录 / 42 个唯一路径）
    - 每个端点一个文件，handler 命名固定为 `async def handle(plugin, ...) -> dict`
      （`docs_crud.py` 例外：一个文件承载 `handle_post_docs` / `handle_patch_docs` / `handle_delete_docs` 三个方法，复用同一 `/spcode/docs` 路径）
    - `__init__.py` 拥有 `ROUTES` 路由表 + `HANDLERS` 别名表 + `_wrap()` 适配器 + `register_webapi_routes()`
@@ -468,11 +468,11 @@ astrbot_plugin_spcode_toolkit/
 10. **路径安全**：任何涉及用户输入路径的代码，先调用 `_path_safety` 校验，**不要**自己实现路径判断
 11. **Web API 参数安全**：`?worktree=` 等用户控制的路径参数，必须经过 `_validate_worktree_param`（位于 `tools/_helpers.py`）的 6 步防御链：**关键不变量 - git-common-dir 不匹配 = 直接拒绝**
 12. **配置拍平**：`_conf_schema.json` 是分组结构，`main.py._flatten_config()` 会把嵌套分组拍平为顶层键（如 `codegraph.codegraph_enabled` -> `codegraph_enabled`）。新增配置项时保持此约定
-13. **版本号统一**：当前版本统一为 **v2.21.1**。发布时同步更新 `metadata.yaml` 的 `version` 字段
+13. **版本号统一**：当前版本统一为 **v2.22.0**。发布时同步更新 `metadata.yaml` 的 `version` 字段
 
 ## Web API 端点（供 Dashboard 消费）
 
-Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()` 中注册，挂载前缀 `/spcode`。当前共 **38 条路由记录**（36 个唯一路径，`/spcode/docs` 一路径复用 POST/PATCH/DELETE 三方法）：
+Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()` 中注册，挂载前缀 `/spcode`。当前共 **44 条路由记录**（42 个唯一路径，`/spcode/docs` 一路径复用 POST/PATCH/DELETE 三方法）：
 
 | 端点 | 方法 | 用途 | 关键参数 |
 |------|------|------|---------|
@@ -514,6 +514,12 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/docs` | POST | 创建 / 覆盖 docs 文件（upsert 到工作区） | body: `{umo?, worktree?, path, content}` |
 | `/spcode/docs` | PATCH | 重命名 docs 文件（纯文件系统 mv） | body: `{umo?, worktree?, path, new_path}` |
 | `/spcode/docs` | DELETE | 从工作区删除 docs 文件（unlink） | body: `{umo?, worktree?, path}` |
+| `/spcode/git-merge` | POST | 合并分支/tag/SHA 到当前 HEAD（v2.22.0） | body: `{source, message?, no_ff?, ff_only?, squash?, umo?, worktree?}` |
+| `/spcode/git-cherry-pick` | POST | 拣选单 commit 到当前 HEAD（v2.22.0） | body: `{ref, mainline?, umo?, worktree?}` |
+| `/spcode/git-conflict-status` | GET | 查询冲突状态 + hunk 详情 + 三路原文（v2.22.0） | `umo?`, `worktree?` |
+| `/spcode/git-conflict-resolve` | POST | 解决冲突文件（按 hunk / 整文件 / custom）（v2.22.0） | body: `{file?, all?, hunks?, resolution?, content?, umo?, worktree?}` |
+| `/spcode/git-conflict-continue` | POST | 冲突解决后继续完成操作（v2.22.0） | body: `{message?, umo?, worktree?}` |
+| `/spcode/git-conflict-abort` | POST | 中止当前 merge/cherry-pick/revert（v2.22.0） | body: `{umo?, worktree?}` |
 
 > 完整的请求/返回字段与 ReasonCode 前端消费文档见 `docs/api/` 与 `docs/webapi_endpoints_report.md`。
 
@@ -555,6 +561,9 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | patch apply | `patch_check_failed` / `patch_apply_failed` | `git apply --check --reverse` 失败 / `git apply --reverse` 失败（v2.16.0） |
 | worktree-mgmt | `invalid_branch` / `path_exists_nonempty` / `cannot_create_existing` / `cannot_checkout_missing` | ADD: branch 格式非法 / 目标已存在非空 / branch 已存在 / branch 不存在（v2.14.0） |
 | MCP 状态 | `vivado_not_running` / `vivado_no_session` / `vivado_session_timeout` / `vivado_generic_error` / `vivado_executable_not_found` / `vivado_mcp_start_failed` / `vivado_already_running` / `vivado_session_not_found` | vivado MCP 运行状态 / 会话相关错误 (2026-07-23, PR-4) |
+| git-merge (v2.22.0) | `merge_conflict` / `merge_already_up_to_date` / `unrelated_histories` | merge 冲突 / 已最新 / 不相关历史 |
+| git-cherry-pick (v2.22.0) | `cherry_pick_conflict` / `cherry_pick_empty` | cherry-pick 冲突 / 空 commit |
+| conflict lifecycle (v2.22.0) | `operation_in_progress` / `no_conflict_in_progress` / `file_not_conflicted` / `unresolved_conflicts_remain` | 冲突生命周期管理 |
 
 ### `?worktree=` 参数防御链（2026-06-18 引入）
 
