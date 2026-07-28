@@ -309,7 +309,7 @@ async def handle(
     # Use NUL-delimited output so paths containing spaces, quotes, tabs,
     # newlines, or non-ASCII bytes stay intact (v2.21 canonical-paths fix).
     status_result = await _run_git_async(
-        git_prefix + ["status", "--porcelain=v1", "-z"], encoding="utf-8"
+        git_prefix + ["status", "--porcelain=v1", "-z", "-u"], encoding="utf-8"
     )
     if not status_result["ok"]:
         stderr = status_result.get("stderr", "") or status_result.get("error", "")

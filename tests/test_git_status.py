@@ -214,6 +214,26 @@ class TestHandlerDirtyRepo:
         assert result["data"]["files"][0]["path"] == "new.txt"
         assert result["data"]["files"][0]["scope"] == "untracked"
 
+    async def test_untracked_directory_is_expanded_recursively(
+        self,
+        monkeypatch,
+        plugin,
+        tmp_path: Path,
+    ) -> None:
+        """未跟踪目录应展开为目录下所有未跟踪文件。"""
+        _init_git_repo(tmp_path)
+        nested = tmp_path / "new_dir" / "nested"
+        nested.mkdir(parents=True)
+        (tmp_path / "new_dir" / "root.txt").write_text("root", encoding="utf-8")
+        (nested / "leaf.txt").write_text("leaf", encoding="utf-8")
+        _load_project(plugin, "u:m", str(tmp_path))
+
+        result = await _call_handle(monkeypatch, plugin)
+
+        assert result["data"]["summary"]["untracked"] == 2
+        paths = {item["path"] for item in result["data"]["files"]}
+        assert paths == {"new_dir/root.txt", "new_dir/nested/leaf.txt"}
+
     async def test_intent_to_add(
         self,
         monkeypatch,

@@ -778,7 +778,7 @@ async def _compute_porcelain_diffs(
 
     # 3. 未跟踪文件
     r3 = await _run_git_async(
-        common_prefix + ["ls-files", "--others", "--exclude-standard", "-z"],
+        common_prefix + ["ls-files", "--others", "--exclude-standard", "-z", "-u"],
         timeout=5.0,
         encoding="utf-8",
     )
