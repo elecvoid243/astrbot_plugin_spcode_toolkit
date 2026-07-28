@@ -1034,3 +1034,111 @@ async def _read_post_mutation_branch_state(
         "current": current_name,
         "detached": detached,
     }
+
+
+# ── v2.22.0 conflict helpers ──────────────────────────────────────────
+
+
+async def _detect_conflict_operation(git_bin: str, directory: str) -> str | None:
+    """Detect which conflict operation is in progress.
+
+    Checks sentinel files in the git directory:
+      MERGE_HEAD → "merge"
+      CHERRY_PICK_HEAD → "cherry_pick"
+      REVERT_HEAD → "revert"
+
+    Returns:
+        "merge" | "cherry_pick" | "revert" | None
+    """
+    result = await _run_git_async(
+        [git_bin, "-C", directory, "rev-parse", "--git-dir"],
+        encoding="utf-8",
+        timeout=5.0,
+    )
+    if not result.get("ok"):
+        return None
+    git_dir = Path(result["stdout"].strip())
+    if not git_dir.is_absolute():
+        git_dir = Path(directory) / git_dir
+
+    if (git_dir / "MERGE_HEAD").exists():
+        return "merge"
+    if (git_dir / "CHERRY_PICK_HEAD").exists():
+        return "cherry_pick"
+    if (git_dir / "REVERT_HEAD").exists():
+        return "revert"
+    return None
+
+
+# Unmerged XY status codes (X or Y is 'U', or both are 'A'/'D' combos)
+_UNMERGED_XY = frozenset({"UU", "AA", "DD", "AU", "UA", "DU", "UD"})
+
+
+async def _list_conflicted_files(git_bin: str, directory: str) -> list[dict]:
+    """List unmerged (conflicted) files with their porcelain XY status.
+
+    Returns:
+        [{"path": "src/main.py", "status": "UU"}, ...]
+    """
+    result = await _run_git_async(
+        [git_bin, "-C", directory, "status", "--porcelain"],
+        encoding="utf-8",
+        timeout=5.0,
+    )
+    if not result.get("ok"):
+        return []
+    conflicted = []
+    for line in result.get("stdout", "").splitlines():
+        if len(line) < 4:
+            continue
+        xy = line[:2]
+        if xy in _UNMERGED_XY:
+            path = line[3:]
+            conflicted.append({"path": path, "status": xy})
+    return conflicted
+
+
+_SENTINEL_BY_OPERATION = {
+    "merge": "MERGE_HEAD",
+    "cherry_pick": "CHERRY_PICK_HEAD",
+    "revert": "REVERT_HEAD",
+}
+
+
+async def _read_operation_ref(
+    git_bin: str, directory: str, operation: str
+) -> tuple[str, str]:
+    """Read the sentinel file SHA and commit subject for the given operation.
+
+    Returns:
+        (sha, subject) — both empty strings if sentinel missing or unreadable.
+    """
+    sentinel_name = _SENTINEL_BY_OPERATION.get(operation)
+    if not sentinel_name:
+        return "", ""
+
+    result = await _run_git_async(
+        [git_bin, "-C", directory, "rev-parse", "--git-dir"],
+        encoding="utf-8",
+        timeout=5.0,
+    )
+    if not result.get("ok"):
+        return "", ""
+    git_dir = Path(result["stdout"].strip())
+    if not git_dir.is_absolute():
+        git_dir = Path(directory) / git_dir
+
+    sentinel = git_dir / sentinel_name
+    if not sentinel.exists():
+        return "", ""
+    sha = sentinel.read_text(encoding="utf-8").strip()
+
+    subject_result = await _run_git_async(
+        [git_bin, "-C", directory, "log", "-1", "--pretty=%s", sha],
+        encoding="utf-8",
+        timeout=5.0,
+    )
+    subject = (
+        subject_result.get("stdout", "").strip() if subject_result.get("ok") else ""
+    )
+    return sha, subject
