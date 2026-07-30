@@ -20,16 +20,78 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as _datetime
 import time as _time
 from pathlib import Path
 
 from astrbot.api.event import AstrMessageEvent
 
-from ..agentsmd import strip_surrounding_quotes
 from .._path_safety import is_path_safe
+from ..agentsmd import strip_surrounding_quotes
 from . import state as _state
 from .pipeline import ProjectLoadAbort, project_load_step
+
+
+async def _ensure_project_dir(target: Path) -> tuple[bool, str]:
+    """``create`` flag: ensure ``target`` exists as a directory.
+
+    Creates the directory (with parents) when missing; no-op when it
+    already exists as a directory; fails when the path exists but is a
+    regular file (we must not silently clobber a file into a project
+    root).
+
+    Args:
+        target: Resolved absolute project directory.
+
+    Returns:
+        ``(ok, message)`` — ``message`` is a ready-to-yield progress /
+        error line (plain text, emoji-prefixed to match the load
+        pipeline's other steps).
+    """
+    if target.exists() and not target.is_dir():
+        return False, f"❌ 目标路径已存在但不是目录: {target}"
+    if not target.exists():
+        try:
+            await asyncio.to_thread(target.mkdir, parents=True, exist_ok=True)
+        except OSError as exc:
+            return False, f"❌ 创建目录失败: {exc}"
+        return True, f"✅ 目录已创建: {target}"
+    return True, f"ℹ️ 目录已存在,跳过创建: {target}"
+
+
+async def _ensure_git_repo(target: Path) -> tuple[bool, str]:
+    """``git_init`` flag: ensure ``target`` is a git repository.
+
+    Runs ``git init`` when ``.git`` is absent; no-op when already a
+    repo; fails when ``target`` is not a directory, ``git`` is not on
+    PATH, or ``git init`` returns non-zero.
+
+    Args:
+        target: Resolved absolute project directory (must exist).
+
+    Returns:
+        ``(ok, message)`` — see :func:`_ensure_project_dir`.
+    """
+    if not target.is_dir():
+        return False, f"❌ 无法 git init: 目标不是目录: {target}"
+    if (target / ".git").exists():
+        return True, f"ℹ️ 已是 Git 仓库,跳过 init: {target}"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "init",
+            cwd=str(target),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, err = await proc.communicate()
+    except FileNotFoundError:
+        return False, "❌ 未找到 git 可执行文件,无法初始化仓库"
+    if proc.returncode != 0:
+        detail = (err or b"").decode("utf-8", "replace").strip()
+        return False, f"❌ git init 失败: {detail}"
+    return True, f"✅ Git 仓库已初始化: {target}"
 
 
 class ProjectManager:
@@ -60,8 +122,10 @@ class ProjectManager:
         and yields its messages. Unknown sub-commands yield a single error
         message.
 
-        ``/project load`` 支持位置参数 ``directory`` 之后跟 0~2 个 flag:
-        ``no_agentsmd`` / ``no_codegraph``(顺序无关,多次出现取并集)。
+        ``/project load`` 支持位置参数 ``directory`` 之后跟若干 flag
+        (顺序无关,多次出现取并集):
+        ``no_agentsmd`` / ``no_codegraph`` / ``create`` / ``git_init`` /
+        ``replace``。
 
         Args:
             event: AstrBot 事件对象。
@@ -76,16 +140,26 @@ class ProjectManager:
             if not args:
                 yield event.plain_result("❌ /project load 需要 <directory> 参数。")
                 return
-            # 第一个非 flag 元素 = directory,其余元素 = flags(去重)
-            flags = set(args) & {"no_agentsmd", "no_codegraph"}
+            # 已知 flag 白名单(2026-07-30 扩展 create / git_init / replace)。
+            # 白名单外的 token 一律忽略(向后兼容:未知 flag 静默丢弃,
+            # 与 no_agentsmd / no_codegraph 的历史行为一致)。
+            load_flags = {
+                "no_agentsmd",
+                "no_codegraph",
+                "create",
+                "git_init",
+                "replace",
+            }
+            flags = set(args) & load_flags
             directory = next(
-                (a for a in args if a not in {"no_agentsmd", "no_codegraph"}),
+                (a for a in args if a not in load_flags),
                 None,
             )
             if not directory:
                 yield event.plain_result(
                     "❌ /project load 需要 <directory> 参数。"
-                    "可选 flag: no_agentsmd / no_codegraph。"
+                    "可选 flag: no_agentsmd / no_codegraph / create / "
+                    "git_init / replace。"
                 )
                 return
             async for msg in self.load_impl(
@@ -93,6 +167,9 @@ class ProjectManager:
                 directory,
                 no_agentsmd="no_agentsmd" in flags,
                 no_codegraph="no_codegraph" in flags,
+                create="create" in flags,
+                git_init="git_init" in flags,
+                replace="replace" in flags,
             ):
                 yield msg
             return
@@ -117,8 +194,11 @@ class ProjectManager:
         *,
         no_agentsmd: bool = False,
         no_codegraph: bool = False,
+        create: bool = False,
+        git_init: bool = False,
+        replace: bool = False,
     ):
-        """Implementation of ``/project load <dir> [no_agentsmd] [no_codegraph]``.
+        """Implementation of ``/project load <dir> [flags...]``.
 
         Performs the multi-step project load: feature-flag check, duplicate
         load guard, path safety, agentsmd init+load, codegraph init+set,
@@ -142,6 +222,9 @@ class ProjectManager:
             directory: 用户提供的项目目录路径。
             no_agentsmd: 是否跳过 AGENTS.md 子步骤。
             no_codegraph: 是否跳过 codegraph 子步骤。
+            create: 目录不存在时是否自动创建(含父目录)。默认 False。
+            git_init: 目录非 Git 仓库时是否自动 ``git init``。默认 False。
+            replace: 已加载其他项目时是否先卸载再加载(原子覆盖)。默认 False。
 
         Yields:
             Plain text messages for the user。
@@ -167,14 +250,26 @@ class ProjectManager:
                 )
                 return
 
-        # 2. 重复 load 拦截
-        if _state.get(umo) is not None:
-            loaded = _state.get(umo)
-            yield event.plain_result(
-                f"❌ 当前会话已加载项目: {loaded['directory']}\n"
-                f"请先执行 /project unload,再 load 新项目。"
-            )
-            return
+        # 2. 重复 load 处理(replace=True 时原子卸载旧项目以覆盖)
+        existing = _state.get(umo)
+        if existing is not None:
+            if not replace:
+                yield event.plain_result(
+                    f"❌ 当前会话已加载项目: {existing['directory']}\n"
+                    f"请先执行 /project unload,再 load 新项目。"
+                )
+                return
+            # replace: 在同一执行流里先卸载旧项目, 避免前端连发
+            # unload+load 两条命令的竞态(unload 的 state 清理是异步的,
+            # 紧随其后的 load 可能仍看到旧项目而触发上面的拦截)。
+            old_dir = existing.get("directory", "")
+            yield event.plain_result(f"⏳ 覆盖模式: 正在卸载旧项目 {old_dir} …")
+            # 与 unload_impl / webapi _silent_unload 一致: agentsmd.unload
+            # 是同步方法; 不调 codegraph.set_project(紧接着的 load 会重新
+            # init+set 新目录, 旧 set 残留会被覆盖)。
+            yield self._plugin.agentsmd.unload(event)
+            _state.pop(umo)
+            yield event.plain_result(f"✅ 旧项目已卸载, 继续加载新项目: {old_dir}")
 
         # 3. 路径解析与安全校验
         directory = strip_surrounding_quotes(directory)
@@ -186,6 +281,22 @@ class ProjectManager:
         if not ok:
             yield event.plain_result(f"❌ 路径不允许: {reason}")
             return
+
+        # 3.5 可选的目录创建 / Git 初始化(在路径安全校验之后、子步骤
+        #     流水线之前)。放在 is_path_safe 之后是为了先确认 resolve 后
+        #     的路径形态安全, 再 mkdir / git init, 避免对黑名单路径建目录。
+        #     create / git_init 默认 False, 加载已存在项目时这两步整体跳过,
+        #     行为与历史完全一致。
+        if create:
+            ok_create, msg_create = await _ensure_project_dir(target)
+            yield event.plain_result(msg_create)
+            if not ok_create:
+                return
+        if git_init:
+            ok_git, msg_git = await _ensure_git_repo(target)
+            yield event.plain_result(msg_git)
+            if not ok_git:
+                return
 
         # 4. 多步加载(任一子步骤失败 → 立即中止,不再登记 state)
         try:
@@ -265,9 +376,7 @@ class ProjectManager:
             summary_lines = "  - 设定工作目录(无子步骤)"
         elif no_agentsmd:
             summary_lines = (
-                "  - 设定工作目录\n"
-                "  - 载入 codegraph 索引\n"
-                "  - (已跳过) AGENTS.md 注入"
+                "  - 设定工作目录\n  - 载入 codegraph 索引\n  - (已跳过) AGENTS.md 注入"
             )
         elif no_codegraph:
             summary_lines = (
@@ -388,6 +497,8 @@ class ProjectManager:
         *,
         no_agentsmd: bool = False,
         no_codegraph: bool = False,
+        create: bool = False,
+        git_init: bool = False,
     ) -> dict:
         """``/project load`` 的静默变体,供 webapi 端点调用(2026-07-28 引入)。
 
@@ -422,6 +533,8 @@ class ProjectManager:
             directory: 用户提供的项目目录路径。
             no_agentsmd: 是否跳过 AGENTS.md 子步骤。
             no_codegraph: 是否跳过 codegraph 子步骤。
+            create: 目录不存在时是否自动创建(含父目录)。默认 False。
+            git_init: 目录非 Git 仓库时是否自动 ``git init``。默认 False。
 
         Returns:
             结构化结果 dict,字段::
@@ -501,19 +614,45 @@ class ProjectManager:
                 "previous_directory": "",
             }
 
+        # 3.5 可选 create / git_init(与 load_impl 对齐, 复用同一 helper)。
+        #     webapi 端点的"覆盖"语义由 handler 层的 force 预处理承担, 故
+        #     silent 路径不需要 replace 参数。
+        if create:
+            ok_create, msg_create = await _ensure_project_dir(target)
+            messages.append(msg_create)
+            if not ok_create:
+                return {
+                    "ok": False,
+                    "directory": target_str,
+                    "loaded_at": 0.0,
+                    "skipped_substeps": [],
+                    "substep_messages": messages,
+                    "reason": "create_dir_failed",
+                    "previous_directory": "",
+                }
+        if git_init:
+            ok_git, msg_git = await _ensure_git_repo(target)
+            messages.append(msg_git)
+            if not ok_git:
+                return {
+                    "ok": False,
+                    "directory": target_str,
+                    "loaded_at": 0.0,
+                    "skipped_substeps": [],
+                    "substep_messages": messages,
+                    "reason": "git_init_failed",
+                    "previous_directory": "",
+                }
+
         # 4. 4 步流水线(子步骤 yield 全部收集,不回传 event)
         try:
             # 步骤 1/3: agentsmd
             if no_agentsmd:
-                messages.append(
-                    "⏭️ [1/3] AGENTS.md 步骤已跳过(用户指定 no_agentsmd)。"
-                )
+                messages.append("⏭️ [1/3] AGENTS.md 步骤已跳过(用户指定 no_agentsmd)。")
             else:
                 agents_md_path = target / "AGENTS.md"
                 if not agents_md_path.exists():
-                    messages.append(
-                        f"⏳ [1/3] AGENTS.md 不存在,正在 init: {target}"
-                    )
+                    messages.append(f"⏳ [1/3] AGENTS.md 不存在,正在 init: {target}")
                     async for msg in project_load_step(
                         event,
                         self._plugin.agentsmd.init(event, str(target)),
@@ -600,9 +739,7 @@ class ProjectManager:
             summary_lines = "  - 设定工作目录(无子步骤)"
         elif no_agentsmd:
             summary_lines = (
-                "  - 设定工作目录\n"
-                "  - 载入 codegraph 索引\n"
-                "  - (已跳过) AGENTS.md 注入"
+                "  - 设定工作目录\n  - 载入 codegraph 索引\n  - (已跳过) AGENTS.md 注入"
             )
         elif no_codegraph:
             summary_lines = (

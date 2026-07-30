@@ -49,6 +49,11 @@ _SILENT_REASON_TO_ENVELOPE: dict[str, str] = {
     "agentsmd_load_failed": ReasonCode.GIT_ERROR,
     "codegraph_init_failed": ReasonCode.GIT_ERROR,
     "codegraph_set_failed": ReasonCode.GIT_ERROR,
+    # 2026-07-30: create / git_init 步骤失败映射。create 是路径/文件系统
+    # 操作失败,归 PATH_UNSAFE(最接近的现有码);git_init 是 git 子进程失败,
+    # 归 GIT_ERROR。前端用 substep_messages 末尾行查看具体错误。
+    "create_dir_failed": ReasonCode.PATH_UNSAFE,
+    "git_init_failed": ReasonCode.GIT_ERROR,
 }
 
 
@@ -73,6 +78,10 @@ async def handle(
         no_codegraph (bool, optional): 跳过 codegraph init+set。默认 False。
         force (bool, optional): (2026-07-28 引入) 若已加载项目,允许强制
             覆盖为新项目。默认 False — 拒绝重复 load。
+        create (bool, optional): (2026-07-30 引入) 目录不存在时自动创建
+            (含父目录)。默认 False。
+        git_init (bool, optional): (2026-07-30 引入) 目录非 Git 仓库时
+            自动 ``git init``。默认 False。
 
     协议:
         - umo 必传(无 umo → invalid_body)。dashboard 必须告诉端点
@@ -138,6 +147,8 @@ async def handle(
     no_agentsmd = body.get("no_agentsmd", False)
     no_codegraph = body.get("no_codegraph", False)
     force = body.get("force", False)
+    create = body.get("create", False)
+    git_init = body.get("git_init", False)
 
     # ── 2. 参数类型校验 ──
     if not isinstance(directory, str) or not directory.strip():
@@ -172,6 +183,22 @@ async def handle(
             loaded=False,
             umo=umo,
         )
+    if not isinstance(create, bool):
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(t0),
+            loaded=False,
+            umo=umo,
+        )
+    if not isinstance(git_init, bool):
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(t0),
+            loaded=False,
+            umo=umo,
+        )
 
     # ── 3. force 时若已加载,先 unload ──
     #    WHY: dashboard 在 "切换项目" 场景下需要支持无缝覆盖。``load_impl``
@@ -198,6 +225,8 @@ async def handle(
         directory,
         no_agentsmd=no_agentsmd,
         no_codegraph=no_codegraph,
+        create=create,
+        git_init=git_init,
     )
 
     # ── 5. 把 silent 内部 result 翻译为 envelope ──
