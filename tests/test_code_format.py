@@ -269,8 +269,16 @@ def test_format_cpp_astyle_writes(unformatted_cpp: Path, fake_astyle_run):
     # 2. 包含 --style + --indent 参数
     assert "--style=allman" in cmd
     assert "--indent=spaces=4" in cmd
-    # 3. input 是源码文本
-    assert call["input"] == original_text
+    # 3. input 是源码文本(2026-07-31:CRLF 源已归一为 LF 喂给 astyle)
+    #    旧断言 ``call["input"] == original_text`` 在 Windows 上偶然通过
+    #    是因为 fix 之前的代码确实直通 CRLF,fix 后必须用归一化后比较。
+    expected_input = original_text.replace("\r\n", "\n").replace("\r", "\n")
+    assert call["input"] == expected_input, (
+        f"astyle stdin 应等于 CRLF→LF 归一后的源文本;实得={call['input']!r}"
+    )
+    assert "\r" not in call["input"], (
+        f"astyle stdin 不应再含 CR (2026-07-31 防双空行 bug);实得={call['input']!r}"
+    )
     # 4. kwargs 包含 creationflags(CREATE_NO_WINDOW 防黑框)
     assert "creationflags" in call["kwargs_keys"]
 
@@ -605,6 +613,133 @@ def test_format_astyle_subprocess_exception_caught(
     assert "astyle 调用失败" in r["error"] or "simulated astyle crash" in r["error"]
     # 文件**未**被改写
     assert unformatted_cpp.read_text(encoding="utf-8").startswith("int main(){")
+
+
+# ── 20. (2026-07-31) CRLF 源文件不引入双空行 (bug 回归) ─────
+#
+# 报告:当 code_format 遇到 CRLF 时,会使得文件多出一个空行,每个 CRLF 在
+# 格式化后变成了两行空行。
+#
+# 根因分析:
+#   astyle.exe 的 stdin 模式按 \n 分行;如果直接把 "\r\n" 喂进 stdin,
+#   astyle 把 "\r" 当成行内普通字符处理 → 在空行 ("\r\n\r\n") 场景下
+#   会把 "\r\n\r\n" 识别成两行 ("}\r" + "\r"),输出时统一转回 \n 后
+#   形成 "}\n\n\n"(原本的空行变成两个空行)。
+#
+# 修复 (_format_with_astyle):
+#   在 stdin 喂给 astyle 之前把 CRLF/CR 归一为 LF;输出端也归一一次避免
+#   astyle 输出混入 CRLF。这样 CRLF 源文件被改成 LF 文件但不出现双空行。
+#
+# Author: elecvoid243, 2026-07-31
+
+
+def test_format_crlf_source_no_double_blank_lines(
+    tmp_path: Path, fake_astyle_run, monkeypatch
+):
+    """CRLF 源文件格式不应产生双空行。
+
+    复现链:
+      1. 源文件 = "int main(){return 0;}\\r\\n\\r\\n"  (CRLF 行尾 + 1 个空行)
+      2. 当前 (未修) 行为:把原文直接喂给 astyle stdin
+         → astyle 把 "\r" 视为行内字符,把 "\r\n\r\n" 拆成 2 行 + 末尾多一个 \r
+         → 输出 "int main(){return 0;}\\n\\n\\n" (LF,多一个空行)
+      3. 修复后:stdin 之前归一为 LF (即 "int main(){return 0;}\\n\\n")
+         → astyle 看到的就是正常的 1 个空行
+         → 输出 "int main(){return 0;}\\n\\n" (仍然是 1 个空行)
+    """
+    # 1. 写一个 CRLF 源文件,内含 1 个空行
+    f = tmp_path / "crlf.cpp"
+    f.write_bytes(b"int main(){return 0;}\r\n\r\n")  # CRLF + LF-only blank line
+
+    import tools.code_format as _cf
+
+    # 2. mock subprocess.run:astyle 调用 → 模拟"CRLF stdin 产生双空行"bug
+    #    关键:stdin 含 CRLF 时,把 \r\n → \n 后,在每个原空行(\n\n)处多注入一个 \n
+    captured_stdin: list[str] = []
+
+    def buggy_astyle_output(stdin_text: str) -> str:
+        """模拟当前(未修)astyle + CRLF stdin 的行为:产生双空行。"""
+        if "\r\n" in stdin_text:
+            normalized = stdin_text.replace("\r\n", "\n")
+            return normalized.replace("\n\n", "\n\n\n") + "\n"
+        return stdin_text
+
+    real_run = _cf.subprocess.run
+
+    def adaptive_run(cmd, **kwargs):
+        if cmd and "astyle" in str(cmd[0]).lower():
+            captured_stdin.append(kwargs.get("input", ""))
+            return _cf.subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout=buggy_astyle_output(kwargs.get("input", "")),
+                stderr="",
+            )
+        return real_run(cmd, **kwargs)
+
+    # 覆盖 fake_astyle_run 已 patch 的 subprocess.run(用 monkeypatch 直接 set)
+    monkeypatch.setattr(_cf.subprocess, "run", adaptive_run)
+
+    # 3. 跑格式化
+    r = code_format.format(str(f), style="allman", indent=4)
+
+    # 4. 断言修复点
+    assert r["ok"] is True
+    assert len(captured_stdin) == 1, "astyle 应被调用 1 次"
+    stdin_text = captured_stdin[0]
+    assert "\r\n" not in stdin_text, (
+        f"修复后 astyle stdin 不应再含 CRLF;实得={stdin_text!r}"
+    )
+    assert stdin_text == "int main(){return 0;}\n\n", (
+        f"stdin 应为 CRLF→LF 归一化的文本;实得={stdin_text!r}"
+    )
+
+    #   - 修复后:写回的文件不含双空行
+    after_bytes = f.read_bytes()
+    # 把任何剩余 CRLF 也归一,再检测是否有 "\n\n\n"
+    normalized = after_bytes.replace(b"\r\n", b"\n")
+    assert b"\n\n\n" not in normalized, (
+        f"修复后文件不应含双空行;实得={after_bytes!r}"
+    )
+
+
+def test_format_crlf_input_normalized_before_astyle(
+    tmp_path: Path, fake_astyle_run, monkeypatch
+):
+    """CRLF/CR 输入在 astyle stdin 之前必须归一为 LF (单元级断言)。
+
+    不依赖 mock 的"输出端双空行"模拟;只验证 _format_with_astyle
+    传给 subprocess.run 的 input=... 不再含 \r。
+    """
+    # 写 CRLF 源文件
+    f = tmp_path / "crlf2.cpp"
+    original_crlf = b"int x=1;\r\nint y=2;\r\nif(x==y){\r\n  return 0;\r\n}\r\n"
+    f.write_bytes(original_crlf)
+
+    # 让 mock subprocess.run 捕获 input;不再干预 astyle 输出
+    import tools.code_format as _cf
+
+    captured: dict = {}
+
+    def capture_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["input"] = kwargs.get("input")
+        return _cf.subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout=kwargs.get("input", ""), stderr=""
+        )
+
+    monkeypatch.setattr(_cf.subprocess, "run", capture_run)
+
+    code_format.format(str(f), style="allman", indent=4)
+
+    stdin_text = captured["input"]
+    # 1. stdin 必须不含 \r (任何形式的 CR)
+    assert "\r" not in stdin_text, (
+        f"修复后 astyle stdin 应已 CR 归一化;实得={stdin_text!r}"
+    )
+    # 2. stdin 应等于把 CRLF → LF 的源文件
+    expected = original_crlf.decode("utf-8").replace("\r\n", "\n")
+    assert stdin_text == expected, f"stdin 应等于 CRLF→LF 后的源文本;实得={stdin_text!r}"
 
 
 # ── 19. ruff 调用走 python -m,不走路径检测 ──────

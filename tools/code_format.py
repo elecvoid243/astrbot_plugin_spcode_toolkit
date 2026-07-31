@@ -443,6 +443,18 @@ def _format_with_astyle(
     except UnicodeDecodeError:
         before_text = before_bytes.decode(detect_console_encoding(), errors="replace")
 
+    # 2.5 归一化行尾 (2026-07-31 修复 CRLF 双空行 bug):
+    #   报告:code_format 遇到 CRLF 源文件时,会把每个 CRLF 变为双空行。
+    #   根因:astyle.exe 的 stdin 按 \n 分行,如果直接喂入 "\r\n",astyle
+    #   会把 "\r" 当作行内字符 → 在空行 ("\r\n\r\n") 处把 "\r" 误识别为
+    #   一行内容,导致 "\r\n\r\n" 被拆成 "}\r" + 空白行,输出统一 \n 后形
+    #   成 "}\n\n\n" (双空行)。
+    #   修复:stdin 之前把 CR / CRLF 归一为 LF,避免 astyle 误识别。
+    #   (注:这样会把原 CRLF 源文件改写为 LF 文件。这是已知权衡——
+    #   与 ruff 路径保持一致:ruff format 默认也会按 LF 重写。)
+    if "\r" in before_text:
+        before_text = before_text.replace("\r\n", "\n").replace("\r", "\n")
+
     # 3. spawn astyle.exe + stdin/stdout 模式
     args = [
         str(astyle_path),  # subprocess.run 需 str 或 os.PathLike,这里显式转 str
@@ -480,6 +492,13 @@ def _format_with_astyle(
         }
 
     after_text = r.stdout
+
+    # 4.5 防御性归一化 astyle 输出 (2026-07-31):
+    #   理论上 astyle stdout 总是纯 LF,但部分平台/版本在 Windows ANSI 解码
+    #   时可能残留 CR (errors="replace" 的副作用)。在比对与写回前再次归一
+    #   一次,防止 stdin 归一化失效时输出仍把 "\r" 误带回文件。
+    if after_text and "\r" in after_text:
+        after_text = after_text.replace("\r\n", "\n").replace("\r", "\n")
     file_size_after = len(after_text.encode("utf-8"))
 
     # 用 splitlines() 行内比较,容错 \n / \r\n / \r(Windows write_text 会 \n → \r\n)
