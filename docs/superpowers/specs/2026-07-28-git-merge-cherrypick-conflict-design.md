@@ -7,6 +7,7 @@
 > **Status**: Approved
 > **Target Version**: v2.22.0
 > **前置依赖**: v2.17.0 git-init/branch/revert 端点体系、`_git_endpoint_preflight` 5 步防御链
+> **Frontend wiring**: [2026-08-01-git-merge-cherrypick-conflict-frontend-design.md](2026-08-01-git-merge-cherrypick-conflict-frontend-design.md)
 
 ---
 
