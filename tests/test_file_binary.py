@@ -143,6 +143,31 @@ async def test_workspace_symlink_rejected_with_415(
     assert _err_data(resp)["reason"] == ReasonCode.SPECIAL_FILE
 
 
+async def test_workspace_png_returns_image_content_type(
+    monkeypatch: pytest.MonkeyPatch,
+    worktree: Path,
+) -> None:
+    (worktree / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\nfake-png-bytes")
+    plugin, umo = _make_plugin(worktree)
+    resp = await _call(monkeypatch, plugin, path="logo.png", umo=umo)
+    assert resp.status_code == 200
+    assert resp.headers["Content-Type"] == MIME_BY_EXT[".png"]
+    assert resp.body.startswith(b"\x89PNG")
+
+
+async def test_workspace_svg_returns_svg_content_type(
+    monkeypatch: pytest.MonkeyPatch,
+    worktree: Path,
+) -> None:
+    (worktree / "icon.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg"></svg>', encoding="utf-8"
+    )
+    plugin, umo = _make_plugin(worktree)
+    resp = await _call(monkeypatch, plugin, path="icon.svg", umo=umo)
+    assert resp.status_code == 200
+    assert resp.headers["Content-Type"] == MIME_BY_EXT[".svg"]
+
+
 # ─── Git ref path ───────────────────────────────────────────────────────
 
 
@@ -187,6 +212,21 @@ async def test_ref_path_missing_file_returns_422(
     )
     assert resp.status_code == 422
     assert _err_data(resp)["reason"] == ReasonCode.FILE_MISSING_AT_REF
+
+
+async def test_ref_path_png_returns_blob_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    worktree: Path,
+) -> None:
+    (worktree / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\nfake-png-bytes")
+    _run_git(worktree, ["add", "-A"])
+    _run_git(worktree, ["commit", "-q", "-m", "add png"])
+
+    plugin, umo = _make_plugin(worktree)
+    resp = await _call(monkeypatch, plugin, path="logo.png", umo=umo, ref="HEAD")
+    assert resp.status_code == 200
+    assert resp.headers["Content-Type"] == MIME_BY_EXT[".png"]
+    assert resp.body.startswith(b"\x89PNG")
 
 
 # ─── ETag / 304 ────────────────────────────────────────────────────────

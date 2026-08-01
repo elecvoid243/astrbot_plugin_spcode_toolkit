@@ -62,6 +62,16 @@ MIME_BY_EXT: dict[str, str] = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".csv": "text/csv; charset=utf-8",
     ".md": "text/markdown; charset=utf-8",
+    # Image types (spec 2026-07-31 workspace-image-preview). SVG is served
+    # for <img>-tag consumption only, where browsers do not execute scripts.
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
 }
 
 # Hard cap for /spcode/file-binary. pdfjs / mammoth can OOM on files
