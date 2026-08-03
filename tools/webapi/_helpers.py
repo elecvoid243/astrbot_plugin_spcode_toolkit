@@ -428,6 +428,11 @@ class ReasonCode:
     FILE_NOT_CONFLICTED = "file_not_conflicted"
     UNRESOLVED_CONFLICTS_REMAIN = "unresolved_conflicts_remain"
 
+    # git-squash (2026-08-03): HEAD 锚定连续压缩的校验失败 (3)
+    HEAD_NOT_SELECTED = "head_not_selected"  # 选区不含 HEAD
+    NOT_CONTIGUOUS = "not_contiguous"  # 选区不是 HEAD 起连续 N 条
+    ROOT_COMMIT = "root_commit"  # 最老一条是 root commit(无 parent)
+
 
 # ── git status --porcelain X/Y 列判定(共享常量)────────────────────
 # 从 tools/webapi/file_restore.py 提取(2026-07-06)。两个端点共用:

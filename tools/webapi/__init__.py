@@ -85,6 +85,7 @@ from . import (
     git_repo_check,  # v2.18.0 (2026-07-16) - GET git 仓库探测
     git_revert,  # v2.17.0 (2026-07-16) - PR-G POST endpoint
     git_show,
+    git_squash,  # 2026-08-03 - POST git-squash (HEAD 锚定连续压缩)
     git_stage,
     git_stats,
     git_status,
@@ -181,6 +182,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["POST"],
         git_revert.handle,
         "git revert <ref> --no-edit (自动生成回滚 commit)",
+    ),
+    (
+        "/spcode/git-squash",  # 2026-08-03
+        ["POST"],
+        git_squash.handle,
+        "git reset --soft <oldest>^ + commit (压缩 HEAD 起连续 N 条提交)",
     ),
     (
         "/spcode/git-repo-check",  # v2.18.0 (2026-07-16)
@@ -396,6 +403,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_branch_delete": git_branch_delete.handle,  # v2.17.0 (2026-07-16)
     "handle_post_git_branch_switch": git_branch_switch.handle,  # v2.17.0 (2026-07-16)
     "handle_post_git_revert": git_revert.handle,  # v2.17.0 (2026-07-16)
+    "handle_post_git_squash": git_squash.handle,  # 2026-08-03
     "handle_get_git_repo_check": git_repo_check.handle,  # v2.18.0 (2026-07-16)
     "handle_get_git_log": git_log.handle,
     "handle_get_git_show": git_show.handle,  # v3.8 (2026-06-25)
@@ -562,6 +570,7 @@ __all__ = [
     "git_repo_check",  # v2.18.0
     "git_revert",  # v2.17.0
     "git_show",
+    "git_squash",  # 2026-08-03
     "git_stage",
     "git_stats",
     "git_status",
