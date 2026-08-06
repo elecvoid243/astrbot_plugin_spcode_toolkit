@@ -172,7 +172,7 @@ class TestProjectLoadFrameworkEntry:
 
         captured = {}
 
-        async def _fake_load_impl(self, event, directory, *, no_agentsmd=False, no_codegraph=False):
+        async def _fake_load_impl(self, event, directory, *, no_agentsmd=False, no_codegraph=False, create=False, git_init=False):
             captured["directory"] = directory
             captured["no_agentsmd"] = no_agentsmd
             captured["no_codegraph"] = no_codegraph
@@ -203,7 +203,7 @@ class TestProjectLoadFrameworkEntry:
 
         captured = {}
 
-        async def _fake_load_impl(self, event, directory, *, no_agentsmd=False, no_codegraph=False):
+        async def _fake_load_impl(self, event, directory, *, no_agentsmd=False, no_codegraph=False, create=False, git_init=False):
             captured["directory"] = directory
             captured["no_agentsmd"] = no_agentsmd
             captured["no_codegraph"] = no_codegraph
@@ -229,7 +229,7 @@ class TestProjectLoadFrameworkEntry:
 
         captured = {}
 
-        async def _fake_load_impl(self, event, directory, *, no_agentsmd=False, no_codegraph=False):
+        async def _fake_load_impl(self, event, directory, *, no_agentsmd=False, no_codegraph=False, create=False, git_init=False):
             captured["directory"] = directory
             captured["no_agentsmd"] = no_agentsmd
             captured["no_codegraph"] = no_codegraph
@@ -256,7 +256,7 @@ class TestProjectLoadFrameworkEntry:
         报错,不调 load_impl。"""
         called = {"count": 0}
 
-        async def _fake_load_impl(self, event, directory, *, no_agentsmd=False, no_codegraph=False):
+        async def _fake_load_impl(self, event, directory, *, no_agentsmd=False, no_codegraph=False, create=False, git_init=False):
             called["count"] += 1
             yield "should not happen"
 
@@ -284,7 +284,7 @@ class TestProjectLoadFrameworkEntry:
 
         captured = {}
 
-        async def _fake_load_impl(self, event, directory, *, no_agentsmd=False, no_codegraph=False):
+        async def _fake_load_impl(self, event, directory, *, no_agentsmd=False, no_codegraph=False, create=False, git_init=False):
             captured["directory"] = directory
             captured["no_agentsmd"] = no_agentsmd
             captured["no_codegraph"] = no_codegraph

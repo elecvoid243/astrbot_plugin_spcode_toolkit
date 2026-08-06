@@ -462,11 +462,17 @@ def _make_envelope(
         **data_fields: 端点特定的 data 字段(如 staged/files/committed/loaded)。
 
     Returns:
-        ``{"status": "ok", "data": {<data_fields + reason + stderr + elapsed_ms>}}``
+        ``{"status": "ok", "data": {success + <data_fields> + reason + stderr + elapsed_ms}}``
+
+        2026-08-06: data 载荷加入 ``success`` 字段——此前 success 形参被丢弃,
+        前端 ``useSpcodeProjectAutoLoad.postLoad`` 读 ``raw.success`` 恒为
+        undefined,导致线上静默加载永远被误判失败;``test_project_load_endpoint.py``
+        的顶层 success 断言也因此自提交日起全挂。纯增量字段,不影响现有端点。
     """
     return {
         "status": "ok",
         "data": {
+            "success": success,
             **data_fields,
             "reason": None if success else reason,
             "stderr": stderr,

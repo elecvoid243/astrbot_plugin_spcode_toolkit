@@ -210,8 +210,8 @@ async def test_invalid_body_returns_invalid_param() -> None:
         worktree=None,
         body=None,
     )
-    assert result["success"] is False
-    assert result["reason"] == "invalid_body"
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "invalid_body"
     assert result["data"]["loaded"] is False
 
 
@@ -226,8 +226,8 @@ async def test_missing_umo_returns_invalid_body() -> None:
         worktree=None,
         body={"directory": "/tmp/x"},
     )
-    assert result["success"] is False
-    assert result["reason"] == "invalid_body"
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "invalid_body"
 
 
 @requires_webapi
@@ -242,9 +242,9 @@ async def test_missing_directory_returns_invalid_param() -> None:
             worktree=None,
             body={"directory": bad},
         )
-        assert result["success"] is False, f"directory={bad!r} should fail"
-        assert result["reason"] == "invalid_param", (
-            f"directory={bad!r} got reason={result['reason']!r}"
+        assert result["data"]["success"] is False, f"directory={bad!r} should fail"
+        assert result["data"]["reason"] == "invalid_param", (
+            f"directory={bad!r} got reason={result['data']['reason']!r}"
         )
 
 
@@ -258,8 +258,8 @@ async def test_no_agentsmd_wrong_type_returns_invalid_param() -> None:
         worktree=None,
         body={"directory": "/tmp/x", "no_agentsmd": "yes"},
     )
-    assert result["success"] is False
-    assert result["reason"] == "invalid_param"
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "invalid_param"
 
 
 @requires_webapi
@@ -272,8 +272,8 @@ async def test_no_codegraph_wrong_type_returns_invalid_param() -> None:
         worktree=None,
         body={"directory": "/tmp/x", "no_codegraph": "yes"},
     )
-    assert result["success"] is False
-    assert result["reason"] == "invalid_param"
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "invalid_param"
 
 
 @requires_webapi
@@ -286,8 +286,8 @@ async def test_force_wrong_type_returns_invalid_param() -> None:
         worktree=None,
         body={"directory": "/tmp/x", "force": 1},
     )
-    assert result["success"] is False
-    assert result["reason"] == "invalid_param"
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "invalid_param"
 
 
 # ── 成功路径 ─────────────────────────────────────────────────────────
@@ -305,8 +305,8 @@ async def test_successful_load_full_path(plugin_with_mocks) -> None:
         worktree=None,
         body={"directory": "/tmp/some/repo"},
     )
-    assert result["success"] is True
-    assert result["reason"] is None
+    assert result["data"]["success"] is True
+    assert result["data"]["reason"] is None
     data = result["data"]
     assert data["loaded"] is True
     assert data["directory"] == str(Path("/tmp/some/repo").resolve())
@@ -343,7 +343,7 @@ async def test_silent_load_does_not_yield_to_event(plugin_with_mocks) -> None:
         worktree=None,
         body={"directory": "/tmp/silent"},
     )
-    assert result["success"] is True
+    assert result["data"]["success"] is True
     # 关键断言:handler 内部构造的 silent_event 是局部变量,不在 plugin
     # 上注册。这里我们验证 plugin.agentsmd.init 没收到任何 yield 用户消息
     # 用的 event — MagicMock.side_effect 用 _ok 接收 event 形参,
@@ -368,8 +368,8 @@ async def test_agentsmd_disabled_returns_feature_disabled() -> None:
         worktree=None,
         body={"directory": "/tmp/x"},
     )
-    assert result["success"] is False
-    assert result["reason"] == "feature_disabled"
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "feature_disabled"
     assert result["data"]["silent_reason"] == "agentsmd_disabled"
 
 
@@ -385,8 +385,8 @@ async def test_codegraph_disabled_returns_feature_disabled() -> None:
         worktree=None,
         body={"directory": "/tmp/x"},
     )
-    assert result["success"] is False
-    assert result["reason"] == "feature_disabled"
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "feature_disabled"
     assert result["data"]["silent_reason"] == "codegraph_disabled"
 
 
@@ -408,8 +408,8 @@ async def test_project_already_loaded_returns_no_project_loaded() -> None:
         worktree=None,
         body={"directory": "/tmp/new"},
     )
-    assert result["success"] is False
-    assert result["reason"] == "no_project_loaded"
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "no_project_loaded"
     assert result["data"]["silent_reason"] == "project_already_loaded"
     assert result["data"]["previous_directory"] == "/tmp/existing"
     _reset_state()
@@ -432,8 +432,8 @@ async def test_path_unsafe_returns_path_unsafe() -> None:
         worktree=None,
         body={"directory": "/some/blacklisted/path"},
     )
-    assert result["success"] is False
-    assert result["reason"] == "path_unsafe"
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "path_unsafe"
     assert result["data"]["silent_reason"] == "path_unsafe"
 
 
@@ -461,8 +461,8 @@ async def test_agentsmd_init_failure_returns_git_error() -> None:
             worktree=None,
             body={"directory": td},
         )
-        assert result["success"] is False
-        assert result["reason"] == "git_error"
+        assert result["data"]["success"] is False
+        assert result["data"]["reason"] == "git_error"
         assert result["data"]["silent_reason"] == "agentsmd_init_failed"
         # substep_messages 应包含"❌"失败信号
         assert any(
@@ -486,8 +486,8 @@ async def test_codegraph_init_failure_returns_git_error() -> None:
             worktree=None,
             body={"directory": td},
         )
-        assert result["success"] is False
-        assert result["reason"] == "git_error"
+        assert result["data"]["success"] is False
+        assert result["data"]["reason"] == "git_error"
         assert result["data"]["silent_reason"] in {
             "codegraph_init_failed",
             "codegraph_set_failed",  # 兜底:step 内部抛 abort 时
@@ -513,7 +513,7 @@ async def test_no_agentsmd_skips_agentsmd_step() -> None:
             worktree=None,
             body={"directory": td, "no_agentsmd": True},
         )
-        assert result["success"] is True
+        assert result["data"]["success"] is True
         assert result["data"]["skipped_substeps"] == ["agentsmd"]
         # agentsmd.init / load 都不应被调用
         plugin.agentsmd.init.assert_not_called()
@@ -540,7 +540,7 @@ async def test_no_codegraph_skips_codegraph_step() -> None:
             worktree=None,
             body={"directory": td, "no_codegraph": True},
         )
-        assert result["success"] is True
+        assert result["data"]["success"] is True
         assert result["data"]["skipped_substeps"] == ["codegraph"]
         plugin.codegraph.init.assert_not_called()
         plugin.codegraph.set_project.assert_not_called()
@@ -569,7 +569,7 @@ async def test_both_no_flags_makes_shell_load() -> None:
                 "no_codegraph": True,
             },
         )
-        assert result["success"] is True
+        assert result["data"]["success"] is True
         assert sorted(result["data"]["skipped_substeps"]) == [
             "agentsmd",
             "codegraph",
@@ -604,7 +604,7 @@ async def test_force_overrides_existing_load() -> None:
             worktree=None,
             body={"directory": td, "force": True},
         )
-        assert result["success"] is True
+        assert result["data"]["success"] is True
         # 新目录被登记
         info = _proj_state.get("webchat:force:1")
         assert info is not None
@@ -629,7 +629,7 @@ async def test_force_with_no_existing_load_is_noop_unload() -> None:
             worktree=None,
             body={"directory": td, "force": True},
         )
-        assert result["success"] is True
+        assert result["data"]["success"] is True
         # agentsmd.unload 在 no-op 路径上仍被调(因为 _silent_unload
         # 不查 state 直接调)? 实际:no-op 路径 _silent_unload 提前 return
         # → unload 不被调
@@ -649,9 +649,9 @@ async def test_envelope_has_elapsed_ms(plugin_with_mocks) -> None:
         worktree=None,
         body={"directory": "/tmp/x"},
     )
-    assert "elapsed_ms" in result
-    assert isinstance(result["elapsed_ms"], int)
-    assert result["elapsed_ms"] >= 0
+    assert "elapsed_ms" in result["data"]
+    assert isinstance(result["data"]["elapsed_ms"], int)
+    assert result["data"]["elapsed_ms"] >= 0
 
 
 @requires_webapi
@@ -691,7 +691,7 @@ async def test_directory_with_surrounding_quotes_is_stripped(
         worktree=None,
         body={"directory": '"/tmp/quoted"'},
     )
-    assert result["success"] is True
+    assert result["data"]["success"] is True
     # strip_surrounding_quotes 应当去掉引号
     assert '"' not in result["data"]["directory"]
 
