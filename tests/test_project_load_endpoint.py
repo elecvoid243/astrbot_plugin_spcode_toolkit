@@ -417,14 +417,19 @@ async def test_project_already_loaded_returns_no_project_loaded() -> None:
 
 @requires_webapi
 @pytest.mark.asyncio
-async def test_path_unsafe_returns_path_unsafe() -> None:
-    """路径不安全 → path_unsafe。"""
+async def test_path_unsafe_returns_path_unsafe(monkeypatch) -> None:
+    """路径不安全 → path_unsafe。
+
+    2026-08-06: ``load_impl_silent`` 的路径安全检查用的是
+    ``tools.project.manager`` 模块级 import 的 ``is_path_safe``
+    (manager.py:602),不是 AgentsmdSubsystem 注入的那份——旧测试把
+    lambda 注入到 AgentsmdSubsystem 是打错了位置,从不生效。改为
+    monkeypatch manager 模块的符号。
+    """
+    import tools.project.manager as _pm
+
+    monkeypatch.setattr(_pm, "is_path_safe", lambda *a, **kw: (False, "blacklisted"))
     plugin = _make_plugin()
-    # agentsmd / codegraph 子系统 — 真实 ProjectManager 实例
-    plugin.agentsmd = AgentsmdSubsystem(
-        plugin=plugin,
-        is_path_safe=lambda *a, **kw: (False, "blacklisted"),
-    )
     plugin.project = ProjectManager(plugin)
     result = await _project_load_webapi.handle(
         plugin,
