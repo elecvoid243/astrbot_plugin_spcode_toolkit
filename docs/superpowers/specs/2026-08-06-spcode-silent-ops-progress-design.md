@@ -36,7 +36,11 @@ Dashboard ChatUI 输入区的 spcode project chip(`SpcodeProjectIndicator`)点�
 
 ## 3. 后端设计(插件仓库)
 
-### 3.1 通用操作进度存储 —— 新模块 `tools/webapi/_operation_progress.py`
+### 3.1 通用操作进度存储 —— 新模块 `tools/operation_progress.py`
+
+> 位置说明:故意放在 `tools/` 顶层而非 `tools/webapi/` 下——`tools/webapi/__init__.py`
+> 的导入链会拉入 `astrbot.api.web` 及全部端点模块,而 `tools/project/manager.py`、
+> `tools/codegraph/manager.py` 需要反向 import 本模块,放 webapi 包内会产生循环导入。
 
 模块级 dict 按 umo 键控,记录**每个 umo 最近一次操作**的进度:
 
@@ -88,13 +92,21 @@ Dashboard ChatUI 输入区的 spcode project chip(`SpcodeProjectIndicator`)点�
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/spcode/project-load` | POST | **已有**,仅内部加进度钩子,请求/响应协议不变 |
-| `/spcode/project-unload` | POST | 新。`umo` 必传,作为 query 参数(与 project-load 的 `?umo=` 注入方式一致,由 `_wrap` 适配器转发)。响应 envelope 复用 `_make_envelope`:`data{unloaded, directory, umo, substep_messages}` |
+| `/spcode/project-unload` | POST | 新。`umo` 必传,放在 JSON body(`_wrap` 适配器对 POST 从 `body.umo` 注入,与 project-load 一致)。响应 envelope 复用 `_make_envelope`:`data{unloaded, directory, umo, substep_messages}` |
 | `/spcode/codegraph-set` | POST | 新。body: `directory`(必传)+ `umo`(必传)。响应:`data{set, directory, umo, mcp_restarted, substep_messages}` |
 | `/spcode/operation-progress` | GET | 新。query: `umo`(必传)。响应:`data{operation, status, current_step, messages, started_at, finished_at, reason}`;无记录返回 `data{status: "idle"}` |
 
 失败 reason 映射沿用 `project_load.py` 的 `_SILENT_REASON_TO_ENVELOPE` 模式:
 - unload:`feature_disabled`(agentsmd/codegraph 关闭)/ `no_project_loaded`(未加载,幂等成功处理见前端)/ `operation_in_progress`
-- codegraph-set:`path_unsafe` / `path_not_directory` / `git_error`(MCP 重启失败)/ `operation_in_progress`
+- codegraph-set:`path_unsafe`(路径校验失败,含不存在/非目录/黑名单,具体原因看 `substep_messages` 首条)/ `git_error`(MCP 重启失败)/ `operation_in_progress`
+
+> **envelope 契约修复(2026-08-06 增补,计划 Task 2)**:基线测试发现
+> `_make_envelope` 的返回从不包含 `success` 字段,导致前端
+> `useSpcodeProjectAutoLoad.postLoad` 的 `raw.success` 恒为 `undefined`
+> (线上静默加载永远被误判失败),且 `test_project_load_endpoint.py` 21 个
+> 用例自提交日起全挂。修复方式:data 载荷加入 `"success": success`
+> (纯增量字段),并同步修复破损测试断言与 `test_project_command_tokens.py`
+> 的 stale fake。后续所有端点/前端以 `data.success` 为成败权威字段。
 
 路由注册:ROUTES 表 46 → 49,`test_webapi_end_to_end.py` 的路由集合断言与
 `register_web_api.call_count` 断言同步更新。
