@@ -456,6 +456,54 @@ class ProjectManager:
             f"  - codegraph 默认项目已重置\n"
         )
 
+    async def unload_impl_silent(self, event: AstrMessageEvent) -> dict:
+        """``/project unload`` 的静默变体,供 webapi 端点调用(2026-08-06 引入)。
+
+        与 :meth:`unload_impl` 行为一致(feature flag 校验、no-op 守卫、
+        agentsmd unload、codegraph 回默认、state 清理),但不向聊天框产出
+        任何消息——yield 全部收集到返回 dict。每条消息经
+        :class:`ProgressList` 镜像到进度存储(若端点已 begin)。
+
+        Args:
+            event: 仅需 ``unified_msg_origin`` 属性 + ``plain_result``
+                可调(传 ``plain_result=lambda x: x`` 的 MagicMock)。
+
+        Returns:
+            ``{ok, directory, substep_messages, reason}``;
+            reason ∈ ``None | "feature_disabled" | "no_project_loaded"``。
+        """
+        umo = event.unified_msg_origin
+        agentsmd_on = self._plugin._config.get("agentsmd_enabled", True)
+        codegraph_on = self._plugin._config.get("codegraph_enabled", True)
+        if not (agentsmd_on and codegraph_on):
+            _progress_finish(umo, ok=False, reason="feature_disabled")
+            return {
+                "ok": False,
+                "directory": "",
+                "substep_messages": [],
+                "reason": "feature_disabled",
+            }
+        info = _state.get(umo)
+        if info is None:
+            _progress_finish(umo, ok=False, reason="no_project_loaded")
+            return {
+                "ok": False,
+                "directory": "",
+                "substep_messages": [],
+                "reason": "no_project_loaded",
+            }
+        directory = info.get("directory", "")
+        messages = ProgressList(umo)
+        async for msg in self.unload_impl(event):
+            messages.append(_msg_to_text(msg))
+        _progress_finish(umo, ok=True)
+        return {
+            "ok": True,
+            "directory": directory,
+            "substep_messages": list(messages),
+            "reason": None,
+        }
+
     async def status_impl(self, event: AstrMessageEvent):
         """Implementation of ``/project status``.
 
