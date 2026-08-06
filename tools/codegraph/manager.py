@@ -26,6 +26,8 @@ from .._codegraph_mcp import (
     resolve_project_path,
 )
 from .._helpers import _NO_WINDOW_KWARGS
+from ..operation_progress import ProgressList
+from ..operation_progress import finish as _progress_finish
 from . import state as _state
 from .bootstrap import build_mcp_cfg
 
@@ -146,6 +148,46 @@ class CodegraphManager:
                 f"   (codegraph_project 已更新为 {target_str},"
                 f"重启 AstrBot 后生效)"
             )
+
+    async def set_project_silent(
+        self, event: AstrMessageEvent, directory: str
+    ) -> dict:
+        """``/codegraph set`` 的静默变体,供 webapi 端点调用(2026-08-06 引入)。
+
+        迭代 :meth:`set_project` 收集全部 yield,不回传聊天框。每条消息
+        经 :class:`ProgressList` 镜像到进度存储(若端点已 begin)。
+
+        reason 判定约定(与 set_project 的 yield 文案耦合):
+          - 首条消息以 ❌ 开头 → 路径校验失败(``path_invalid``)
+          - 后续消息出现 ❌ → MCP 重启失败(``mcp_restart_failed``)
+          - 无 ❌ → 成功
+        若 set_project 的错误文案前缀变化,此处需同步。
+
+        Returns:
+            ``{ok, directory, substep_messages, reason, mcp_restarted}``
+        """
+        umo = event.unified_msg_origin
+        messages = ProgressList(umo)
+        async for msg in self.set_project(event, directory):
+            messages.append(str(msg))
+        first = messages[0] if messages else ""
+        if first.startswith("❌"):
+            reason: str | None = "path_invalid"
+        elif any(m.startswith("❌") for m in messages):
+            reason = "mcp_restart_failed"
+        else:
+            reason = None
+        ok = reason is None
+        _progress_finish(umo, ok=ok, reason=reason)
+        return {
+            "ok": ok,
+            "directory": directory,
+            "substep_messages": list(messages),
+            "reason": reason,
+            "mcp_restarted": any(
+                m.startswith("✅ codegraph 已切换") for m in messages
+            ),
+        }
 
     async def _init_or_uninit(
         self,
