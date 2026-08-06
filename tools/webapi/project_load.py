@@ -22,6 +22,8 @@ import logging
 import time as _time
 from typing import TYPE_CHECKING
 
+from ..operation_progress import begin as _progress_begin
+from ..operation_progress import finish as _progress_finish
 from ._helpers import ReasonCode, _make_envelope
 
 if TYPE_CHECKING:
@@ -200,6 +202,18 @@ async def handle(
             umo=umo,
         )
 
+    # ── 2.5 并发门:同 umo 只允许一个静默操作(2026-08-06)──
+    #    必须在 force unload 之前——否则并发拒绝时已 unload 却不 load,
+    #    留下"卸载了但没装上"的中间态。
+    if not _progress_begin(umo, "project_load"):
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.OPERATION_IN_PROGRESS,
+            elapsed_ms=_elapsed(t0),
+            loaded=False,
+            umo=umo,
+        )
+
     # ── 3. force 时若已加载,先 unload ──
     #    WHY: dashboard 在 "切换项目" 场景下需要支持无缝覆盖。``load_impl``
     #    默认拒绝重复 load;但 webapi 端点的 ``force`` 标志允许 dashboard
@@ -220,14 +234,28 @@ async def handle(
     silent_event.unified_msg_origin = umo
     silent_event.plain_result = lambda text: text  # noqa: ARG005  # 兼容接口
 
-    result = await plugin.project.load_impl_silent(
-        silent_event,
-        directory,
-        no_agentsmd=no_agentsmd,
-        no_codegraph=no_codegraph,
-        create=create,
-        git_init=git_init,
-    )
+    try:
+        result = await plugin.project.load_impl_silent(
+            silent_event,
+            directory,
+            no_agentsmd=no_agentsmd,
+            no_codegraph=no_codegraph,
+            create=create,
+            git_init=git_init,
+        )
+    except Exception as exc:
+        # 2026-08-06: silent 方法内部已写终态;此兜底仅防未预期异常把
+        # 进度记录卡在 running(finish 幂等,不覆盖已有终态)。
+        logger.exception("project-load: 未捕获异常 (umo=%s)", umo)
+        _progress_finish(umo, ok=False, reason="internal_error")
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.INTERNAL_ERROR,
+            elapsed_ms=_elapsed(t0),
+            loaded=False,
+            umo=umo,
+            substep_messages=[str(exc)],
+        )
 
     # ── 5. 把 silent 内部 result 翻译为 envelope ──
     silent_reason = result.get("reason")

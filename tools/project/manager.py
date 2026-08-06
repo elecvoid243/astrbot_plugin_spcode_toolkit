@@ -29,6 +29,8 @@ from astrbot.api.event import AstrMessageEvent
 
 from .._path_safety import is_path_safe
 from ..agentsmd import strip_surrounding_quotes
+from ..operation_progress import ProgressList
+from ..operation_progress import finish as _progress_finish
 from . import state as _state
 from .pipeline import ProjectLoadAbort, project_load_step
 
@@ -502,6 +504,38 @@ class ProjectManager:
     ) -> dict:
         """``/project load`` 的静默变体,供 webapi 端点调用(2026-07-28 引入)。
 
+        2026-08-06: 执行期间把每条子步骤消息镜像到
+        :mod:`tools.operation_progress`(若端点层已 ``begin``),返回前写终态。
+        未 ``begin`` 的直接调用(旧测试/旧调用方)自动 no-op。签名与返回
+        schema 不变,前端 ``useSpcodeProjectAutoLoad`` 零改动。
+        """
+        result = await self._load_impl_silent_core(
+            event,
+            directory,
+            no_agentsmd=no_agentsmd,
+            no_codegraph=no_codegraph,
+            create=create,
+            git_init=git_init,
+        )
+        _progress_finish(
+            event.unified_msg_origin,
+            ok=bool(result.get("ok")),
+            reason=result.get("reason"),
+        )
+        return result
+
+    async def _load_impl_silent_core(
+        self,
+        event: AstrMessageEvent,
+        directory: str,
+        *,
+        no_agentsmd: bool = False,
+        no_codegraph: bool = False,
+        create: bool = False,
+        git_init: bool = False,
+    ) -> dict:
+        """``/project load`` 的静默变体,供 webapi 端点调用(2026-07-28 引入)。
+
         与 :meth:`load_impl` 行为完全一致(feature flag 校验、路径校验、
         4 步流水线、state 登记),**唯一差异**是不向 ``event`` 产出任何
         聊天框可见消息——所有步骤结果收集到返回的 ``dict`` 里,供
@@ -549,7 +583,8 @@ class ProjectManager:
                     "previous_directory": str,  # 失败且因"重复 load"时,返回已加载目录
                 }
         """
-        messages: list[str] = []
+        umo = event.unified_msg_origin
+        messages = ProgressList(umo)
         failed_reason: str | None = None
         target_str = ""
         skipped: set[str] = set()
@@ -582,7 +617,6 @@ class ProjectManager:
                 }
 
         # 2. 重复 load 拦截
-        umo = event.unified_msg_origin
         if _state.get(umo) is not None:
             previous_directory = _state.get(umo).get("directory", "")
             return {
@@ -653,12 +687,15 @@ class ProjectManager:
                 agents_md_path = target / "AGENTS.md"
                 if not agents_md_path.exists():
                     messages.append(f"⏳ [1/3] AGENTS.md 不存在,正在 init: {target}")
-                    async for msg in project_load_step(
-                        event,
-                        self._plugin.agentsmd.init(event, str(target)),
-                        "[1/3] AGENTS.md 初始化",
-                    ):
-                        messages.append(_msg_to_text(msg))
+                    try:
+                        async for msg in project_load_step(
+                            event,
+                            self._plugin.agentsmd.init(event, str(target)),
+                            "[1/3] AGENTS.md 初始化",
+                        ):
+                            messages.append(_msg_to_text(msg))
+                    except ProjectLoadAbort:
+                        pass
                     if _last_message_failed(messages):
                         failed_reason = "agentsmd_init_failed"
                 else:
@@ -667,12 +704,15 @@ class ProjectManager:
                     )
                 if failed_reason is None:
                     messages.append(f"⏳ [1/3] 正在 load AGENTS.md: {target}")
-                    async for msg in project_load_step(
-                        event,
-                        self._plugin.agentsmd.load(event, str(target)),
-                        "[1/3] AGENTS.md 加载",
-                    ):
-                        messages.append(_msg_to_text(msg))
+                    try:
+                        async for msg in project_load_step(
+                            event,
+                            self._plugin.agentsmd.load(event, str(target)),
+                            "[1/3] AGENTS.md 加载",
+                        ):
+                            messages.append(_msg_to_text(msg))
+                    except ProjectLoadAbort:
+                        pass
                     if _last_message_failed(messages):
                         failed_reason = "agentsmd_load_failed"
 
@@ -684,27 +724,33 @@ class ProjectManager:
                     )
                 else:
                     messages.append(f"⏳ [2/3] codegraph init: {target}")
-                    async for msg in project_load_step(
-                        event,
-                        self._plugin.codegraph.init(event, str(target)),
-                        "[2/3] codegraph init",
-                    ):
-                        messages.append(_msg_to_text(msg))
+                    try:
+                        async for msg in project_load_step(
+                            event,
+                            self._plugin.codegraph.init(event, str(target)),
+                            "[2/3] codegraph init",
+                        ):
+                            messages.append(_msg_to_text(msg))
+                    except ProjectLoadAbort:
+                        pass
                     if _last_message_failed(messages):
                         failed_reason = "codegraph_init_failed"
                     if failed_reason is None:
                         messages.append(f"⏳ [2/3] codegraph set: {target}")
-                        async for msg in project_load_step(
-                            event,
-                            self._plugin.codegraph.set_project(event, str(target)),
-                            "[2/3] codegraph set",
-                        ):
-                            messages.append(_msg_to_text(msg))
+                        try:
+                            async for msg in project_load_step(
+                                event,
+                                self._plugin.codegraph.set_project(event, str(target)),
+                                "[2/3] codegraph set",
+                            ):
+                                messages.append(_msg_to_text(msg))
+                        except ProjectLoadAbort:
+                            pass
                         if _last_message_failed(messages):
                             failed_reason = "codegraph_set_failed"
         except ProjectLoadAbort:
-            # 子步骤抛 abort 时,failed_reason 已被紧贴 step 的
-            # ``_last_message_failed`` 赋值;此分支仅做防御兜底
+            # 2026-08-06: 各子步骤的 abort 已在步骤内被捕获并赋值
+            # failed_reason;此分支仅做最外层防御兜底(理论上不可达)。
             if failed_reason is None:
                 failed_reason = "agentsmd_load_failed"
 
