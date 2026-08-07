@@ -115,6 +115,21 @@ class TestUnloadImplSilent:
         assert result["ok"] is False
         assert result["reason"] == "no_project_loaded"
 
+    def test_not_loaded_finishes_progress_as_done(self):
+        """2026-08-07:卸载的幂等空转也写 done(目标状态=未加载,已达成)。"""
+        from tools.project.manager import ProjectManager
+
+        plugin = MagicMock()
+        plugin._config = {"agentsmd_enabled": True, "codegraph_enabled": True}
+        mgr = ProjectManager(plugin)
+        prog.begin("u-x", "project_unload")
+        result = asyncio.run(mgr.unload_impl_silent(self._make_event("u-x")))
+        assert result["ok"] is False
+        assert result["reason"] == "no_project_loaded"
+        rec = prog.query("u-x")
+        assert rec["status"] == "done"
+        assert rec["reason"] is None
+
     def test_feature_disabled(self):
         from tools.project.manager import ProjectManager
 

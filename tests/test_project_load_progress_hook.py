@@ -105,3 +105,28 @@ def test_silent_reason_classification_codegraph_init():
         result = asyncio.run(mgr.load_impl_silent(_make_event(), td))
     assert result["ok"] is False
     assert result["reason"] == "codegraph_init_failed"
+
+
+def test_already_loaded_finishes_progress_as_done_not_failed():
+    """2026-08-07 bugfix:重复进入已挂载会话时,幂等拒绝必须写 done。
+
+    前端 silentLoad 把 no_project_loaded + 同目录视为幂等成功,但进度
+    存储若写 failed(且 messages 为空——早退在任何 append 之前),chip
+    会显示"加载失败"且失败详情为空,尽管后端实际保持已加载状态。
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        _state.put("u1", {"directory": td, "loaded_at": 1.0})
+        mgr = _make_manager()
+        prog.begin("u1", "project_load")
+        result = asyncio.run(
+            mgr.load_impl_silent(_make_event(), td, no_codegraph=True)
+        )
+    # 端点层仍拿到"未重复加载"的原始结果(契约不变)
+    assert result["ok"] is False
+    assert result["reason"] == "project_already_loaded"
+    # 但进度存储必须收敛为 done(目标状态已达成)
+    rec = prog.query("u1")
+    assert rec["status"] == "done"
+    assert rec["reason"] is None

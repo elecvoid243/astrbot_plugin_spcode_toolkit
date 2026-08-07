@@ -485,7 +485,9 @@ class ProjectManager:
             }
         info = _state.get(umo)
         if info is None:
-            _progress_finish(umo, ok=False, reason="no_project_loaded")
+            # 2026-08-07:未加载时的卸载是幂等空转(目标状态=未加载已达成),
+            # 进度写 done 而非 failed,避免 chip 误报失败。
+            _progress_finish(umo, ok=True)
             return {
                 "ok": False,
                 "directory": "",
@@ -565,10 +567,19 @@ class ProjectManager:
             create=create,
             git_init=git_init,
         )
+        # 2026-08-07 bugfix:project_already_loaded 是幂等良性结果(目标状态
+        # 已达成),进度记录必须写 done 而非 failed——否则 dashboard 轮询会把
+        # "重复进入已挂载会话"显示成"加载失败",且 messages 为空(早退在任何
+        # append 之前)导致失败详情弹窗无内容。端点返回契约不变。
+        ok = bool(result.get("ok"))
+        reason = result.get("reason")
+        if not ok and reason == "project_already_loaded":
+            ok = True
+            reason = None
         _progress_finish(
             event.unified_msg_origin,
-            ok=bool(result.get("ok")),
-            reason=result.get("reason"),
+            ok=ok,
+            reason=reason,
         )
         return result
 
