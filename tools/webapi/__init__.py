@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 
 from . import (
     btw,  # v2.20 (2026-07-17) - 一次性独立 LLM 请求(顺便问问)
+    codegraph_set,  # 2026-08-06 静默切换 codegraph 项目 (POST /spcode/codegraph-set)
     codegraph_status,  # v2.14.x (2026-06-28)
     docs_crud,  # spec B (2026-07-11): POST/PATCH/DELETE /spcode/docs
     file_binary,  # 2026-07-22: GET /spcode/file-binary(原始字节,供 BinaryPreview)
@@ -95,9 +96,11 @@ from . import (
     git_worktree_remove,  # v2.14.0 (2026-06-26)
     git_worktree_unlock,  # v2.14.0 (2026-06-26)
     git_worktrees,
+    operation_progress,  # 2026-08-06 静默操作实时进度 (GET /spcode/operation-progress)
     plan_mode,
     project_load,  # 2026-07-28 静默加载项目 (POST /spcode/project-load)
     project_status,
+    project_unload,  # 2026-08-06 静默卸载项目 (POST /spcode/project-unload)
     vivado_status,  # PR-4 2026-07-23
 )
 
@@ -116,6 +119,24 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["POST"],
         project_load.handle,
         "静默加载项目(dashboard 调用,不在聊天框 yield 用户消息;仿照 plan-mode 切换模式)",
+    ),
+    (
+        "/spcode/project-unload",  # 2026-08-06 静默卸载项目
+        ["POST"],
+        project_unload.handle,
+        "静默卸载当前会话已加载的项目(供 dashboard 调用)",
+    ),
+    (
+        "/spcode/codegraph-set",  # 2026-08-06 静默切换 codegraph 默认项目
+        ["POST"],
+        codegraph_set.handle,
+        "静默切换 codegraph 默认项目(供 dashboard 调用)",
+    ),
+    (
+        "/spcode/operation-progress",  # 2026-08-06 静默操作实时进度
+        ["GET"],
+        operation_progress.handle,
+        "查询静默操作实时进度(供 dashboard 轮询)",
     ),
     (
         "/spcode/plan-mode",
@@ -518,7 +539,7 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
 
 def register_webapi_routes(plugin: SPCodeToolkit) -> None:
-    """Register all 46 ``/spcode/*`` routes against ``plugin.context``.
+    """Register all 50 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
     but never raised — a single broken endpoint should not block
@@ -528,6 +549,8 @@ def register_webapi_routes(plugin: SPCodeToolkit) -> None:
     v2.22.0 (2026-07-27): 39 -> 45 (+plan-mode POST 1 + git-merge/cherry-pick/
                           conflict 系列 5 端点)
     2026-07-28: 45 -> 46 (+1 POST /spcode/project-load 静默加载项目)
+    2026-08-06: 46 -> 50 (+project-unload +codegraph-set +operation-progress;
+                对账补登此前漏记的 conflict 系列实际为 47)
     """
     for route, methods, handler, desc in ROUTES:
         try:

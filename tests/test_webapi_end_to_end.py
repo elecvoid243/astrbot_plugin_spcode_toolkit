@@ -122,7 +122,9 @@ def test_routes_table_has_forty_six_endpoints() -> None:
       git-stats / vivado-status / plan-mode POST / git-merge / git-cherry-pick /
       git-conflict-status / git-conflict-resolve / git-conflict-continue /
       git-conflict-abort / project-load POST
-      → 46 entries (16 GET + 28 POST + 1 PATCH + 1 DELETE)
+    - 2026-08-03: +1 POST (git-squash);2026-08-06 对账补登 conflict 系列
+    - 2026-08-06: +2 POST (project-unload / codegraph-set) +1 GET (operation-progress)
+      → 50 entries (17 GET + 31 POST + 1 PATCH + 1 DELETE)
     """
     routes = {entry[0] for entry in ROUTES}
     assert routes == {
@@ -165,6 +167,18 @@ def test_routes_table_has_forty_six_endpoints() -> None:
         "/spcode/file-rename",  # 2026-07-18 (workspace file editor)
         "/spcode/file-remove",  # 2026-07-18 (workspace file editor)
         "/spcode/vivado-status",  # PR-4 (2026-07-23)
+        # ── v2.22.0+ 冲突/合并系列(此前漏记,2026-08-06 对账补登) ──
+        "/spcode/git-merge",
+        "/spcode/git-cherry-pick",
+        "/spcode/git-conflict-status",
+        "/spcode/git-conflict-resolve",
+        "/spcode/git-conflict-continue",
+        "/spcode/git-conflict-abort",
+        "/spcode/git-squash",  # 2026-08-03
+        # ── 2026-08-06 静默操作系列 ──
+        "/spcode/project-unload",
+        "/spcode/codegraph-set",
+        "/spcode/operation-progress",
     }
     # Methods sanity:
     # 24 base: 10 GET + 12 POST + 1 PATCH + 1 DELETE = 24 entries
@@ -178,10 +192,12 @@ def test_routes_table_has_forty_six_endpoints() -> None:
     #                           / git-conflict-resolve / git-conflict-continue
     #                           / git-conflict-abort)
     # 2026-07-28: +1 POST (project-load 静默加载项目)
-    # 46 entries total: 16 GET + 28 POST + 1 PATCH + 1 DELETE
+    # 2026-08-03: +1 POST (git-squash);2026-08-06 对账补登 conflict 系列(此前漏记)
+    # 2026-08-06: +2 POST (project-unload / codegraph-set) +1 GET (operation-progress)
+    # 50 entries total: 17 GET + 31 POST + 1 PATCH + 1 DELETE
     methods = [m for entry in ROUTES for m in entry[1]]
-    assert methods.count("GET") == 16  # +file-binary +vivado-status +git-file(spec B)
-    assert methods.count("POST") == 28  # +plan-mode (v2.22.0) +5 conflict +project-load
+    assert methods.count("GET") == 17  # +operation-progress
+    assert methods.count("POST") == 31  # +project-unload +codegraph-set +git-squash 等
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
 
@@ -397,24 +413,17 @@ async def test_wrap_get_query_via_web_request(monkeypatch) -> None:
 # === register_webapi_routes ===========================================
 
 
-def test_register_webapi_routes_calls_context_forty_six_times() -> None:
+def test_register_webapi_routes_calls_context_fifty_times() -> None:
     """``register_webapi_routes`` must call ``register_web_api`` once per route.
 
-    v2.17.0 (2026-07-15): route count 24 -> 30(+git-init/branches/create/delete/switch/revert)。
-    v2.18.0 (2026-07-16): route count 30 -> 31(+git-repo-check)。
-    v2.20 (2026-07-17): route count 31 -> 32(+btw)。
-    2026-07-17~22: +file-write +file-rename +file-remove +file-binary +git-stats
-                   +vivado-status (PR-4 2026-07-23) → 38 entries
-    v2.22.0 (2026-07-27): +1 POST (plan-mode 切换,与 GET 同路径) → 39
-                  +6 POST (git-merge / git-cherry-pick / git-conflict-status
-                           / git-conflict-resolve / git-conflict-continue
-                           / git-conflict-abort) → 45
+    (历史计数链略,见 ROUTES 表注释)
     2026-07-28: +1 POST (project-load 静默加载项目) → 46
+    2026-08-03: +1 POST (git-squash) → 47(此前漏记 conflict 系列,对账后 47)
+    2026-08-06: +2 POST (project-unload / codegraph-set) +1 GET (operation-progress) → 50
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    # 46 entries (2026-07-28 +project-load 静默加载)
-    assert plugin.context.register_web_api.call_count == 46
+    assert plugin.context.register_web_api.call_count == 50
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -431,10 +440,10 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 46 routes
-    # (含 2026-07-28 新增的 POST /spcode/project-load)。
+    # Should not raise; should attempt all 50 routes
+    # (含 2026-08-06 新增的 project-unload / codegraph-set / operation-progress)。
     register_webapi_routes(plugin)
-    assert call_count == 46
+    assert call_count == 50
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

@@ -45,7 +45,11 @@ def test_reason_code_has_path_scope_codes():
 
 
 def test_make_envelope_success_shape():
-    """success=True 时 data 含 reason=None / stderr='',其它字段透传。"""
+    """success=True 时 data 含 success=True / reason=None / stderr='',其它字段透传。
+
+    2026-08-06: data 载荷新增 success 字段(此前被丢弃),前端 silent-load
+    客户端依赖 data.success 判断成败。
+    """
     env = _make_envelope(
         success=True,
         elapsed_ms=42,
@@ -56,6 +60,7 @@ def test_make_envelope_success_shape():
     assert env == {
         "status": "ok",
         "data": {
+            "success": True,
             "staged": True,
             "files": ["a.py"],
             "staged_count": 1,
@@ -75,6 +80,7 @@ def test_make_envelope_failure_shape():
         staged=False,
     )
     assert env["status"] == "ok"
+    assert env["data"]["success"] is False
     assert env["data"]["staged"] is False
     assert env["data"]["reason"] == "invalid_body"
     assert env["data"]["stderr"] == ""
