@@ -9,7 +9,6 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-
 from tools import operation_progress as prog
 from tools.webapi.operation_progress import handle
 

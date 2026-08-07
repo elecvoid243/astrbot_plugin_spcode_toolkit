@@ -9,7 +9,6 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-
 from tools import operation_progress as prog
 from tools.project import state as _state
 from tools.project.manager import ProjectManager
@@ -79,9 +78,7 @@ def test_silent_reason_classification_agentsmd_init():
 
     with tempfile.TemporaryDirectory() as td:
         # td 下无 AGENTS.md → 走 init 分支
-        result = asyncio.run(
-            mgr.load_impl_silent(_make_event(), td, no_codegraph=True)
-        )
+        result = asyncio.run(mgr.load_impl_silent(_make_event(), td, no_codegraph=True))
     assert result["ok"] is False
     assert result["reason"] == "agentsmd_init_failed"
 
