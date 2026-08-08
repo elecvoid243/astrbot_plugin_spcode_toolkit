@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -226,18 +226,28 @@ class TestBtwEndpoint:
     async def test_provider_id_valid(self, mock_plugin):
         """provider_id 有效 -> 使用指定 provider,不触碰默认 provider"""
         from tools.webapi.btw import handle
-        from astrbot.core.provider import Provider
 
-        mock_provider = MagicMock(spec=Provider)
-        mock_provider.text_chat = AsyncMock(
-            return_value=MagicMock(completion_text="指定模型回答", tools_call_args=None)
-        )
-        mock_plugin.context.get_provider_by_id = MagicMock(return_value=mock_provider)
+        # 把 btw 模块命名空间内的 Provider 替换为稳定 mock 基类,保证在
+        # 真实 astrbot 与本地 stub 两种环境下 isinstance 检查均一致。
+        # (不能直接用 patch 默认值: 它会替换为 MagicMock,无法再作为 spec)
+        class _StableProvider:
+            """替代 Provider 的稳定基类(仅用于本测试)"""
 
-        resp = await handle(
-            mock_plugin,
-            body={"prompt": "生成提交信息", "provider_id": "p1"},
-        )
+        with patch("tools.webapi.btw.Provider", new=_StableProvider, create=True):
+            mock_provider = MagicMock(spec=_StableProvider)
+            mock_provider.text_chat = AsyncMock(
+                return_value=MagicMock(
+                    completion_text="指定模型回答", tools_call_args=None
+                )
+            )
+            mock_plugin.context.get_provider_by_id = MagicMock(
+                return_value=mock_provider
+            )
+
+            resp = await handle(
+                mock_plugin,
+                body={"prompt": "生成提交信息", "provider_id": "p1"},
+            )
         assert resp["data"]["reason"] is None
         assert resp["data"]["reply"] == "指定模型回答"
         mock_plugin.context.get_provider_by_id.assert_called_once_with("p1")
