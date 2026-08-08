@@ -490,7 +490,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/git-worktree-unlock` | POST | 解锁 git worktree，main 允许但 git 自身拒绝 | body: `{path}` |
 | `/spcode/codegraph-status` | GET | codegraph MCP 运行状态 | - |
 | `/spcode/vivado-status` | GET | vivado MCP 运行状态快照（enabled / mcp_running / vivado_path / sessions / degraded） | `umo?` |
-| `/spcode/btw` | POST | 一次性独立 LLM 请求（顺便问问）：复用当前会话历史命中 prefix cache，不回写历史，无工具，纯文本输出 | body: `{prompt, umo?}` |
+| `/spcode/btw` | POST | 一次性独立 LLM 请求（顺便问问）：复用当前会话历史命中 prefix cache，不回写历史，无工具，纯文本输出 | body: `{prompt, umo?, provider_id?}`  # provider_id 可选,指定 LLM provider 实例 |
 | `/spcode/docs` | POST | 创建 / 覆盖 docs 文件（upsert 到工作区） | body: `{umo?, worktree?, path, content}` |
 | `/spcode/docs` | PATCH | 重命名 docs 文件（纯文件系统 mv） | body: `{umo?, worktree?, path, new_path}` |
 | `/spcode/docs` | DELETE | 从工作区删除 docs 文件（unlink） | body: `{umo?, worktree?, path}` |
