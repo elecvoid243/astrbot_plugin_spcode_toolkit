@@ -19,6 +19,7 @@ import time as _time
 from typing import TYPE_CHECKING
 
 from ._helpers import ReasonCode, _make_envelope
+from astrbot.core.provider import Provider  # noqa: E402
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
@@ -37,6 +38,7 @@ async def handle(
         {
             "prompt": str,  # 必填
             "umo": str | None  # 可选, unified_msg_origin
+            "provider_id": str | None  # 可选, 指定 provider 实例 ID
         }
 
     Returns:
@@ -68,7 +70,35 @@ async def handle(
         umo = None
 
     # ── 2. 获取 provider ──
-    provider = plugin.context.get_using_provider(umo=umo)
+    # 可选 provider_id: 指定运行时 provider 实例;空白/缺失则跟随会话默认。
+    provider_id_raw = body.get("provider_id")
+    if isinstance(provider_id_raw, str) and provider_id_raw.strip():
+        provider = plugin.context.get_provider_by_id(provider_id_raw.strip())
+        if provider is None:
+            logger.warning(
+                "[btw] provider_id=%r not found in inst_map, returning "
+                "provider_not_found",
+                provider_id_raw.strip(),
+            )
+            return _make_envelope(
+                success=False,
+                reason=ReasonCode.PROVIDER_NOT_FOUND,
+                elapsed_ms=_elapsed(),
+            )
+        if not isinstance(provider, Provider):
+            logger.warning(
+                "[btw] provider_id=%r is not a chat-completion provider "
+                "(type=%s), returning provider_type_invalid",
+                provider_id_raw.strip(),
+                type(provider).__name__,
+            )
+            return _make_envelope(
+                success=False,
+                reason=ReasonCode.PROVIDER_TYPE_INVALID,
+                elapsed_ms=_elapsed(),
+            )
+    else:
+        provider = plugin.context.get_using_provider(umo=umo)
     if provider is None:
         logger.warning(
             "[btw] no LLM provider available (umo=%r), returning no_provider",

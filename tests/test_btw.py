@@ -221,3 +221,71 @@ class TestBtwEndpoint:
         )
         assert resp["data"]["reason"] is None
         assert resp["data"]["has_context"] is False
+
+    @pytest.mark.asyncio
+    async def test_provider_id_valid(self, mock_plugin):
+        """provider_id 有效 -> 使用指定 provider,不触碰默认 provider"""
+        from tools.webapi.btw import handle
+        from astrbot.core.provider import Provider
+
+        mock_provider = MagicMock(spec=Provider)
+        mock_provider.text_chat = AsyncMock(
+            return_value=MagicMock(completion_text="指定模型回答", tools_call_args=None)
+        )
+        mock_plugin.context.get_provider_by_id = MagicMock(return_value=mock_provider)
+
+        resp = await handle(
+            mock_plugin,
+            body={"prompt": "生成提交信息", "provider_id": "p1"},
+        )
+        assert resp["data"]["reason"] is None
+        assert resp["data"]["reply"] == "指定模型回答"
+        mock_plugin.context.get_provider_by_id.assert_called_once_with("p1")
+        mock_plugin.context.get_using_provider.assert_not_called()
+        mock_provider.text_chat.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_provider_id_not_found(self, mock_plugin):
+        """provider_id 不存在 -> provider_not_found"""
+        from tools.webapi.btw import handle
+
+        mock_plugin.context.get_provider_by_id = MagicMock(return_value=None)
+
+        resp = await handle(
+            mock_plugin,
+            body={"prompt": "生成提交信息", "provider_id": "ghost"},
+        )
+        assert resp["data"]["reason"] == "provider_not_found"
+        assert "reply" not in resp["data"]
+        mock_plugin.context.get_using_provider.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_provider_id_type_invalid(self, mock_plugin):
+        """provider_id 指向非聊天类型 provider -> provider_type_invalid"""
+        from tools.webapi.btw import handle
+
+        # 普通 MagicMock 不是 Provider 实例,模拟 TTS/STT 等非聊天 provider
+        mock_plugin.context.get_provider_by_id = MagicMock(return_value=MagicMock())
+
+        resp = await handle(
+            mock_plugin,
+            body={"prompt": "生成提交信息", "provider_id": "tts1"},
+        )
+        assert resp["data"]["reason"] == "provider_type_invalid"
+
+    @pytest.mark.asyncio
+    async def test_provider_id_blank_falls_back(self, mock_plugin):
+        """provider_id 为空白串 -> 走默认 provider(向后兼容)"""
+        from tools.webapi.btw import handle
+
+        mock_plugin.context.get_provider_by_id = MagicMock()
+        mock_plugin.context.get_using_provider.return_value = self._mock_provider(
+            "默认回答"
+        )
+
+        resp = await handle(
+            mock_plugin,
+            body={"prompt": "生成提交信息", "provider_id": "   "},
+        )
+        assert resp["data"]["reply"] == "默认回答"
+        mock_plugin.context.get_provider_by_id.assert_not_called()

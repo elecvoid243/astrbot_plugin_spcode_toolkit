@@ -395,6 +395,8 @@ class ReasonCode:
     NO_PROVIDER = "no_provider"  # 无可用 LLM Provider
     EMPTY_RESPONSE = "empty_response"  # LLM 返回空文本
     LLM_ERROR = "llm_error"  # LLM 调用异常(provider.text_chat 抛错)
+    PROVIDER_NOT_FOUND = "provider_not_found"  # btw: provider_id 指定实例不存在
+    PROVIDER_TYPE_INVALID = "provider_type_invalid"  # btw: provider_id 非聊天类型
 
     # ── vivado-mcp 专用 (PR-4 2026-07-23) ──
     VIVADO_NOT_INSTALLED = "vivado_not_installed"
