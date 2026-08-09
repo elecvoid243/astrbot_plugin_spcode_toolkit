@@ -910,3 +910,63 @@ async def test_show_path_query_path_with_newline_returns_invalid_param(
         assert result["data"]["reason"] == ReasonCode.INVALID_PARAM, (
             f"path 含控制字符应被拒: {bad!r}"
         )
+
+
+# ──────────────────────────────────────────────────────────
+# full_patch 视图(2026-08-09, elecvoid243, changelog 生成)
+# Spec: docs/superpowers/specs/2026-08-09-changelog-generate-design.md §4
+# ──────────────────────────────────────────────────────────
+
+
+async def test_show_full_patch_returns_pure_diff(monkeypatch, plugin, tmp_path: Path):
+    """full_patch=1 → data.patch 含 diff --git 段,不含 commit header。"""
+    shas = _init_repo_simple(tmp_path, n=2)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin, full_patch="1")
+    assert result["data"]["reason"] is None
+    assert result["data"]["resolved_sha"] == shas[-1]
+    patch = result["data"]["patch"]
+    assert isinstance(patch, str)
+    assert "diff --git a/file1.txt b/file1.txt" in patch
+    # --pretty=format: 空格式 → 无 commit header
+    assert "Author:" not in patch
+    assert "commit " not in patch.splitlines()[0]
+    assert result["data"]["patch_truncated"] is False
+
+
+async def test_show_full_patch_and_path_returns_invalid_param(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """full_patch 与 path 互斥,同传 → invalid_param。"""
+    _init_repo_simple(tmp_path, n=1)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(
+        monkeypatch, plugin, full_patch="1", path="file0.txt"
+    )
+    assert result["data"]["reason"] == ReasonCode.INVALID_PARAM
+
+
+async def test_show_full_patch_truncation_flag(monkeypatch, plugin, tmp_path: Path):
+    """patch 超上限 → 截断且 patch_truncated=True(不报错)。"""
+    _init_repo_simple(tmp_path, n=1)
+    _load_project(plugin, "u:m", str(tmp_path))
+    monkeypatch.setattr(_gs, "MAX_SHOW_FULL_PATCH_BYTES", 32)
+
+    result = await _call_with_query(monkeypatch, plugin, full_patch="1")
+    assert result["data"]["reason"] is None
+    assert result["data"]["patch_truncated"] is True
+    assert len(result["data"]["patch"]) == 32
+
+
+async def test_show_without_full_patch_has_no_patch_field(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """不传 full_patch → 响应无 patch 字段(向后兼容)。"""
+    _init_repo_simple(tmp_path, n=1)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin)
+    assert "patch" not in result["data"]
+    assert "patch_truncated" not in result["data"]

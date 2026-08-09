@@ -38,6 +38,10 @@ MAX_PARAM_LENGTH = 512
 MAX_SHOW_BYTES = 1 * 1024 * 1024  # 1 MB 硬上限(numstat)
 # v3.9 (2026-06-25): 单文件 patch 视图(?path=)硬上限,防极端大文件
 MAX_SHOW_FILE_BYTES = 256 * 1024  # 256 KB 单文件 patch 字节上限
+# 2026-08-09 (elecvoid243): full-commit patch view (?full_patch=1) for
+# changelog generation. Truncate-not-fail: a single huge commit must
+# not block the whole changelog flow.
+MAX_SHOW_FULL_PATCH_BYTES = 256 * 1024  # 256 KB full-commit patch cap
 MAX_FILES_DEFAULT = 500
 MAX_FILES_LIMIT = 2000
 
@@ -476,6 +480,23 @@ async def handle(
                 worktree=worktree,
             )
 
+    # ── 1c. 可选 ?full_patch=1 整提交 patch 视图(2026-08-09, changelog) ──
+    # 与 ?path= 互斥(两者同传无意义,直接 invalid_param)。
+    full_patch_raw = _qget("full_patch")
+    full_patch = full_patch_raw is not None and full_patch_raw.strip().lower() in (
+        "1",
+        "true",
+    )
+    if full_patch and target_path is not None:
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            loaded=False,
+            umo=umo,
+            worktree=worktree,
+        )
+
     # ── 2. preflight ──
     err, ctx = await _git_endpoint_preflight(
         plugin,
@@ -689,6 +710,36 @@ async def handle(
             )
             file_view = None
 
+    # ── 8c. 可选:整提交 patch 视图(?full_patch=1 时, 2026-08-09) ──
+    # --pretty=format: 空格式 → stdout 为纯 diff(无 commit header),
+    # 前端可直接嵌入 LLM prompt。超限截断而非报错(spec §4.1)。
+    # 子调用失败不致命:patch_view=None → 响应不带 patch 字段,前端按
+    # "该 commit diff 获取失败" 降级(仅 message 进 prompt)。
+    patch_view: dict | None = None
+    if full_patch:
+        fp_args = list(git_prefix) + [
+            "show",
+            "--no-color",
+            "--no-ext-diff",
+            "--pretty=format:",
+            ref,
+        ]
+        fp_result = await _run_git_async(fp_args, encoding="utf-8")
+        if fp_result["ok"]:
+            stdout_fp = fp_result["stdout"]
+            fp_truncated = len(stdout_fp) > MAX_SHOW_FULL_PATCH_BYTES
+            if fp_truncated:
+                # stdout 已是解码后的 str,按字符截断安全(不会切断字节序列)
+                stdout_fp = stdout_fp[:MAX_SHOW_FULL_PATCH_BYTES]
+            patch_view = {"patch": stdout_fp, "patch_truncated": fp_truncated}
+        else:
+            logger.warning(
+                "git show --pretty=format: %s (full_patch) 失败: %s",
+                ref,
+                fp_result.get("stderr", ""),
+            )
+            patch_view = None
+
     # ── 9. 构造响应 ──
     response_data = _make_envelope(
         success=True,
@@ -718,6 +769,10 @@ async def handle(
     if file_view is not None:
         # file 字段加在 data 子 dict 里,符合 envelope 协议
         response_data["data"]["file"] = file_view
+    # 2026-08-09: 透传整提交 patch(仅在 ?full_patch=1 且子调用成功时)
+    if patch_view is not None:
+        response_data["data"]["patch"] = patch_view["patch"]
+        response_data["data"]["patch_truncated"] = patch_view["patch_truncated"]
     return _JSONResponseCompat(
         response_data,
         status_code=200,
