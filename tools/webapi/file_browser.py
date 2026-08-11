@@ -12,7 +12,7 @@ import stat
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .._helpers import detect_console_encoding, safe_decode_bytes
+from .._helpers import _decode_text_bytes
 from ._helpers import _JSONResponseCompat
 
 if TYPE_CHECKING:
@@ -28,54 +28,9 @@ FILE_BROWSER_MAX_ENTRIES: int = 1000  # 单层目录最大返回项数
 FILE_BROWSER_SNIFF_BYTES: int = 8192  # 8 KB 二进制探测窗口
 _TYPE_ORDER: dict[str, int] = {"directory": 0, "file": 1, "symlink": 2}
 
-# 文本编码探测候选链(按优先级)。
-# 顺序设计:
-#   1. utf-8     : 主流,快路径(strict decode 一次性成功,无 fallback 开销)
-#   2. utf-8-sig : UTF-8 BOM 文件(Windows Notepad 常见),需剥离 BOM
-#   3. cp936     : 中文 Windows ANSI 代码页 = GBK 超集
-#   4. gbk       : GBK 严格模式(cp936 decode 失败时退一步)
-#   5. gb18030   : 中国国家标准,GBK 超集,涵盖更多生僻字
-#   6. latin-1   : 永远能解码(0x00-0xFF 一一对应),最后兜底
-# 选用 cp936 在 gbk 之前:cp936 是 gbk 的超集,优先尝试覆盖更广的字符集;
-# 同理 gb18030 排在 gbk 后(covers everything gbk can decode, plus more)。
-_TEXT_ENCODING_CANDIDATES: tuple[str, ...] = (
-    "utf-8",
-    "cp936",
-    "gbk",
-    "gb18030",
-    "latin-1",
-)
-_UTF8_BOM: bytes = b"\xef\xbb\xbf"
-
-
-def _decode_text_bytes(raw: bytes) -> tuple[str, str]:
-    """将原始字节解码为文本,返回 ``(content, encoding_name)``。
-
-    与 ``_is_binary``(NUL 嗅探)配合使用:本函数假设 caller 已经确认
-    raw 不含 NUL 字节(即不是真二进制)。
-
-    解码策略:
-      1. UTF-8 BOM (EF BB BF) → 剥离 BOM,encoding="utf-8-sig"
-      2. 严格 UTF-8 → encoding="utf-8"
-      3. cp936 (中文 Windows ANSI) → "cp936"
-      4. gbk → "gbk"
-      5. gb18030 (GBK 超集,含扩展字符) → "gb18030"
-      6. latin-1 (永远能解) → "latin-1"
-
-    Returns:
-        ``(decoded_string, encoding_name)``。encoding_name 永远是非空
-        字符串(latin-1 兜底保证)。
-    """
-    if raw.startswith(_UTF8_BOM):
-        return raw[len(_UTF8_BOM) :].decode("utf-8"), "utf-8-sig"
-    for enc in _TEXT_ENCODING_CANDIDATES:
-        try:
-            return raw.decode(enc), enc
-        except (UnicodeDecodeError, LookupError):
-            continue
-    # 不可达:latin-1 永远 decode 成功;若 cp936/gbk 链整个误配,
-    # safe_decode_bytes 兜底再试一次,带 errors="replace" 兜底
-    return safe_decode_bytes(raw, preferred=detect_console_encoding()), "utf-8"
+# 文本编码探测链已上移到 tools/_helpers.py（v2.23.0, 2026-08-11）：
+#   _TEXT_ENCODING_CANDIDATES / _UTF8_BOM / _decode_text_bytes
+# 本文件保留 re-export（file_write 从 .file_browser 导入 _decode_text_bytes）。
 
 
 def _compute_file_etag(path: Path, st: os.stat_result | None = None) -> str | None:

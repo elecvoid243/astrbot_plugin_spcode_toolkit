@@ -775,3 +775,69 @@ def test_format_ruff_uses_python_m_directly(monkeypatch, unformatted_py: Path):
     assert not any(part.endswith("ruff.exe") for part in cmd), (
         f"绝不能 spawn ruff.exe(会被 .bat wrapper 顶替): {cmd}"
     )
+
+
+# ── 22. (2026-08-11) astyle 保持原文件编码 (v2.23.0) ──
+#
+# 报告:code_format 对 GBK/cp936 编码的 C/C++ 源文件格式化后,
+# 会把文件强转为 UTF-8(写回固定 encoding="utf-8")。
+# 修复:_format_with_astyle 复用 tools._helpers._decode_text_bytes
+# 探测原编码,写回时保持原编码(GBK 仍 GBK、UTF-8 BOM 保留 BOM)。
+#
+# Author: elecvoid243, 2026-08-11
+
+
+def test_format_astyle_preserves_gbk_encoding(tmp_path: Path, fake_astyle_run):
+    """GBK 编码 .cpp 格式化后仍保持 GBK(不被 astyle 强转 UTF-8)。"""
+    f = tmp_path / "gbk.cpp"
+    f.write_bytes("// 中文注释\nint main(){return 0;}\n".encode("gbk"))
+    formatted = "// 中文注释\nint main()\n{\n    return 0;\n}\n"
+    fake_astyle_run["state"]["formatted"] = formatted
+
+    r = code_format.format(str(f), style="allman", indent=4)
+    assert r["ok"] is True
+    assert r["changed"] is True
+
+    raw = f.read_bytes()
+    # 写回字节(容错 Windows write_text 的 \n → \r\n 转换)必须等于
+    # astyle 输出按 GBK 编码的字节 —— 旧实现固定 UTF-8 时此断言失败
+    assert raw.replace(b"\r\n", b"\n") == formatted.encode("gbk"), (
+        f"文件应保持 GBK 编码;实得前 32 字节={raw[:32]!r}"
+    )
+    # 双重确认:内容可按 GBK 解码且含中文注释
+    assert "中文注释" in raw.decode("gbk")
+
+
+def test_format_astyle_preserves_utf8_bom(tmp_path: Path, fake_astyle_run):
+    """UTF-8 BOM 文件格式化后仍保留 BOM。"""
+    f = tmp_path / "bom.cpp"
+    f.write_bytes(b"\xef\xbb\xbfint main(){return 0;}\n")
+    formatted = "int main()\n{\n    return 0;\n}\n"
+    fake_astyle_run["state"]["formatted"] = formatted
+
+    r = code_format.format(str(f), style="allman", indent=4)
+    assert r["ok"] is True
+    assert r["changed"] is True
+
+    raw = f.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf"), "UTF-8 BOM 丢失"
+    assert raw.replace(b"\r\n", b"\n") == b"\xef\xbb\xbf" + formatted.encode(
+        "utf-8"
+    ), f"BOM + UTF-8 内容应原样保留;实得={raw[:40]!r}"
+
+
+def test_format_astyle_preserves_utf8_no_bom(tmp_path: Path, fake_astyle_run):
+    """普通 UTF-8(无 BOM)文件格式化后仍是 UTF-8 且不新增 BOM。"""
+    f = tmp_path / "plain.cpp"
+    f.write_text("int main(){return 0;}\n", encoding="utf-8")
+    formatted = "int main()\n{\n    return 0;\n}\n"
+    fake_astyle_run["state"]["formatted"] = formatted
+
+    r = code_format.format(str(f), style="allman", indent=4)
+    assert r["ok"] is True
+    assert r["changed"] is True
+
+    raw = f.read_bytes()
+    assert not raw.startswith(b"\xef\xbb\xbf"), "不应新增 BOM"
+    raw.replace(b"\r\n", b"\n").decode("utf-8")
+

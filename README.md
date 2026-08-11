@@ -1,6 +1,6 @@
 # spcode 工具箱
 
-> **当前版本: v2.23.0** · 作者: elecvoid243
+> **当前版本: v2.23.1** · 作者: elecvoid243
 
 AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用工具，并附带一套供 Dashboard 消费的 Web API。
 
@@ -236,6 +236,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 - **AStyle 稳定性策略**：永远 stdin/stdout 调用（不原地修改、不创建 `.orig` 备份），用 stdlib `difflib` 比对判断是否 changed，只有 changed 才写回
 - **ruff 调用**：`check=False` → `ruff format <file>`（直接写回）；`check=True` → `ruff format --check --diff <file>`（不写，只报告）
 - **幂等语义**：第二次格式化同一文件 → `changed=False`
+- **保持原文件编码**（v2.23.1+）：AStyle 写回时探测并保持原编码（UTF-8 / UTF-8 BOM / GBK/cp936 等），不再强转 UTF-8
 - 支持干跑模式（`check=true`，不写回，仅报告是否有改动）
 
 ### es_search - 文件名极速搜索

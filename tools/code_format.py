@@ -47,6 +47,7 @@ from pathlib import Path
 
 from ._helpers import (
     _NO_WINDOW_KWARGS,
+    _decode_text_bytes,
     _get_console_python,
     detect_console_encoding,
     proposal_reply,
@@ -395,10 +396,10 @@ def _format_with_astyle(
 
     流程:
       1. 推算 astyle.exe 路径
-      2. 读原文件 → 解码为 str
+      2. 读原文件 → 探测编码并解码为 str（v2.23.0 起按原编码写回）
       3. ``subprocess.run([astyle.exe, --style=X, --indent=spaces=N], input=before_text)``
       4. compare → changed
-      5. check=False & changed=True → 写回原文件
+      5. check=False & changed=True → 写回原文件(保持原编码)
       6. check=True → 永远不写
 
     Args:
@@ -435,13 +436,11 @@ def _format_with_astyle(
             ],
         )
 
-    # 2. 读源文件 → 解码(优先 UTF-8,中文源码回退 detect_console_encoding)
+    # 2. 读源文件 → 探测编码(复用 tools._helpers 统一解码链:
+    #    utf-8-sig BOM → utf-8 → cp936 → gbk → gb18030 → latin-1)
     before_bytes = p.read_bytes()
     file_size_before = len(before_bytes)
-    try:
-        before_text = before_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        before_text = before_bytes.decode(detect_console_encoding(), errors="replace")
+    before_text, encoding = _decode_text_bytes(before_bytes)
 
     # 2.5 归一化行尾 (2026-07-31 修复 CRLF 双空行 bug):
     #   报告:code_format 遇到 CRLF 源文件时,会把每个 CRLF 变为双空行。
@@ -499,7 +498,7 @@ def _format_with_astyle(
     #   一次,防止 stdin 归一化失效时输出仍把 "\r" 误带回文件。
     if after_text and "\r" in after_text:
         after_text = after_text.replace("\r\n", "\n").replace("\r", "\n")
-    file_size_after = len(after_text.encode("utf-8"))
+    file_size_after = len(after_text.encode(encoding))
 
     # 用 splitlines() 行内比较,容错 \n / \r\n / \r(Windows write_text 会 \n → \r\n)
     changed = _content_changed(before_text, after_text)
@@ -524,10 +523,11 @@ def _format_with_astyle(
             result["diff_summary"] = _summarize_diff(diff_text)
     else:
         if changed:
-            # 写回原文件(UTF-8,兼容中英文注释)
+            # 写回原文件,保持原编码(v2.23.0: 不再固定 UTF-8,
+            # GBK/cp936 等编码的源文件不会被 astyle 强转 UTF-8)
             try:
-                p.write_text(after_text, encoding="utf-8")
-            except OSError as e:
+                p.write_text(after_text, encoding=encoding)
+            except (OSError, UnicodeEncodeError) as e:
                 return {"ok": False, "error": f"写回文件失败: {e}"}
 
     if not changed:
