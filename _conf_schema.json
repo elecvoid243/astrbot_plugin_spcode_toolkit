@@ -9,10 +9,9 @@
       "es_search",
       "file_remove",
       "file_compare",
-      "todo_list",
-      "inta_shell"
+      "todo_list"
     ],
-    "hint": "默认全部禁用。todo_list 勾选后自动启用四个相关工具。inta_shell 勾选后自动启用全部 5 个 shell 工具。codegraph 和 agentsmd 由下方独立开关控制。code_format 是写入工具(会修改文件),plan 模式下默认被过滤。"
+    "hint": "默认全部禁用。todo_list 勾选后自动启用六个相关工具。codegraph 和 agentsmd 由下方独立开关控制。code_format 是写入工具(会修改文件),plan 模式下默认被过滤。"
   },
   "allowed_ids": {
     "description": "额外允许使用本插件的用户 ID",
@@ -154,41 +153,6 @@
         "default": 8,
         "min": 1,
         "max": 32
-      }
-    }
-  },
-  "inta_shell": {
-    "description": "inta_shell — 交互式 Shell 会话管理(5 个工具)",
-    "hint": "支持多轮双向通信的 Shell 进程管理(npm init、python REPL、git add -p 等)。",
-    "type": "object",
-    "items": {
-      "inta_shell_max_sessions": {
-        "description": "最大并发会话数",
-        "hint": "超过此数量的新会话请求会被拒绝。",
-        "type": "int",
-        "default": 10,
-        "min": 1,
-        "max": 100
-      },
-      "inta_shell_session_timeout": {
-        "description": "会话空闲超时(秒)",
-        "hint": "该时长内无 send/read 操作将被强制终止。默认 30 分钟。",
-        "type": "int",
-        "default": 1800,
-        "min": 60,
-        "max": 86400
-      },
-      "inta_shell_block_unsafe": {
-        "description": "阻止危险命令",
-        "hint": "阻止 rm -rf、shutdown、mkfs、sudo、fork 炸弹、kill -9 等。",
-        "type": "bool",
-        "default": true
-      },
-      "inta_shell_default_cwd": {
-        "description": "默认工作目录(绝对路径)",
-        "hint": "留空则用 AstrBot workspace。",
-        "type": "string",
-        "default": ""
       }
     }
   },

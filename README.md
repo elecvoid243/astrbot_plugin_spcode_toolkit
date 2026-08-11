@@ -1,6 +1,6 @@
 # spcode 工具箱
 
-> **当前版本: v2.21** · 作者: elecvoid243
+> **当前版本: v2.23.0** · 作者: elecvoid243
 
 AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用工具，并附带一套供 Dashboard 消费的 Web API。
 
@@ -110,7 +110,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `enabled_tools` | 多选列表 | `[]` | 启用的工具名（含快捷组名）。勾选 `inta_shell` 自动启用 5 个 shell 工具；勾选 `todo_list` 自动启用 6 个 todo 工具。修改后需重启 AstrBot。默认全部禁用（安全默认） |
+| `enabled_tools` | 多选列表 | `[]` | 启用的工具名（含快捷组名）。勾选 `todo_list` 自动启用 6 个 todo 工具。修改后需重启 AstrBot。默认全部禁用（安全默认） |
 | `allowed_ids` | 字符串 | `""` | 额外允许使用本插件的用户 ID（逗号分隔），与 AstrBot 全局管理员并集生效 |
 
 ### code_check 配置
@@ -156,14 +156,9 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | `agentsmd_enabled` | 布尔 | `true` | AGENTS.md 管理总开关。设为 false 则 `/agentsmd` 命令和 LLM 注入均不生效 |
 | `init_template` | 文本 | `""` | AGENTS.md 初始生成模板。用于 `/agentsmd init` 和 `/agentsmd update` 时调 LLM 的 prompt。留空使用默认模板 |
 
-### inta_shell 配置
+### inta_shell 配置（已隐藏，v2.23+）
 
-| 字段 | 类型 | 默认 | 说明 |
-|------|------|------|------|
-| `inta_shell_max_sessions` | 整数 | `10` | 最大并发会话数（1-100）。超过此数量的新会话请求会被拒绝 |
-| `inta_shell_session_timeout` | 整数 | `1800` | 会话空闲超时（秒，60-86400）。该时长内无 send/read 操作将被强制终止 |
-| `inta_shell_block_unsafe` | 布尔 | `true` | 阻止危险命令（`rm -rf`、`shutdown`、`mkfs`、`sudo`、`kill -9`、fork 炸弹等） |
-| `inta_shell_default_cwd` | 字符串 | `""` | 默认工作目录（绝对路径）。留空则用 AstrBot workspace |
+> v2.23 (2026-08-11) 起，inta_shell 配置项已从 `_conf_schema.json` 隐藏——AstrBot 官方核心已内置等价交互式 shell 工具（`astrbot_execute_shell` / `astrbot_shell_session`），建议以官方工具为主。运行时固定使用默认值：`max_sessions=10`、`session_timeout=1800s`、`block_unsafe=true`、`default_cwd` 空（AstrBot workspace）。
 
 ### plan_mode 配置（v2.8+）
 
@@ -201,7 +196,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 `enabled_tools` 多选列表除独立工具外，还支持**快捷组名**（group alias）-- 勾选后系统一次性给 LLM 注入该组全部子工具，避免漏勾导致功能残缺：
 
-- `inta_shell` - 自动展开为 `astrbot_inta_shell_start`、`_send`、`_read`、`_stop`、`_list` 共 5 个工具
+- `inta_shell` - 自动展开为 `astrbot_inta_shell_start`、`_send`、`_read`、`_stop`、`_list` 共 5 个工具。**v2.23 起从配置 UI 隐藏**（官方 `astrbot_execute_shell` / `astrbot_shell_session` 已覆盖同能力）；仅兼容老 config 中已勾选该组的用户，运行时固定默认参数
 - `todo_list` (v2.6.1+) - 自动展开为 `todo_create` / `todo_query` / `todo_add` / `todo_update` / `todo_delete` / `todo_clear` 共 6 个工具
 - `file_compare` - 展开为 `astrbot_file_compare`
 - `file_remove` - 展开为 `astrbot_file_remove`
@@ -382,11 +377,11 @@ todo_clear()
 - **`_list`**：列出所有活跃会话
 
 安全特性：
-- 启动时检查高危命令（`rm -rf`、`shutdown`、`mkfs`、`sudo`、`kill -9`、fork 炸弹等），可通过 `inta_shell_block_unsafe=false` 关闭
+- 启动时检查高危命令（`rm -rf`、`shutdown`、`mkfs`、`sudo`、`kill -9`、fork 炸弹等），固定开启（v2.23 起配置项已隐藏）
 - 后台清理协程周期性回收已退出/空闲超时会话
 - Windows 兼容（UTF-8 代码页，GBK 降级解码）
 
-> 不支持完整 TTY 程序（如 vim、nano、less）。对于一次性非交互命令，优先使用 AstrBot 内置的 `astrbot_execute_shell` 工具。
+> 不支持完整 TTY 程序（如 vim、nano、less）。对于一次性非交互命令，优先使用 AstrBot 内置的 `astrbot_execute_shell` 工具；交互式 Shell 会话管理同样建议使用官方 `astrbot_execute_shell` + `astrbot_shell_session`（v2.23 起本插件 inta_shell 配置项已隐藏）。
 
 ## codegraph 集成
 

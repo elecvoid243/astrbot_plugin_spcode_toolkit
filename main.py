@@ -89,10 +89,6 @@ _DEFAULT_CONFIG = {
     "codegraph_install_dir": "",  # codegraph 安装目录（空值由 AstrBot 内置 external_tools 默认路径填充）
     "codegraph_project": "",  # codegraph daemon 默认操作的工程根目录
     "agentsmd_enabled": True,  # 是否启用 AGENTS.md 管理
-    "inta_shell_max_sessions": 10,  # inta_shell(v2.5) 最大并发会话数
-    "inta_shell_session_timeout": 1800,  # inta_shell 会话空闲超时(秒)
-    "inta_shell_block_unsafe": True,  # inta_shell 是否阻止危险命令
-    "inta_shell_default_cwd": "",  # inta_shell 默认工作目录
     "allowed_ids": "",  # 逗号分隔额外允许的用户 ID
     "enabled_tools": [],  # 启用的工具名列表；空 = 全部禁用（安全默认）
     "file_remove_blacklist": [],  # file_remove 用户自定义黑名单：绝对路径前缀列表
@@ -130,13 +126,14 @@ class SPCodeToolkit(star.Star):
         self._config = _config
 
         # inta_shell 配置快照(initialize 前暂存)
+        # v2.23 (2026-08-11): inta_shell 配置项已从 _conf_schema.json 隐藏 —
+        # AstrBot 官方核心已内置等价交互式 shell 工具(astrbot_execute_shell /
+        # astrbot_shell_session)。此处固定使用默认值,不再读取用户配置。
         self._inta_shell_cfg = {
-            "max_sessions": int(_config.get("inta_shell_max_sessions", 10) or 10),
-            "session_timeout": int(
-                _config.get("inta_shell_session_timeout", 1800) or 1800
-            ),
-            "block_unsafe": bool(_config.get("inta_shell_block_unsafe", True)),
-            "default_cwd": str(_config.get("inta_shell_default_cwd", "") or "").strip(),
+            "max_sessions": 10,
+            "session_timeout": 1800,
+            "block_unsafe": True,
+            "default_cwd": "",
         }
         # 注入环境变量供子模块读取
         if _config.get("es_path"):
