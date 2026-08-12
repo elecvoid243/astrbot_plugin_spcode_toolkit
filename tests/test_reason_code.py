@@ -223,3 +223,9 @@ def test_git_remote_sync_reason_codes_defined():
     }
     for name, value in expected.items():
         assert getattr(ReasonCode, name) == value
+
+
+def test_code_tools_reason_codes_defined():
+    assert ReasonCode.TOOL_UNAVAILABLE == "tool_unavailable"
+    assert ReasonCode.CHECK_FAILED == "check_failed"
+    assert ReasonCode.FORMAT_FAILED == "format_failed"
