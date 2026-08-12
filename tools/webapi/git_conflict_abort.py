@@ -30,11 +30,12 @@ _ABORT_CMD = {
     "merge": ["merge", "--abort"],
     "cherry_pick": ["cherry-pick", "--abort"],
     "revert": ["revert", "--abort"],
+    "rebase": ["rebase", "--abort"],
 }
 
 
 async def handle(
-    plugin: "SPCodeToolkit",
+    plugin: SPCodeToolkit,
     *,
     umo: str | None = None,
     worktree: str | None = None,

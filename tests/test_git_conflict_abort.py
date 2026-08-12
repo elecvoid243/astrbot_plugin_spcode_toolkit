@@ -137,3 +137,57 @@ class TestAbortValidation:
             result = await handle(plugin, body={})
         assert result["data"]["reason"] == "git_error"
         assert result["data"]["aborted"] is False
+
+    @pytest.mark.asyncio
+    async def test_rebase_abort_uses_rebase_abort(self):
+        from tools.webapi.git_conflict_abort import handle
+
+        plugin = _make_plugin()
+        calls = []
+        detect_calls = [0]
+
+        async def mock_detect(*args, **kwargs):
+            detect_calls[0] += 1
+            return "rebase" if detect_calls[0] == 1 else None
+
+        async def mock_run(args, **kwargs):
+            calls.append(args)
+            return {"ok": True, "stdout": "", "stderr": "", "code": 0}
+
+        with (
+            patch(
+                "tools.webapi.git_conflict_abort._git_endpoint_preflight",
+                new_callable=AsyncMock,
+            ) as mock_pf,
+            patch(
+                "tools.webapi.git_conflict_abort._detect_conflict_operation",
+                side_effect=mock_detect,
+            ),
+            patch(
+                "tools.webapi.git_conflict_abort._run_git_async",
+                side_effect=mock_run,
+            ),
+            patch(
+                "tools.webapi.git_conflict_abort._read_operation_ref",
+                new_callable=AsyncMock,
+                return_value=("abc123", "commit"),
+            ),
+            patch(
+                "tools.webapi.git_conflict_abort._read_post_mutation_branch_state",
+                new_callable=AsyncMock,
+                return_value={
+                    "branches": [],
+                    "total": 0,
+                    "current": "main",
+                    "detached": False,
+                },
+            ),
+        ):
+            mock_pf.return_value = (
+                None,
+                {"directory": "/repo", "umo": "u1", "worktree": "/repo"},
+            )
+            result = await handle(plugin, body={})
+
+        assert result["data"]["aborted"] is True
+        assert calls[0][-2:] == ["rebase", "--abort"]

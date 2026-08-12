@@ -205,3 +205,21 @@ def test_vivado_reason_codes_defined():
     assert ReasonCode.SESSION_ALREADY_EXISTS == "session_already_exists"
     assert ReasonCode.VIVADO_STARTUP_FAILED == "vivado_startup_failed"
     assert ReasonCode.MAX_SESSIONS_REACHED == "max_sessions_reached"
+
+
+def test_git_remote_sync_reason_codes_defined():
+    """git pull/push/remote-set-url reason codes are centralized."""
+    expected = {
+        "INVALID_REMOTE": "invalid_remote",
+        "INVALID_URL": "invalid_url",
+        "REMOTE_NOT_FOUND": "remote_not_found",
+        "NO_UPSTREAM": "no_upstream",
+        "DETACHED_HEAD": "detached_head",
+        "AUTH_REQUIRED": "auth_required",
+        "NETWORK_ERROR": "network_error",
+        "NON_FAST_FORWARD": "non_fast_forward",
+        "PUSH_REJECTED": "push_rejected",
+        "REBASE_CONFLICT": "rebase_conflict",
+    }
+    for name, value in expected.items():
+        assert getattr(ReasonCode, name) == value

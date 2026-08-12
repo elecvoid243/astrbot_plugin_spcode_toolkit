@@ -143,3 +143,63 @@ class TestContinueValidation:
         assert data["continued"] is True
         assert data["operation"] == "merge"
         assert data["commit_sha"] == "sha456"
+
+    @pytest.mark.asyncio
+    async def test_rebase_continue_uses_rebase_continue(self):
+        from tools.webapi.git_conflict_continue import handle
+
+        plugin = _make_plugin()
+        calls = []
+
+        async def mock_run(args, **kwargs):
+            calls.append(args)
+            if "rebase" in args:
+                return {"ok": True, "stdout": "", "stderr": "", "code": 0}
+            if "rev-parse" in args and "HEAD" in args:
+                return {"ok": True, "stdout": "abc123\n", "stderr": "", "code": 0}
+            return {"ok": True, "stdout": "", "stderr": "", "code": 0}
+
+        with (
+            patch(
+                "tools.webapi.git_conflict_continue._git_endpoint_preflight",
+                new_callable=AsyncMock,
+            ) as mock_pf,
+            patch(
+                "tools.webapi.git_conflict_continue._detect_conflict_operation",
+                new_callable=AsyncMock,
+                return_value="rebase",
+            ),
+            patch(
+                "tools.webapi.git_conflict_continue._list_conflicted_files",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "tools.webapi.git_conflict_continue._run_git_async",
+                side_effect=mock_run,
+            ),
+            patch(
+                "tools.webapi.git_conflict_continue._read_post_mutation_branch_state",
+                new_callable=AsyncMock,
+                return_value={
+                    "branches": [],
+                    "total": 0,
+                    "current": "main",
+                    "detached": False,
+                },
+            ),
+            patch(
+                "tools.webapi.git_conflict_continue._build_git_env",
+                return_value=None,
+            ),
+        ):
+            mock_pf.return_value = (
+                None,
+                {"directory": "/repo", "umo": "u1", "worktree": "/repo"},
+            )
+            result = await handle(plugin, body={})
+
+        assert result["data"]["continued"] is True
+        rebase_call = next(call for call in calls if "rebase" in call)
+        assert "rebase" in rebase_call
+        assert "--continue" in rebase_call

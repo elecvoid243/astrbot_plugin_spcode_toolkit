@@ -174,6 +174,9 @@ def test_routes_table_has_forty_six_endpoints() -> None:
         "/spcode/git-conflict-resolve",
         "/spcode/git-conflict-continue",
         "/spcode/git-conflict-abort",
+        "/spcode/git-pull",
+        "/spcode/git-push",
+        "/spcode/git-remote-set-url",
         "/spcode/git-squash",  # 2026-08-03
         # ── 2026-08-06 静默操作系列 ──
         "/spcode/project-unload",
@@ -197,7 +200,7 @@ def test_routes_table_has_forty_six_endpoints() -> None:
     # 50 entries total: 17 GET + 31 POST + 1 PATCH + 1 DELETE
     methods = [m for entry in ROUTES for m in entry[1]]
     assert methods.count("GET") == 17  # +operation-progress
-    assert methods.count("POST") == 31  # +project-unload +codegraph-set +git-squash 等
+    assert methods.count("POST") == 34  # +git-pull +git-push +git-remote-set-url
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
 
@@ -252,6 +255,34 @@ class TestV217NewEndpointsSmoke:
 
         assert git_revert.handle is not None
         assert "/spcode/git-revert" in self._route_paths()
+
+
+class TestGitRemoteSyncEndpointsSmoke:
+    """2026-08-12 git pull/push/remote-set-url route registration smoke."""
+
+    @staticmethod
+    def _route_paths() -> set[str]:
+        from tools.webapi import ROUTES
+
+        return {route[0] for route in ROUTES}
+
+    def test_git_pull_route_registered(self) -> None:
+        from tools.webapi import git_pull
+
+        assert git_pull.handle is not None
+        assert "/spcode/git-pull" in self._route_paths()
+
+    def test_git_push_route_registered(self) -> None:
+        from tools.webapi import git_push
+
+        assert git_push.handle is not None
+        assert "/spcode/git-push" in self._route_paths()
+
+    def test_git_remote_set_url_route_registered(self) -> None:
+        from tools.webapi import git_remote_set_url
+
+        assert git_remote_set_url.handle is not None
+        assert "/spcode/git-remote-set-url" in self._route_paths()
 
 
 # === _wrap adapter ====================================================
@@ -413,7 +444,7 @@ async def test_wrap_get_query_via_web_request(monkeypatch) -> None:
 # === register_webapi_routes ===========================================
 
 
-def test_register_webapi_routes_calls_context_fifty_times() -> None:
+def test_register_webapi_routes_calls_context_fifty_three_times() -> None:
     """``register_webapi_routes`` must call ``register_web_api`` once per route.
 
     (历史计数链略,见 ROUTES 表注释)
@@ -423,7 +454,7 @@ def test_register_webapi_routes_calls_context_fifty_times() -> None:
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    assert plugin.context.register_web_api.call_count == 50
+    assert plugin.context.register_web_api.call_count == 53
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -440,10 +471,10 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 50 routes
-    # (含 2026-08-06 新增的 project-unload / codegraph-set / operation-progress)。
+    # Should not raise; should attempt all 53 routes
+    # (含 2026-08-12 新增的 git-pull / git-push / git-remote-set-url)。
     register_webapi_routes(plugin)
-    assert call_count == 50
+    assert call_count == 53
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────
