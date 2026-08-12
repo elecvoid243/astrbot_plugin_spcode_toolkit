@@ -435,6 +435,18 @@ class ReasonCode:
     NOT_CONTIGUOUS = "not_contiguous"  # 选区不是 HEAD 起连续 N 条
     ROOT_COMMIT = "root_commit"  # 最老一条是 root commit(无 parent)
 
+    # ── git pull / push / remote-set-url(2026-08-12) ──
+    INVALID_REMOTE = "invalid_remote"
+    INVALID_URL = "invalid_url"
+    REMOTE_NOT_FOUND = "remote_not_found"
+    NO_UPSTREAM = "no_upstream"
+    DETACHED_HEAD = "detached_head"
+    AUTH_REQUIRED = "auth_required"
+    NETWORK_ERROR = "network_error"
+    NON_FAST_FORWARD = "non_fast_forward"
+    PUSH_REJECTED = "push_rejected"
+    REBASE_CONFLICT = "rebase_conflict"
+
 
 # ── git status --porcelain X/Y 列判定(共享常量)────────────────────
 # 从 tools/webapi/file_restore.py 提取(2026-07-06)。两个端点共用:
