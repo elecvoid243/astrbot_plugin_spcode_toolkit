@@ -83,6 +83,9 @@ from . import (
     git_init,  # v2.17.0 (2026-07-16) - PR-B POST endpoint
     git_log,
     git_merge,  # v2.22.0 (2026-07-28)
+    git_pull,  # 2026-08-12 — POST git-pull
+    git_push,  # 2026-08-12 — POST git-push
+    git_remote_set_url,  # 2026-08-12 — POST git-remote-set-url
     git_repo_check,  # v2.18.0 (2026-07-16) - GET git 仓库探测
     git_revert,  # v2.17.0 (2026-07-16) - PR-G POST endpoint
     git_show,
@@ -408,6 +411,24 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         git_conflict_abort.handle,
         "中止当前 merge/cherry-pick/revert 操作",
     ),
+    (
+        "/spcode/git-pull",  # 2026-08-12
+        ["POST"],
+        git_pull.handle,
+        "git pull --no-edit（支持 ff_only / rebase，禁交互认证）",
+    ),
+    (
+        "/spcode/git-push",  # 2026-08-12
+        ["POST"],
+        git_push.handle,
+        "git push（无 upstream 时自动 -u 设置 upstream）",
+    ),
+    (
+        "/spcode/git-remote-set-url",  # 2026-08-12
+        ["POST"],
+        git_remote_set_url.handle,
+        "upsert git remote URL（存在则 set-url，不存在则 add）",
+    ),
 ]
 
 # 旧方法名 -> 新模块级 handler (for back-compat / introspection)
@@ -457,6 +478,9 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_conflict_resolve": git_conflict_resolve.handle,  # v2.22.0 (2026-07-28)
     "handle_post_git_conflict_continue": git_conflict_continue.handle,  # v2.22.0 (2026-07-28)
     "handle_post_git_conflict_abort": git_conflict_abort.handle,  # v2.22.0 (2026-07-28)
+    "handle_post_git_pull": git_pull.handle,  # 2026-08-12
+    "handle_post_git_push": git_push.handle,  # 2026-08-12
+    "handle_post_git_remote_set_url": git_remote_set_url.handle,  # 2026-08-12
 }
 
 
@@ -539,7 +563,7 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
 
 def register_webapi_routes(plugin: SPCodeToolkit) -> None:
-    """Register all 50 ``/spcode/*`` routes against ``plugin.context``.
+    """Register all 53 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
     but never raised — a single broken endpoint should not block
@@ -551,6 +575,7 @@ def register_webapi_routes(plugin: SPCodeToolkit) -> None:
     2026-07-28: 45 -> 46 (+1 POST /spcode/project-load 静默加载项目)
     2026-08-06: 46 -> 50 (+project-unload +codegraph-set +operation-progress;
                 对账补登此前漏记的 conflict 系列实际为 47)
+    2026-08-12: 50 -> 53 (+git-pull +git-push +git-remote-set-url)
     """
     for route, methods, handler, desc in ROUTES:
         try:
@@ -590,6 +615,9 @@ __all__ = [
     "git_file",  # spec B (2026-07-11)
     "git_init",  # v2.17.0
     "git_log",
+    "git_pull",  # 2026-08-12
+    "git_push",  # 2026-08-12
+    "git_remote_set_url",  # 2026-08-12
     "git_repo_check",  # v2.18.0
     "git_revert",  # v2.17.0
     "git_show",
