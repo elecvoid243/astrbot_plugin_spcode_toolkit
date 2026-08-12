@@ -96,6 +96,7 @@ def _classify_remote_error(stderr: str, stdout: str = "") -> str:
             "connection refused",
             "timeout",
             "timed out",
+            "超时",
         )
     ):
         return ReasonCode.NETWORK_ERROR

@@ -70,6 +70,9 @@ def test_remote_error_classification():
         == ReasonCode.NETWORK_ERROR
     )
     assert (
+        _classify_remote_error("命令超时 (60.0s)") == ReasonCode.NETWORK_ERROR
+    )
+    assert (
         _classify_remote_error("! [rejected] main -> main (non-fast-forward)")
         == ReasonCode.NON_FAST_FORWARD
     )
