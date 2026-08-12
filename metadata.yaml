@@ -1,7 +1,7 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: v2.23.1
+version: v2.23.2
 description: |
   ## 主要能力
 
@@ -56,6 +56,7 @@ description: |
 
   ## 版本历程（最近 8 个）
 
+  - **v2.23.2** (2026-08-11) docs POST 与 git-conflict-resolve 统一编码保持：写盘不再固定 UTF-8——已有文件按原编码+主导换行写回（复用 `tools/_helpers` 格式链，与 file-write 一致）；`_TextFileFormat`/`_detect_newline`/`_detect_text_format`/`_encode_content` 自 file-write 上移到 `tools/_helpers.py` 单一真相源
   - **v2.23.1** (2026-08-11) code_format 保持原文件编码：`_format_with_astyle` 写回不再固定 UTF-8，复用 `tools/_helpers._decode_text_bytes`（上移自 file-browser）探测原编码（GBK/cp936 仍保持、UTF-8 BOM 保留）；file-browser 改为 re-export
   - **v2.23.0** (2026-08-11) inta_shell 配置项隐藏：AstrBot 官方核心已内置等价交互式 shell 工具（`astrbot_execute_shell` / `astrbot_shell_session`），从 `_conf_schema.json` 移除 `inta_shell` 分组及 `enabled_tools` 选项，运行时固定默认参数；工具注册代码保留（兼容老 config）
   - **v2.22.0** (2026-07-27) `POST /spcode/plan-mode`：dashboard plan/build chip 直调 API 切换模式，不再向聊天框注入 `/plan` `/build` 用户消息（旧版插件自动回退到发命令）
