@@ -192,6 +192,36 @@ class TestDetectConflictOperation:
         assert result == "revert"
 
     @pytest.mark.asyncio
+    async def test_rebase_merge_conflict(self, tmp_path):
+        from tools.webapi._helpers import _detect_conflict_operation
+
+        git_dir = tmp_path / ".git"
+        (git_dir / "rebase-merge").mkdir(parents=True)
+
+        with patch(
+            "tools.webapi._helpers._run_git_async",
+            new_callable=AsyncMock,
+            return_value={"ok": True, "stdout": str(git_dir), "stderr": "", "code": 0},
+        ):
+            result = await _detect_conflict_operation("git", str(tmp_path))
+        assert result == "rebase"
+
+    @pytest.mark.asyncio
+    async def test_rebase_apply_conflict(self, tmp_path):
+        from tools.webapi._helpers import _detect_conflict_operation
+
+        git_dir = tmp_path / ".git"
+        (git_dir / "rebase-apply").mkdir(parents=True)
+
+        with patch(
+            "tools.webapi._helpers._run_git_async",
+            new_callable=AsyncMock,
+            return_value={"ok": True, "stdout": str(git_dir), "stderr": "", "code": 0},
+        ):
+            result = await _detect_conflict_operation("git", str(tmp_path))
+        assert result == "rebase"
+
+    @pytest.mark.asyncio
     async def test_git_dir_relative(self, tmp_path):
         """git rev-parse --git-dir may return relative '.git'."""
         from tools.webapi._helpers import _detect_conflict_operation

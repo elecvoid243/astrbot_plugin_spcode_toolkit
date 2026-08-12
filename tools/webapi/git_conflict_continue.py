@@ -10,7 +10,6 @@ import logging
 import time as _time
 from typing import TYPE_CHECKING
 
-from .git_commit import _build_git_env, _classify_commit_error
 from ._helpers import (
     ReasonCode,
     _detect_conflict_operation,
@@ -21,6 +20,7 @@ from ._helpers import (
     _read_post_mutation_branch_state,
     _run_git_async,
 )
+from .git_commit import _build_git_env, _classify_commit_error
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
@@ -33,11 +33,19 @@ _CONTINUE_CMD = {
     "merge": None,  # merge uses git commit
     "cherry_pick": ["cherry-pick", "--continue", "--no-edit"],
     "revert": ["revert", "--continue", "--no-edit"],
+    "rebase": [
+        "-c",
+        "core.editor=true",
+        "-c",
+        "sequence.editor=true",
+        "rebase",
+        "--continue",
+    ],
 }
 
 
 async def handle(
-    plugin: "SPCodeToolkit",
+    plugin: SPCodeToolkit,
     *,
     umo: str | None = None,
     worktree: str | None = None,

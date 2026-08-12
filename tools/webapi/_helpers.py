@@ -1065,13 +1065,14 @@ async def _read_post_mutation_branch_state(
 async def _detect_conflict_operation(git_bin: str, directory: str) -> str | None:
     """Detect which conflict operation is in progress.
 
-    Checks sentinel files in the git directory:
+    Checks sentinel files/directories in the git directory:
+      rebase-merge/ or rebase-apply/ → "rebase"
       MERGE_HEAD → "merge"
       CHERRY_PICK_HEAD → "cherry_pick"
       REVERT_HEAD → "revert"
 
     Returns:
-        "merge" | "cherry_pick" | "revert" | None
+        "merge" | "cherry_pick" | "revert" | "rebase" | None
     """
     result = await _run_git_async(
         [git_bin, "-C", directory, "rev-parse", "--git-dir"],
@@ -1084,6 +1085,8 @@ async def _detect_conflict_operation(git_bin: str, directory: str) -> str | None
     if not git_dir.is_absolute():
         git_dir = Path(directory) / git_dir
 
+    if (git_dir / "rebase-merge").is_dir() or (git_dir / "rebase-apply").is_dir():
+        return "rebase"
     if (git_dir / "MERGE_HEAD").exists():
         return "merge"
     if (git_dir / "CHERRY_PICK_HEAD").exists():
@@ -1125,6 +1128,7 @@ _SENTINEL_BY_OPERATION = {
     "merge": "MERGE_HEAD",
     "cherry_pick": "CHERRY_PICK_HEAD",
     "revert": "REVERT_HEAD",
+    "rebase": "REBASE_HEAD",
 }
 
 
