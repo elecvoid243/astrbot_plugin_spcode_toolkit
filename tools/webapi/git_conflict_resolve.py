@@ -11,6 +11,12 @@ import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .._helpers import (
+    _DEFAULT_TEXT_FILE_FORMAT,
+    _decode_text_bytes,
+    _detect_text_format,
+    _encode_content,
+)
 from ._helpers import (
     ConflictHunk,
     ReasonCode,
@@ -86,7 +92,7 @@ def _rebuild_file_from_hunks(
 
 
 async def handle(
-    plugin: "SPCodeToolkit",
+    plugin: SPCodeToolkit,
     *,
     umo: str | None = None,
     worktree: str | None = None,
@@ -300,7 +306,9 @@ async def handle(
                 stderr="binary file does not support hunk resolution",
             )
 
-        file_content = raw.decode("utf-8", errors="replace")
+        # v2.23.2: 用统一解码链探测原编码(不再 utf-8 errors=replace,
+        # 避免 GBK/cp936 源文件被误读成乱码)
+        file_content, file_encoding = _decode_text_bytes(raw)
         parsed_hunks = _parse_conflict_hunks(file_content)
         choices: dict[int, str] = {}
         for item in hunks_field:
@@ -370,8 +378,9 @@ async def handle(
                 status_code=200,
             )
 
-        # Write rebuilt content
-        target.write_bytes(rebuilt.encode("utf-8"))
+        # Write rebuilt content — 保持原编码(v2.23.2;换行由 rebuild 的
+        # line+"\n" 拼接自然保持,无需额外归一化)
+        target.write_bytes(rebuilt.encode(file_encoding))
         await _run_git_async(
             [git_bin, "-C", directory, "add", "--", file],
             encoding="utf-8",
@@ -394,7 +403,22 @@ async def handle(
 
     elif resolution == "custom":
         # Mode 3: custom content
-        target.write_bytes(content.encode("utf-8"))
+        # v2.23.2: 与 file-write 统一 —— 检测冲突文件原编码 + 主导换行,
+        # 按原格式写回(不再固定 UTF-8)。
+        raw = target.read_bytes() if target.exists() else b""
+        file_format = _detect_text_format(raw) if raw else _DEFAULT_TEXT_FILE_FORMAT
+        try:
+            output_bytes = _encode_content(content, file_format)
+        except (UnicodeEncodeError, LookupError) as exc:
+            return _make_envelope(
+                success=False,
+                reason=ReasonCode.INVALID_PARAM,
+                elapsed_ms=_elapsed(),
+                resolved=False,
+                file=file,
+                stderr=f"content cannot be encoded as {file_format.encoding}: {exc}",
+            )
+        target.write_bytes(output_bytes)
         await _run_git_async(
             [git_bin, "-C", directory, "add", "--", file],
             encoding="utf-8",

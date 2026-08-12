@@ -289,3 +289,187 @@ class TestResolveExecution:
         assert data["mode"] == "all"
         assert data["files_resolved"] == 2
         assert data["all_resolved"] is True
+
+
+# ── v2.23.2 (2026-08-11) custom 模式保持原文件编码 ──
+#
+# 报告:git-conflict-resolve Mode 3 (custom) 写盘固定 UTF-8,GBK 冲突文件
+# 解决后会被强转。修复:检测冲突文件原编码 + 主导换行,按原格式写回
+# (复用 tools/_helpers._encode_content,与 file-write / docs POST 一致)。
+#
+# Author: elecvoid243, 2026-08-11
+
+
+class TestCustomResolutionEncodingPreserved:
+    @pytest.mark.asyncio
+    async def test_custom_resolution_preserves_gbk_encoding(self, tmp_path):
+        """custom 解决 GBK 冲突文件后仍保持 GBK(不被强转 UTF-8)。"""
+        from tools.webapi.git_conflict_resolve import handle
+
+        plugin = _make_plugin()
+        target = tmp_path / "gbk.py"
+        target.write_bytes("// 中文\nint x=1;\n".encode("gbk"))
+
+        with (
+            patch(
+                "tools.webapi.git_conflict_resolve._git_endpoint_preflight",
+                new_callable=AsyncMock,
+            ) as mock_pf,
+            patch(
+                "tools.webapi.git_conflict_resolve._detect_conflict_operation",
+                new_callable=AsyncMock,
+            ) as mock_detect,
+            patch(
+                "tools.webapi.git_conflict_resolve._validate_repo_relative_file",
+                return_value=(target, None),
+            ),
+            patch(
+                "tools.webapi.git_conflict_resolve._list_conflicted_files",
+                new_callable=AsyncMock,
+            ) as mock_list,
+            patch(
+                "tools.webapi.git_conflict_resolve._run_git_async",
+                new_callable=AsyncMock,
+                return_value={"ok": True, "stdout": "", "stderr": "", "code": 0},
+            ),
+        ):
+            mock_pf.return_value = (
+                None,
+                {
+                    "directory": str(tmp_path),
+                    "umo": "u1",
+                    "worktree": str(tmp_path),
+                },
+            )
+            mock_detect.return_value = "merge"
+            mock_list.return_value = [{"path": "gbk.py", "status": "UU"}]
+
+            result = await handle(
+                plugin,
+                body={
+                    "file": "gbk.py",
+                    "resolution": "custom",
+                    "content": "// 新中文\nint y=2;\n",
+                },
+            )
+        data = result["data"] if isinstance(result, dict) else result._content["data"]
+        assert data["resolved"] is True
+        assert data["mode"] == "custom"
+
+        raw = target.read_bytes()
+        # 保持 GBK 字节(容错 Windows 换行):等于按 GBK 编码的新内容
+        assert raw.replace(b"\r\n", b"\n") == "// 新中文\nint y=2;\n".encode("gbk"), (
+            f"应保持 GBK 编码;实得前 24 字节={raw[:24]!r}"
+        )
+        assert "新中文" in raw.decode("gbk")
+
+    @pytest.mark.asyncio
+    async def test_custom_resolution_preserves_utf8_bom(self, tmp_path):
+        """custom 解决 UTF-8 BOM 冲突文件后仍保留 BOM。"""
+        from tools.webapi.git_conflict_resolve import handle
+
+        plugin = _make_plugin()
+        target = tmp_path / "bom.py"
+        target.write_bytes(b"\xef\xbb\xbfint x=1;\n")
+
+        with (
+            patch(
+                "tools.webapi.git_conflict_resolve._git_endpoint_preflight",
+                new_callable=AsyncMock,
+            ) as mock_pf,
+            patch(
+                "tools.webapi.git_conflict_resolve._detect_conflict_operation",
+                new_callable=AsyncMock,
+            ) as mock_detect,
+            patch(
+                "tools.webapi.git_conflict_resolve._validate_repo_relative_file",
+                return_value=(target, None),
+            ),
+            patch(
+                "tools.webapi.git_conflict_resolve._list_conflicted_files",
+                new_callable=AsyncMock,
+            ) as mock_list,
+            patch(
+                "tools.webapi.git_conflict_resolve._run_git_async",
+                new_callable=AsyncMock,
+                return_value={"ok": True, "stdout": "", "stderr": "", "code": 0},
+            ),
+        ):
+            mock_pf.return_value = (
+                None,
+                {
+                    "directory": str(tmp_path),
+                    "umo": "u1",
+                    "worktree": str(tmp_path),
+                },
+            )
+            mock_detect.return_value = "merge"
+            mock_list.return_value = [{"path": "bom.py", "status": "UU"}]
+
+            result = await handle(
+                plugin,
+                body={
+                    "file": "bom.py",
+                    "resolution": "custom",
+                    "content": "int y=2;\n",
+                },
+            )
+        data = result["data"] if isinstance(result, dict) else result._content["data"]
+        assert data["resolved"] is True
+
+        raw = target.read_bytes()
+        assert raw.startswith(b"\xef\xbb\xbf"), "UTF-8 BOM 丢失"
+        assert raw.replace(b"\r\n", b"\n") == b"\xef\xbb\xbfint y=2;\n"
+
+    @pytest.mark.asyncio
+    async def test_custom_content_not_encodable_returns_invalid_param(self, tmp_path):
+        """custom 内容无法用原编码表示 → invalid_param,原文件不变。"""
+        from tools.webapi.git_conflict_resolve import handle
+
+        plugin = _make_plugin()
+        target = tmp_path / "a.py"
+        # GBK 源文件(含中文,使解码链检测为 GBK):韩文无法用 GBK 表示
+        target.write_bytes("旧内容\n".encode("gbk"))
+
+        with (
+            patch(
+                "tools.webapi.git_conflict_resolve._git_endpoint_preflight",
+                new_callable=AsyncMock,
+            ) as mock_pf,
+            patch(
+                "tools.webapi.git_conflict_resolve._detect_conflict_operation",
+                new_callable=AsyncMock,
+            ) as mock_detect,
+            patch(
+                "tools.webapi.git_conflict_resolve._validate_repo_relative_file",
+                return_value=(target, None),
+            ),
+            patch(
+                "tools.webapi.git_conflict_resolve._list_conflicted_files",
+                new_callable=AsyncMock,
+            ) as mock_list,
+        ):
+            mock_pf.return_value = (
+                None,
+                {
+                    "directory": str(tmp_path),
+                    "umo": "u1",
+                    "worktree": str(tmp_path),
+                },
+            )
+            mock_detect.return_value = "merge"
+            mock_list.return_value = [{"path": "a.py", "status": "UU"}]
+
+            result = await handle(
+                plugin,
+                body={
+                    "file": "a.py",
+                    "resolution": "custom",
+                    "content": "한국어\n",  # GBK 无法表示
+                },
+            )
+        data = result["data"] if isinstance(result, dict) else result._content["data"]
+        assert data["resolved"] is False
+        assert data["reason"] == "invalid_param"
+        # 原文件未被改写
+        assert target.read_bytes() == "旧内容\n".encode("gbk")

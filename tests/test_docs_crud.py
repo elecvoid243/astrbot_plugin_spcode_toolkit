@@ -11,10 +11,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from tests.conftest import _make_plugin
 from tools.project import state as _proj_state
 from tools.webapi import docs_crud as _dc
+
+from tests.conftest import _make_plugin
 
 pytestmark = pytest.mark.asyncio
 
@@ -67,6 +67,87 @@ async def test_post_overwrites_existing_file(plugin: Any, tmp_path: Path) -> Non
     assert result["data"]["saved"] is True
     assert result["data"]["created"] is False
     assert (tmp_path / "docs" / "x.md").read_text(encoding="utf-8") == "new"
+
+
+async def test_post_preserves_gbk_encoding(plugin: Any, tmp_path: Path) -> None:
+    """GBK 编码的已有 .md 文件覆盖后仍保持 GBK(不被强转 UTF-8)。v2.23.2"""
+    _init_git_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "gbk.md").write_bytes(
+        "# 中文标题\n\n正文内容\n".encode("gbk")
+    )
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _dc.handle_post_docs(
+        plugin,
+        umo="u:m",
+        body={"path": "docs/gbk.md", "content": "# 新标题\n\n新内容\n"},
+    )
+
+    assert result["data"]["saved"] is True
+    raw = (tmp_path / "docs" / "gbk.md").read_bytes()
+    # 保持 GBK 字节(容错换行):等于按 GBK 编码的新内容
+    assert raw.replace(b"\r\n", b"\n") == "# 新标题\n\n新内容\n".encode("gbk"), (
+        f"应保持 GBK 编码;实得前 24 字节={raw[:24]!r}"
+    )
+    assert "新标题" in raw.decode("gbk")
+
+
+async def test_post_preserves_utf8_bom(plugin: Any, tmp_path: Path) -> None:
+    """UTF-8 BOM 的已有 .md 文件覆盖后仍保留 BOM。v2.23.2"""
+    _init_git_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "bom.md").write_bytes(b"\xef\xbb\xbf# hi\n")
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _dc.handle_post_docs(
+        plugin,
+        umo="u:m",
+        body={"path": "docs/bom.md", "content": "# hello\n"},
+    )
+
+    assert result["data"]["saved"] is True
+    raw = (tmp_path / "docs" / "bom.md").read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf"), "UTF-8 BOM 丢失"
+    assert raw.replace(b"\r\n", b"\n") == b"\xef\xbb\xbf# hello\n"
+
+
+async def test_post_new_file_defaults_utf8_no_bom(plugin: Any, tmp_path: Path) -> None:
+    """新建文件默认 UTF-8 无 BOM + LF(与 file-write 一致)。v2.23.2"""
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _dc.handle_post_docs(
+        plugin, umo="u:m", body={"path": "docs/fresh.md", "content": "# fresh\n"}
+    )
+
+    assert result["data"]["saved"] is True
+    raw = (tmp_path / "docs" / "fresh.md").read_bytes()
+    assert not raw.startswith(b"\xef\xbb\xbf"), "新建文件不应带 BOM"
+    assert raw.replace(b"\r\n", b"\n") == b"# fresh\n"
+
+
+async def test_post_content_not_encodable_returns_invalid_param(
+    plugin: Any, tmp_path: Path
+) -> None:
+    """内容无法用原文件编码表示 → invalid_param,原文件保持不变。v2.23.2"""
+    _init_git_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    # GBK 源文件(含中文,使解码链检测为 GBK):内容含 GBK 无法表示的
+    # 字符(如韩文)时拒绝
+    (tmp_path / "docs" / "a.md").write_bytes("旧内容\n".encode("gbk"))
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _dc.handle_post_docs(
+        plugin,
+        umo="u:m",
+        body={"path": "docs/a.md", "content": "한국어\n"},
+    )
+
+    assert result["data"]["saved"] is False
+    assert result["data"]["reason"] == "invalid_param"
+    # 原文件未被改写
+    assert (tmp_path / "docs" / "a.md").read_bytes() == "旧内容\n".encode("gbk")
 
 
 async def test_post_mkdir_parents(plugin: Any, tmp_path: Path) -> None:

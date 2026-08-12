@@ -24,17 +24,20 @@ from __future__ import annotations
 
 import logging
 import time as _time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .._helpers import (
+    _DEFAULT_TEXT_FILE_FORMAT,
+    _detect_text_format,
+    _encode_content,
+)
 from ._helpers import (
     ReasonCode,
     _git_endpoint_preflight,
     _make_envelope,
     _validate_repo_relative_file,
 )
-from .file_browser import _decode_text_bytes
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
@@ -44,43 +47,10 @@ logger = logging.getLogger(__name__)
 MAX_PATH_LENGTH = 512
 MAX_CONTENT_BYTES = 2 * 1024 * 1024  # 2 MB,与 docs_crud 对齐
 
-
-@dataclass(frozen=True)
-class _TextFileFormat:
-    """已有文本文件需要保持的字符编码和主导换行格式。"""
-
-    encoding: str
-    newline: str
-
-
-_DEFAULT_TEXT_FILE_FORMAT = _TextFileFormat(encoding="utf-8", newline="\n")
-
-
-def _detect_newline(text: str) -> str:
-    """返回文本主导换行;数量相同时按 CRLF、LF、CR 的顺序选择。"""
-    crlf_count = text.count("\r\n")
-    without_crlf = text.replace("\r\n", "")
-    candidates = (
-        ("\r\n", crlf_count),
-        ("\n", without_crlf.count("\n")),
-        ("\r", without_crlf.count("\r")),
-    )
-    newline, count = max(candidates, key=lambda item: item[1])
-    return newline if count else "\n"
-
-
-def _detect_text_format(raw: bytes) -> _TextFileFormat:
-    """按 file-browser 的解码链探测已有文件编码和主导换行。"""
-    text, encoding = _decode_text_bytes(raw)
-    return _TextFileFormat(encoding=encoding, newline=_detect_newline(text))
-
-
-def _encode_content(content: str, file_format: _TextFileFormat) -> bytes:
-    """把前端文本转换为目标文件原有的换行和字符编码。"""
-    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
-    if file_format.newline != "\n":
-        normalized = normalized.replace("\n", file_format.newline)
-    return normalized.encode(file_format.encoding)
+# 文本格式保持链(_TextFileFormat / _DEFAULT_TEXT_FILE_FORMAT /
+# _detect_text_format / _encode_content)已上移到 tools/_helpers.py
+# (v2.23.2, 2026-08-11),与 _decode_text_bytes 同为单一真相源,
+# docs POST / git-conflict-resolve 亦复用。
 
 
 def _elapsed(t0: float) -> int:

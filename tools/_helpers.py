@@ -11,6 +11,7 @@ import locale
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -258,6 +259,49 @@ def _decode_text_bytes(raw: bytes) -> tuple[str, str]:
     # 不可达:latin-1 永远 decode 成功;若 cp936/gbk 链整个误配,
     # safe_decode_bytes 兜底再试一次,带 errors="replace" 兜底
     return safe_decode_bytes(raw, preferred=detect_console_encoding()), "utf-8"
+
+
+# ── 文本格式保持（编码 + 主导换行）──────────────────
+# v2.23.2 (2026-08-11): 从 tools/webapi/file_write.py 上移,供
+# file-write / docs POST / git-conflict-resolve 统一"保持原格式"写盘。
+
+
+@dataclass(frozen=True)
+class _TextFileFormat:
+    """已有文本文件需要保持的字符编码和主导换行格式。"""
+
+    encoding: str
+    newline: str
+
+
+_DEFAULT_TEXT_FILE_FORMAT = _TextFileFormat(encoding="utf-8", newline="\n")
+
+
+def _detect_newline(text: str) -> str:
+    """返回文本主导换行;数量相同时按 CRLF、LF、CR 的顺序选择。"""
+    crlf_count = text.count("\r\n")
+    without_crlf = text.replace("\r\n", "")
+    candidates = (
+        ("\r\n", crlf_count),
+        ("\n", without_crlf.count("\n")),
+        ("\r", without_crlf.count("\r")),
+    )
+    newline, count = max(candidates, key=lambda item: item[1])
+    return newline if count else "\n"
+
+
+def _detect_text_format(raw: bytes) -> _TextFileFormat:
+    """按统一解码链探测已有文件编码和主导换行。"""
+    text, encoding = _decode_text_bytes(raw)
+    return _TextFileFormat(encoding=encoding, newline=_detect_newline(text))
+
+
+def _encode_content(content: str, file_format: _TextFileFormat) -> bytes:
+    """把前端文本转换为目标文件原有的换行和字符编码。"""
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+    if file_format.newline != "\n":
+        normalized = normalized.replace("\n", file_format.newline)
+    return normalized.encode(file_format.encoding)
 
 
 def proposal_reply(

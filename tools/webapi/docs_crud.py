@@ -11,11 +11,16 @@ import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .._helpers import (
+    _DEFAULT_TEXT_FILE_FORMAT,
+    _detect_text_format,
+    _encode_content,
+)
 from ._helpers import (
+    ReasonCode,
     _git_endpoint_preflight,
     _make_envelope,
     _validate_repo_relative_file,
-    ReasonCode,
 )
 
 if TYPE_CHECKING:
@@ -56,7 +61,7 @@ def _validate_doc_path(path: object) -> str | None:
 
 # ── POST ─────────────────────────────────────────────
 async def handle_post_docs(
-    plugin: "SPCodeToolkit",
+    plugin: SPCodeToolkit,
     *,
     umo: str | None = None,
     worktree: str | None = None,
@@ -123,7 +128,74 @@ async def handle_post_docs(
 
     target.parent.mkdir(parents=True, exist_ok=True)
     created = not target.exists()
-    target.write_text(content, encoding="utf-8")
+
+    # v2.23.2 (2026-08-11): 与 file-write 统一 —— 已有文件保持原编码 + 主导
+    # 换行写盘(不再固定 UTF-8);新建文件默认 UTF-8 无 BOM + LF。
+    file_format = _DEFAULT_TEXT_FILE_FORMAT
+    if not created:
+        try:
+            file_format = _detect_text_format(target.read_bytes())
+        except OSError as exc:
+            logger.exception("[docs] failed to read %s", target)
+            return _make_envelope(
+                success=False,
+                reason=ReasonCode.GIT_ERROR,
+                elapsed_ms=_elapsed(t0),
+                saved=False,
+                created=False,
+                directory=directory,
+                umo=effective_umo,
+                worktree=directory,
+                path=path,
+                stderr=str(exc),
+            )
+
+    try:
+        output_bytes = _encode_content(content, file_format)
+    except (UnicodeEncodeError, LookupError) as exc:
+        logger.warning(
+            "[docs] content cannot be encoded as %s for %s: %s",
+            file_format.encoding,
+            target,
+            exc,
+        )
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(t0),
+            saved=False,
+            created=created,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
+            path=path,
+            stderr=f"content cannot be encoded as {file_format.encoding}: {exc}",
+        )
+
+    try:
+        target.write_bytes(output_bytes)
+    except OSError as exc:
+        logger.exception("[docs] failed to write %s", target)
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.GIT_ERROR,
+            elapsed_ms=_elapsed(t0),
+            saved=False,
+            created=created,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
+            path=path,
+            stderr=str(exc),
+        )
+
+    logger.info(
+        "[docs] saved %s (%d bytes, encoding=%s, newline=%r)",
+        target,
+        len(output_bytes),
+        file_format.encoding,
+        file_format.newline,
+    )
 
     return _make_envelope(
         success=True,
@@ -134,13 +206,13 @@ async def handle_post_docs(
         umo=effective_umo,
         worktree=directory,
         path=path,
-        size=len(content_bytes),
+        size=len(output_bytes),
     )
 
 
 # ── PATCH ───────────────────────
 async def handle_patch_docs(
-    plugin: "SPCodeToolkit",
+    plugin: SPCodeToolkit,
     *,
     umo: str | None = None,
     worktree: str | None = None,
@@ -240,7 +312,7 @@ async def handle_patch_docs(
 
 # ── DELETE ─────────────────────────
 async def handle_delete_docs(
-    plugin: "SPCodeToolkit",
+    plugin: SPCodeToolkit,
     *,
     umo: str | None = None,
     worktree: str | None = None,
