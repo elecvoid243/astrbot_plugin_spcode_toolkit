@@ -62,12 +62,20 @@ def _supported_extensions() -> list[str]:
     return sorted(_PY_SUFFIXES | _CPP_SUFFIXES)
 
 
-def check(filepath: str, linter: str = "auto") -> dict:
+def check(
+    filepath: str,
+    linter: str = "auto",
+    *,
+    cppcheck_enable: list[str] | None = None,
+    cppcheck_shortcircuit: str | None = None,
+) -> dict:
     """对单个源文件运行 syntax + style 合并检查。
 
     Args:
         filepath: 源文件路径。扩展名决定默认 linter。
         linter: auto (按扩展名) / ruff / cpplint / cppcheck。
+        cppcheck_enable: 显式覆盖 cppcheck 额外检查类目;None 走配置链。
+        cppcheck_shortcircuit: 显式覆盖 cppcheck 短路模式;None 走配置链。
 
     Returns:
         ok=True  → {"ok": True, "linter": "...", "issues": [...], "count": N}
@@ -91,7 +99,12 @@ def check(filepath: str, linter: str = "auto") -> dict:
             }
         # C/C++ 在 auto 模式下走含 cppcheck 短路的 _run_cpplint
         if linter == "cpplint":
-            runner = _run_cpplint
+            def runner(p: Path) -> dict:
+                return _run_cpplint(
+                    p,
+                    cppcheck_enable=cppcheck_enable,
+                    shortcircuit_mode=cppcheck_shortcircuit,
+                )
         else:
             runner = {"ruff": _run_ruff}.get(linter)
         if not runner:
@@ -105,7 +118,10 @@ def check(filepath: str, linter: str = "auto") -> dict:
         runners = {
             "ruff": _run_ruff,
             "cpplint": _run_cpplint_only,
-            "cppcheck": _run_cppcheck_only,
+            "cppcheck": lambda p: _run_cppcheck_only(
+                p,
+                cppcheck_enable=cppcheck_enable,
+            ),
         }
         runner = runners.get(linter)
         if not runner:
@@ -165,6 +181,32 @@ _VALID_CPPCHECK_ENABLE = frozenset(
 )
 
 
+def _normalize_cppcheck_enable(values: object) -> list[str]:
+    """把任意输入规约为合法的 cppcheck enable 类目列表。"""
+    if not isinstance(values, (list, tuple)):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        item = value.strip()
+        if item in _VALID_CPPCHECK_ENABLE and item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def _normalize_shortcircuit_mode(
+    value: object,
+    default: str = _SHORTCIRCUIT_ERROR,
+) -> str:
+    """规约 cppcheck 短路模式;非法值回退到默认。"""
+    if isinstance(value, str) and value in _VALID_SHORTCIRCUIT_MODES:
+        return value
+    return default
+
+
 def _get_cppcheck_enable() -> list[str]:
     """读取 cppcheck 启用的额外检查类目(空列表 = 不传 --enable, 仅报 error)。
 
@@ -177,24 +219,12 @@ def _get_cppcheck_enable() -> list[str]:
     # 1) 模块级覆盖（测试或独立运行时临时覆盖 `code_check.CPPCHECK_ENABLE = [...]`）
     module_mode = globals().get("CPPCHECK_ENABLE")
     if isinstance(module_mode, (list, tuple)):
-        seen: set[str] = set()
-        out: list[str] = []
-        for x in module_mode:
-            if isinstance(x, str) and x in _VALID_CPPCHECK_ENABLE and x not in seen:
-                seen.add(x)
-                out.append(x)
-        return out
+        return _normalize_cppcheck_enable(module_mode)
 
     # 2) 环境变量（main.py 在 __init__ 时注入;逗号分隔字符串）
     env_mode = os.environ.get("CPPCHECK_ENABLE", "")
     if env_mode:
-        seen = set()
-        out = []
-        for x in (s.strip() for s in env_mode.split(",")):
-            if x and x in _VALID_CPPCHECK_ENABLE and x not in seen:
-                seen.add(x)
-                out.append(x)
-        return out
+        return _normalize_cppcheck_enable(env_mode.split(","))
 
     # 3) DEFAULT_CONFIG（ast_bot_conf_schema.json 的 cppcheck_enable 拍平键）
     try:
@@ -204,13 +234,7 @@ def _get_cppcheck_enable() -> list[str]:
     except Exception:
         cfg = []
     if isinstance(cfg, (list, tuple)):
-        seen = set()
-        out = []
-        for x in cfg:
-            if isinstance(x, str) and x in _VALID_CPPCHECK_ENABLE and x not in seen:
-                seen.add(x)
-                out.append(x)
-        return out
+        return _normalize_cppcheck_enable(cfg)
     return []
 
 
@@ -290,7 +314,11 @@ def _parse_cppcheck_output(stderr: str) -> list[dict]:
     return issues
 
 
-def _run_cppcheck(p: Path) -> dict | None:
+def _run_cppcheck(
+    p: Path,
+    *,
+    cppcheck_enable: list[str] | None = None,
+) -> dict | None:
     """对 C/C++ 文件运行 cppcheck（pure：不应用 mode 过滤，返回全部 severity）。
 
     Returns:
@@ -303,7 +331,11 @@ def _run_cppcheck(p: Path) -> dict | None:
     try:
         # v2.21.1+: --enable 类目由 cppcheck_enable 配置驱动
         # 默认空=不传 --enable (cppcheck 只报 error);用户多选可启用额外类目
-        enable_categories = _get_cppcheck_enable()
+        enable_categories = (
+            _get_cppcheck_enable()
+            if cppcheck_enable is None
+            else _normalize_cppcheck_enable(cppcheck_enable)
+        )
         extra_args: list[str] = []
         if enable_categories:
             extra_args.append(f"--enable={','.join(enable_categories)}")
@@ -548,12 +580,16 @@ def _filter_cppcheck_by_mode(result: dict | None, mode: str) -> dict:
     }
 
 
-def _run_cppcheck_only(p: Path):
+def _run_cppcheck_only(
+    p: Path,
+    *,
+    cppcheck_enable: list[str] | None = None,
+):
     """供 linter='cppcheck' 显式调用：只跑 cppcheck，返回全部 severity。
 
     _run_cppcheck 本身已是 pure（无 mode 过滤），所以直接调即可。
     """
-    r = _run_cppcheck(p)
+    r = _run_cppcheck(p, cppcheck_enable=cppcheck_enable)
     if r is None:
         return proposal_reply(
             False,
@@ -570,17 +606,26 @@ def _run_cppcheck_only(p: Path):
     return r
 
 
-def _run_cpplint(p: Path) -> dict:
+def _run_cpplint(
+    p: Path,
+    *,
+    cppcheck_enable: list[str] | None = None,
+    shortcircuit_mode: str | None = None,
+) -> dict:
     """auto 模式下的 C/C++ 入口。
 
     根据 shortcircuit 模式分派：
       - merge:   两个工具都跑，组装分组输出（linters.cppcheck + linters.cpplint）
       - 其它:    原短路逻辑（cppcheck 有问题就立即返回，否则跑 cpplint）
     """
-    mode = _get_shortcircuit_mode()
+    mode = (
+        _get_shortcircuit_mode()
+        if shortcircuit_mode is None
+        else _normalize_shortcircuit_mode(shortcircuit_mode)
+    )
 
     # 跑 cppcheck（pure，全部 severity）
-    cppcheck_raw = _run_cppcheck(p)
+    cppcheck_raw = _run_cppcheck(p, cppcheck_enable=cppcheck_enable)
 
     # 短路判断：按 mode 过滤 cppcheck issues
     if mode != _SHORTCIRCUIT_NEVER and cppcheck_raw is not None:

@@ -447,6 +447,11 @@ class ReasonCode:
     PUSH_REJECTED = "push_rejected"
     REBASE_CONFLICT = "rebase_conflict"
 
+    # ── code-check / code-format Web API(2026-08-12) ──
+    TOOL_UNAVAILABLE = "tool_unavailable"
+    CHECK_FAILED = "check_failed"
+    FORMAT_FAILED = "format_failed"
+
 
 # ── git status --porcelain X/Y 列判定(共享常量)────────────────────
 # 从 tools/webapi/file_restore.py 提取(2026-07-06)。两个端点共用:

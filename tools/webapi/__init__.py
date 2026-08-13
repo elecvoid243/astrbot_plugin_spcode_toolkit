@@ -56,6 +56,8 @@ if TYPE_CHECKING:
 
 from . import (
     btw,  # v2.20 (2026-07-17) - 一次性独立 LLM 请求(顺便问问)
+    code_check,  # 2026-08-12 — POST code-check
+    code_format,  # 2026-08-12 — POST code-format
     codegraph_set,  # 2026-08-06 静默切换 codegraph 项目 (POST /spcode/codegraph-set)
     codegraph_status,  # v2.14.x (2026-06-28)
     docs_crud,  # spec B (2026-07-11): POST/PATCH/DELETE /spcode/docs
@@ -429,6 +431,18 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         git_remote_set_url.handle,
         "upsert git remote URL（存在则 set-url，不存在则 add）",
     ),
+    (
+        "/spcode/code-check",  # 2026-08-12
+        ["POST"],
+        code_check.handle,
+        "对 repo 内单文件执行 code_check（ruff/cpplint/cppcheck）",
+    ),
+    (
+        "/spcode/code-format",  # 2026-08-12
+        ["POST"],
+        code_format.handle,
+        "对 repo 内单文件执行 code_format（默认写回，check=true 预览）",
+    ),
 ]
 
 # 旧方法名 -> 新模块级 handler (for back-compat / introspection)
@@ -481,6 +495,8 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_pull": git_pull.handle,  # 2026-08-12
     "handle_post_git_push": git_push.handle,  # 2026-08-12
     "handle_post_git_remote_set_url": git_remote_set_url.handle,  # 2026-08-12
+    "handle_post_code_check": code_check.handle,  # 2026-08-12
+    "handle_post_code_format": code_format.handle,  # 2026-08-12
 }
 
 
@@ -576,6 +592,7 @@ def register_webapi_routes(plugin: SPCodeToolkit) -> None:
     2026-08-06: 46 -> 50 (+project-unload +codegraph-set +operation-progress;
                 对账补登此前漏记的 conflict 系列实际为 47)
     2026-08-12: 50 -> 53 (+git-pull +git-push +git-remote-set-url)
+    2026-08-12: 53 -> 55 (+code-check +code-format)
     """
     for route, methods, handler, desc in ROUTES:
         try:
@@ -595,6 +612,8 @@ __all__ = [
     "_wrap",
     "register_webapi_routes",
     "btw",  # v2.20 (2026-07-17)
+    "code_check",  # 2026-08-12
+    "code_format",  # 2026-08-12
     "codegraph_status",  # v2.14.x (2026-06-28)
     "docs_crud",  # spec B (2026-07-11)
     "file_browser",
