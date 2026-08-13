@@ -229,3 +229,9 @@ def test_code_tools_reason_codes_defined():
     assert ReasonCode.TOOL_UNAVAILABLE == "tool_unavailable"
     assert ReasonCode.CHECK_FAILED == "check_failed"
     assert ReasonCode.FORMAT_FAILED == "format_failed"
+
+
+def test_git_commit_amend_reason_codes_defined():
+    assert ReasonCode.CANNOT_AMEND_MERGE_COMMIT == "cannot_amend_merge_commit"
+    assert ReasonCode.STAGED_CHANGES_PRESENT == "staged_changes_present"
+    assert ReasonCode.AMEND_FAILED == "amend_failed"

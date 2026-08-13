@@ -179,6 +179,7 @@ def test_routes_table_has_forty_six_endpoints() -> None:
         "/spcode/git-remote-set-url",
         "/spcode/code-check",
         "/spcode/code-format",
+        "/spcode/git-commit-amend",
         "/spcode/git-squash",  # 2026-08-03
         # ── 2026-08-06 静默操作系列 ──
         "/spcode/project-unload",
@@ -202,7 +203,7 @@ def test_routes_table_has_forty_six_endpoints() -> None:
     # 50 entries total: 17 GET + 31 POST + 1 PATCH + 1 DELETE
     methods = [m for entry in ROUTES for m in entry[1]]
     assert methods.count("GET") == 17  # +operation-progress
-    assert methods.count("POST") == 36  # +code-check +code-format
+    assert methods.count("POST") == 37  # +git-commit-amend
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
 
@@ -307,6 +308,22 @@ class TestCodeToolsEndpointsSmoke:
 
         assert code_format.handle is not None
         assert "/spcode/code-format" in self._route_paths()
+
+
+class TestGitCommitAmendEndpointSmoke:
+    """2026-08-13 git-commit-amend route registration smoke."""
+
+    @staticmethod
+    def _route_paths() -> set[str]:
+        from tools.webapi import ROUTES
+
+        return {route[0] for route in ROUTES}
+
+    def test_git_commit_amend_route_registered(self) -> None:
+        from tools.webapi import git_commit_amend
+
+        assert git_commit_amend.handle is not None
+        assert "/spcode/git-commit-amend" in self._route_paths()
 
 
 # === _wrap adapter ====================================================
@@ -478,7 +495,7 @@ def test_register_webapi_routes_calls_context_fifty_three_times() -> None:
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    assert plugin.context.register_web_api.call_count == 55
+    assert plugin.context.register_web_api.call_count == 56
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -495,11 +512,11 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 55 routes
+    # Should not raise; should attempt all 56 routes
     # (含 2026-08-12 新增的 git-pull / git-push / git-remote-set-url /
-    # code-check / code-format)。
+    # code-check / code-format;2026-08-13 git-commit-amend)。
     register_webapi_routes(plugin)
-    assert call_count == 55
+    assert call_count == 56
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

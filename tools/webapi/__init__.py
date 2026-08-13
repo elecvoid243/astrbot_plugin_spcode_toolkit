@@ -76,6 +76,7 @@ from . import (
     git_branches,  # v2.17.0 (2026-07-16) — PR-C GET endpoint
     git_cherry_pick,  # v2.22.0 (2026-07-28)
     git_commit,
+    git_commit_amend,  # 2026-08-13 — POST git-commit-amend
     git_conflict_abort,  # v2.22.0 (2026-07-28)
     git_conflict_continue,  # v2.22.0 (2026-07-28)
     git_conflict_resolve,  # v2.22.0 (2026-07-28)
@@ -256,6 +257,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["POST"],
         git_commit.handle,
         "git commit(严格最小,仅 message)",
+    ),
+    (
+        "/spcode/git-commit-amend",  # 2026-08-13
+        ["POST"],
+        git_commit_amend.handle,
+        "修改当前 HEAD 提交信息（拒绝 staged / merge commit / 冲突中）",
     ),
     (
         "/spcode/file-browser",
@@ -471,6 +478,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_stage": git_stage.handle,
     "handle_post_git_unstage": git_unstage.handle,
     "handle_post_git_commit": git_commit.handle,
+    "handle_post_git_commit_amend": git_commit_amend.handle,  # 2026-08-13
     "handle_post_git_init": git_init.handle,  # v2.17.0 (2026-07-15)
     "handle_post_git_worktree_add": git_worktree_add.handle,  # v2.14.0 (2026-06-26)
     "handle_post_git_worktree_lock": git_worktree_lock.handle,  # v2.14.0 (2026-06-26)
@@ -593,6 +601,7 @@ def register_webapi_routes(plugin: SPCodeToolkit) -> None:
                 对账补登此前漏记的 conflict 系列实际为 47)
     2026-08-12: 50 -> 53 (+git-pull +git-push +git-remote-set-url)
     2026-08-12: 53 -> 55 (+code-check +code-format)
+    2026-08-13: 55 -> 56 (+git-commit-amend)
     """
     for route, methods, handler, desc in ROUTES:
         try:
@@ -630,6 +639,7 @@ __all__ = [
     "git_branch_switch",  # v2.17.0
     "git_branches",  # v2.17.0
     "git_commit",
+    "git_commit_amend",  # 2026-08-13
     "git_diff",
     "git_file",  # spec B (2026-07-11)
     "git_init",  # v2.17.0
