@@ -51,6 +51,7 @@ async def handle(
             reason=reason,
             elapsed_ms=_elapsed(t0),
             checked=False,
+            fixed=False,
             **fields,
         )
 
@@ -67,6 +68,10 @@ async def handle(
     linter = body.get("linter", "auto")
     if not isinstance(linter, str) or linter not in _LINTERS:
         return _failure(ReasonCode.INVALID_PARAM)
+
+    fix = body.get("fix", False)
+    if type(fix) is not bool:
+        return _failure(ReasonCode.INVALID_BODY)
 
     err, ctx, target = await _resolve_code_target(
         plugin,
@@ -92,6 +97,7 @@ async def handle(
         _check_source_file,
         str(target),
         linter,
+        fix=fix,
         cppcheck_enable=list(cppcheck_enable),
         cppcheck_shortcircuit=cppcheck_shortcircuit,
     )
@@ -132,6 +138,8 @@ async def handle(
             issues=issues,
             count=count,
             linters=linters,
+            fixed=bool(result.get("fixed", False)),
+            fixed_count=result.get("fixed_count"),
             proposal=result.get("proposal"),
             directory=directory,
             umo=effective_umo,

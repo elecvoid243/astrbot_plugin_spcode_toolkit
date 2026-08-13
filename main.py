@@ -21,40 +21,35 @@ import os
 from astrbot.api import logger, star
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
-from astrbot.api.star import StarTools, register  # noqa: F401  (re-export for test compat: tests/test_todo_list.py uses main_mod.StarTools)
+from astrbot.api.star import (  # noqa: F401  (re-export for test compat: tests/test_todo_list.py uses main_mod.StarTools)
+    StarTools,
+    register,
+)
 
 # 业务子系统 import — 详见 docs/superpowers/specs/2026-06-23-main-py-refactor-design.md
 # main.py 在 PR-0~PR-7 拆分后只保留插件入口职责; 业务逻辑全部下沉到 tools/* 子包。
 from .tools._config_filter import ALL_TOOL_NAMES, filter_enabled_tools
 from .tools._external_tools import merge_external_tool_defaults
+from .tools._guidance_text import (
+    CODE_CHECK_GUIDANCE,
+    CODE_CHECK_GUIDANCE_MARKER,
+    CODE_FORMAT_GUIDANCE,
+    CODE_FORMAT_GUIDANCE_MARKER,
+    FILE_REMOVE_GUIDANCE,
+    FILE_REMOVE_GUIDANCE_MARKER,
+    PROJECT_CODEGRAPH_GUIDANCE,
+    PROJECT_GUIDANCE_MARKER,
+    TODO_GUIDANCE,
+    TODO_GUIDANCE_MARKER,
+)
+from .tools._path_safety import is_path_safe as _is_path_safe
+from .tools.agentsmd import AgentsmdSubsystem
 from .tools.codegraph import (
     CodegraphManager,
     bootstrap_mcp,
     shutdown_mcp,
 )
 from .tools.codegraph import state as _codegraph_state
-from .tools.vivado import VivadoSubsystem, check_vivado_available
-from .tools.project import ProjectManager
-from .tools.webapi import register_webapi_routes
-from .tools.webapi.git_diff import _GIT_DIFF_ENCODING
-from .tools.inta_shell.component import LocalInteractiveShellComponent
-from .tools._path_safety import is_path_safe as _is_path_safe
-from .tools.security import PlanModeController, check_is_admin
-from .tools.llm_inject import inject_guidance
-from .tools.agentsmd import AgentsmdSubsystem
-from .tools.project.inject import inject_project_path
-from .tools._guidance_text import (
-    PROJECT_GUIDANCE_MARKER,
-    PROJECT_CODEGRAPH_GUIDANCE,
-    FILE_REMOVE_GUIDANCE_MARKER,
-    FILE_REMOVE_GUIDANCE,
-    TODO_GUIDANCE_MARKER,
-    TODO_GUIDANCE,
-    CODE_CHECK_GUIDANCE_MARKER,
-    CODE_CHECK_GUIDANCE,
-    CODE_FORMAT_GUIDANCE_MARKER,
-    CODE_FORMAT_GUIDANCE,
-)
 
 # re-export FunctionTool 类供 tests/test_*.py 旧用法 (main_mod.TodoCreateTool 等)
 # v2.12 (PR-split-modify): 用 todo_add / todo_update / todo_delete 取代 todo_modify
@@ -77,7 +72,14 @@ from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
     TodoQueryTool,
     TodoUpdateTool,
 )
-
+from .tools.inta_shell.component import LocalInteractiveShellComponent
+from .tools.llm_inject import inject_guidance
+from .tools.project import ProjectManager
+from .tools.project.inject import inject_project_path
+from .tools.security import PlanModeController, check_is_admin
+from .tools.vivado import VivadoSubsystem, check_vivado_available
+from .tools.webapi import register_webapi_routes
+from .tools.webapi.git_diff import _GIT_DIFF_ENCODING
 
 _DEFAULT_CONFIG = {
     "es_path": "",  # Everything es.exe 路径（空值由 AstrBot 内置 external_tools 默认路径填充）
@@ -435,7 +437,7 @@ class SPCodeToolkit(star.Star):
         pass
 
     @staticmethod
-    def _vivado_check(plugin: "SPCodeToolkit") -> tuple[bool, str | None]:
+    def _vivado_check(plugin: SPCodeToolkit) -> tuple[bool, str | None]:
         """/vivado 子命令统一前置检查 (PR 2026-07-24)。
 
         三个条件全满足返回 (True, None); 任一不满足返回 (False, 错误消息)。

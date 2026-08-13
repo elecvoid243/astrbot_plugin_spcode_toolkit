@@ -66,6 +66,7 @@ def check(
     filepath: str,
     linter: str = "auto",
     *,
+    fix: bool = False,
     cppcheck_enable: list[str] | None = None,
     cppcheck_shortcircuit: str | None = None,
 ) -> dict:
@@ -74,6 +75,8 @@ def check(
     Args:
         filepath: 源文件路径。扩展名决定默认 linter。
         linter: auto (按扩展名) / ruff / cpplint / cppcheck。
+        fix: True 时对 Python (ruff) 执行 ``ruff check --fix`` 自动修复。
+            仅 ruff 支持;cpplint/cppcheck 传入 fix=True 返回错误。
         cppcheck_enable: 显式覆盖 cppcheck 额外检查类目;None 走配置链。
         cppcheck_shortcircuit: 显式覆盖 cppcheck 短路模式;None 走配置链。
 
@@ -99,6 +102,7 @@ def check(
             }
         # C/C++ 在 auto 模式下走含 cppcheck 短路的 _run_cpplint
         if linter == "cpplint":
+
             def runner(p: Path) -> dict:
                 return _run_cpplint(
                     p,
@@ -131,7 +135,19 @@ def check(
                 "supported": sorted(runners.keys()),
             }
 
-    result = runner(p)
+    if fix:
+        # 自动修复仅 Python (ruff --fix) 支持；C/C++ linter 无 --fix。
+        if linter != "ruff":
+            return {
+                "ok": False,
+                "error": (
+                    f"自动修复仅支持 Python (ruff --fix)，当前 linter={linter} 不支持"
+                ),
+            }
+        result = _run_ruff(p, fix=True)
+    else:
+        result = runner(p)
+
     # 给前 5 个 issue 附加代码上下文
     if result.get("ok") and result.get("issues"):
         _add_context(p, result["issues"])
@@ -176,9 +192,7 @@ def _get_shortcircuit_mode() -> str:
 
 # cppcheck 启用的额外检查类目(v2.21.1+, 用户可配置;空=只报 error)
 # 对应 _conf_schema.json 的 cppcheck_enable.options
-_VALID_CPPCHECK_ENABLE = frozenset(
-    {"warning", "style", "performance", "portability"}
-)
+_VALID_CPPCHECK_ENABLE = frozenset({"warning", "style", "performance", "portability"})
 
 
 def _normalize_cppcheck_enable(values: object) -> list[str]:
@@ -404,7 +418,7 @@ def _find_ruff() -> list:
         return []
 
 
-def _run_ruff(p: Path) -> dict:
+def _run_ruff(p: Path, fix: bool = False) -> dict:
     ruff_cmd = _find_ruff()
     if not ruff_cmd:
         return proposal_reply(
@@ -414,9 +428,58 @@ def _run_ruff(p: Path) -> dict:
             evidence={"python_file": str(p)},
             options=["pip install ruff", "切换到 linter=cpplint 不适用（仅 C/C++）"],
         )
+
+    if not fix:
+        result = _run_ruff_once(p, ruff_cmd, fix=False)
+        if result.get("ok") and result.get("issues"):
+            result["proposal"] = f"ruff 发现 {len(result['issues'])} 个问题"
+            result["options"] = ["逐个修复", "确认是否有意为之"]
+        return result
+
+    # fix 模式：先只读统计 before，再 --fix 写回并统计 after，计算修复数。
+    before = _run_ruff_once(p, ruff_cmd, fix=False)
+    if not before.get("ok"):
+        return before
+    after = _run_ruff_once(p, ruff_cmd, fix=True)
+    if not after.get("ok"):
+        return after
+
+    fixed_count = before.get("count", 0) - after.get("count", 0)
+    result: dict = {
+        "ok": True,
+        "linter": "ruff",
+        "issues": after.get("issues", []),
+        "count": after.get("count", 0),
+        "fixed": True,
+        "fixed_count": fixed_count,
+    }
+    if fixed_count > 0:
+        result["proposal"] = (
+            f"ruff --fix 修复了 {fixed_count} 个问题，剩余 {after.get('count', 0)} 个"
+        )
+    else:
+        result["proposal"] = f"ruff 无可自动修复项，剩余 {after.get('count', 0)} 个问题"
+    return result
+
+
+def _run_ruff_once(p: Path, ruff_cmd: list, *, fix: bool) -> dict:
+    """对单个 Python 文件执行一次 ruff check（可选 --fix）。
+
+    Args:
+        p: 待检查的 .py 文件路径。
+        ruff_cmd: _find_ruff() 返回的命令前缀（["ruff"] 或 [python, -m, ruff]）。
+        fix: True 时追加 ``--fix``，ruff 会就地修复可自动修复的问题。
+
+    Returns:
+        标准 result dict（ok / linter / issues / count，可能含 raw / error）。
+    """
+    args = ruff_cmd + ["check", "--output-format", "json"]
+    if fix:
+        args.append("--fix")
+    args.append(str(p))
     try:
         r = subprocess.run(
-            ruff_cmd + ["check", "--output-format", "json", str(p)],
+            args,
             capture_output=True,
             text=True,
             # ruff 输出 UTF-8 JSON;显式 encoding 防止中文 Windows 下默认 cp936
@@ -430,11 +493,7 @@ def _run_ruff(p: Path) -> dict:
         if r.returncode == 0:
             return {"ok": True, "linter": "ruff", "issues": [], "count": 0}
         issues = json.loads(r.stdout) if r.stdout.strip() else []
-        result = {"ok": True, "linter": "ruff", "issues": issues, "count": len(issues)}
-        if issues:
-            result["proposal"] = f"ruff 发现 {len(issues)} 个问题"
-            result["options"] = ["逐个修复", "确认是否有意为之"]
-        return result
+        return {"ok": True, "linter": "ruff", "issues": issues, "count": len(issues)}
     except json.JSONDecodeError:
         return {
             "ok": True,
