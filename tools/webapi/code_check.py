@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_LINTERS = frozenset({"auto", "ruff", "cpplint", "cppcheck"})
+_LINTERS = frozenset({"auto", "ruff", "clang-format", "cppcheck"})
 
 
 def _elapsed(t0: float) -> int:

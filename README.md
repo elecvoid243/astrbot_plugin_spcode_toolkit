@@ -30,8 +30,8 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 | 工具名 | 类别 | 说明 |
 |--------|------|------|
-| `code_check` | 代码质量（只读） | Python (ruff) / C·C++ (cppcheck + cpplint) 语法+风格合并检查，结构化 issues |
-| `code_format` | 代码质量（写入） | 源码自动格式化：`.py` → ruff format；C/C++/Java/JS/TS/C# → AStyle (stdin/stdout)。v2.14 引入 |
+| `code_check` | 代码质量（只读） | Python (ruff) / C·C++ (cppcheck 正确性 + clang-format 格式，与 code_format 同源) 语法+风格合并检查，结构化 issues |
+| `code_format` | 代码质量（写入） | 源码自动格式化：`.py` → ruff format；C/C++/Java/JS/TS/C# → clang-format (stdin/stdout，项目内 `.clang-format` 优先)。v2.14 引入 |
 | `es_search` | 文件搜索 | Windows Everything (es.exe) 毫秒级搜索；Linux/macOS `locate`→`fd`→Python `os.walk` 三层 fallback |
 | `astrbot_file_remove` | 文件操作（写入） | 沙箱化文件/目录删除，双层黑名单 + 批量确认提案机制 |
 | `astrbot_file_compare` | 文件操作（只读） | 结构化文件差异（added/removed 行数 + unified diff），UTF-8/GBK 自适应 |
@@ -118,14 +118,14 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
 | `cppcheck_path` | 字符串 | `""` | cppcheck.exe 路径（C/C++ 正确性检查）。留空时按 `CPPCHECK_PATH` 环境变量 → `shutil.which("cppcheck")` → 常见安装路径的顺序查找 |
-| `cppcheck_shortcircuit` | 单选 | `"error"` | cppcheck 短路策略：`error`=有 error 时跳过 cpplint（默认）/ `warning`=有 error 或 warning 时跳过 / `never`=两个工具都跑 |
+| `cppcheck_shortcircuit` | 单选 | `"error"` | cppcheck 短路策略：`error`=有 error 时跳过 clang-format 格式检查（默认）/ `warning`=有 error 或 warning 时跳过 / `never`=两个工具都跑 |
 
 ### code_format 配置（v2.14+）
 
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `default_style` | 单选 | `"allman"` | AStyle 默认风格（仅 C/C++/Java/JS/TS/C# 生效）：allman / google / kr / linux / stroustrup / whitesmith / horstmann / ratliff / vtk / java / none |
-| `default_indent` | 整数 | `4` | AStyle 默认缩进空格数（1-16）。ruff 用自身默认配置 |
+| `default_style` | 单选 | `"llvm"` | clang-format 默认风格（仅 C/C++/Java/JS/TS/C# 生效；项目内 `.clang-format` 文件优先）：llvm / google / chromium / microsoft / webkit / gnu；兼容 legacy astyle 风格名（allman 等，自动映射） |
+| `default_indent` | 整数 | `4` | clang-format 默认缩进空格数（1-16，无 `.clang-format` 时作为 IndentWidth 生效）。ruff 用自身默认配置 |
 
 > `code_format` 是**写入工具**（可能修改文件），plan 模式下默认被过滤。默认不在 `enabled_tools` 中勾选，需显式启用。
 
@@ -208,14 +208,14 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | 工具 | 可选依赖 | 缺失时行为 |
 |------|----------|-----------|
 | `code_check` (Python) | ruff (`pip install ruff`) | 返回安装提示 |
-| `code_check` (C/C++) | cppcheck（先跑正确性检查）+ cpplint（后跑风格检查） | 返回安装提示 |
+| `code_check` (C/C++) | cppcheck（先跑正确性检查）+ clang-format（后跑格式检查） | 返回安装提示 |
 | `code_format` (Python) | ruff | 返回安装提示 |
-| `code_format` (C/C++/Java/JS/TS/C#) | AStyle | 返回安装提示 |
+| `code_format` (C/C++/Java/JS/TS/C#) | clang-format | 返回安装提示 |
 | `codegraph_*` (8 个) | `@colbymchenry/codegraph` (npm) + MCP server 已配置 | 8 个工具全部不在 LLM 工具列表；插件其它工具照常 |
 | `es_search` (Windows) | Everything + es.exe | 返回安装提示 |
 | `es_search` (Linux/macOS) | locate / fd / Python 兜底 | 自动降级到 Python `os.walk` |
 
-`requirements.txt`（lint + 运行时依赖）：`ruff`、`cpplint`、`astyle`、`send2trash`。
+`requirements.txt`（lint + 运行时依赖）：`ruff`、`clang-format`、`send2trash`。
 
 ## 工具详解
 
@@ -224,7 +224,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 对单个 Python 或 C/C++ 源文件执行一次性检查，同时覆盖**语法错误**和**风格问题**：
 
 - **Python (`.py`)**：使用 ruff（PEP 8 + 常用 lint 规则）
-- **C/C++ (`.c/.cpp/.cc/.cxx/.h/.hpp/.hxx`)**：先跑 cppcheck（正确性检查），根据 `cppcheck_shortcircuit` 策略决定是否继续跑 cpplint（Google C++ Style Guide）
+- **C/C++ (`.c/.cpp/.cc/.cxx/.h/.hpp/.hxx`)**：先跑 cppcheck（正确性检查），根据 `cppcheck_shortcircuit` 策略决定是否继续跑 clang-format 格式检查（与 code_format 同一 style 参数链，格式化后必通过检查）
 - 返回结构化 issues 列表，前 5 条带上下文源码（`->` 标记违规行）
 - 其他扩展名（`.js/.ts/.go/.nim` 等）**不支持**
 
@@ -232,11 +232,11 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 与 `code_check` 的关系：`code_check` 是**只读**检查，`code_format` 是**写**工具（可能修改文件）。LLM 在 plan 模式下不应调用本工具。
 
-- **formatter = "auto" 路由**：`.py` → ruff format；`.c/.cpp/.cc/.cxx/.h/.hpp/.hxx/.hh/.java/.js/.jsx/.ts/.tsx/.mjs/.cjs/.cs` → AStyle
-- **AStyle 稳定性策略**：永远 stdin/stdout 调用（不原地修改、不创建 `.orig` 备份），用 stdlib `difflib` 比对判断是否 changed，只有 changed 才写回
+- **formatter = "auto" 路由**：`.py` → ruff format；`.c/.cpp/.cc/.cxx/.h/.hpp/.hxx/.hh/.java/.js/.jsx/.mjs/.cjs/.cs` → clang-format
+- **clang-format 调用策略**：永远二进制 stdin/stdout 调用（字节级保真，GBK/BOM/CRLF 不被破坏），`--assume-filename` 做语言检测与 `.clang-format` 向上发现；用 stdlib `difflib` 比对判断是否 changed，只有 changed 才写回
 - **ruff 调用**：`check=False` → `ruff format <file>`（直接写回）；`check=True` → `ruff format --check --diff <file>`（不写，只报告）
 - **幂等语义**：第二次格式化同一文件 → `changed=False`
-- **保持原文件编码**（v2.23.1+）：AStyle 写回时探测并保持原编码（UTF-8 / UTF-8 BOM / GBK/cp936 等），不再强转 UTF-8
+- **保持原文件编码**（2026-08-14 起字节级保真）：写回 clang-format 原始输出字节，UTF-8 / UTF-8 BOM / GBK/cp936 / CRLF 全部原样保留
 - 支持干跑模式（`check=true`，不写回，仅报告是否有改动）
 
 ### es_search - 文件名极速搜索
@@ -522,7 +522,7 @@ astrbot_plugin_spcode_toolkit/
 ├── main.py                       # 插件入口：注册工具/命令/事件 + L1 鉴权 + 多个 @filter.on_llm_request 钩子
 ├── metadata.yaml                 # 插件元信息（AstrBot 加载识别）
 ├── _conf_schema.json             # WebUI 配置 schema（分组结构）
-├── requirements.txt              # lint + 运行时依赖：ruff, cpplint, astyle, send2trash
+├── requirements.txt              # lint + 运行时依赖：ruff, clang-format, send2trash
 ├── README.md                     # 本文件
 ├── AGENTS.md                     # 供 coding agent 使用的项目规范
 │

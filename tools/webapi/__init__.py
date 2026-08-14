@@ -442,7 +442,7 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "/spcode/code-check",  # 2026-08-12
         ["POST"],
         code_check.handle,
-        "对 repo 内单文件执行 code_check（ruff/cpplint/cppcheck）",
+        "对 repo 内单文件执行 code_check（ruff/cppcheck/clang-format）",
     ),
     (
         "/spcode/code-format",  # 2026-08-12

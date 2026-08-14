@@ -337,7 +337,7 @@ def test_no_production_subprocess_call_without_no_window():
 #
 # WHY:
 #   ``sys.executable`` 在 AstrBot 由 ``pythonw.exe`` 启动时也是 pythonw.exe(GUI
-#   subsystem)。若用它启动 ruff / cpplint 这类 CLI 子进程,Rust runtime 会主动
+#   subsystem)。若用它启动 ruff 这类 CLI 子进程,Rust runtime 会主动
 #   调 ``AllocConsole()`` 弹出临时控制台窗口 — 即使父进程显式传了
 #   ``creationflags=CREATE_NO_WINDOW`` 也无法阻止子进程的主动行为(原因 B)。
 #

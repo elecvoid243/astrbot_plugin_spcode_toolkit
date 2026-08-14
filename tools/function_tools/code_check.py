@@ -21,12 +21,13 @@ class CodeCheckTool(FunctionTool):
         "issues, so one call replaces a 'syntax check then lint' workflow. "
         "Auto-detects the linter from the file extension: "
         ".py → ruff (PEP 8 + common lint rules); "
-        ".c/.cpp/.cc/.cxx/.h/.hpp/.hxx → cpplint (Google C++ Style Guide). "
+        ".c/.cpp/.cc/.cxx/.h/.hpp/.hxx → cppcheck (correctness) + clang-format "
+        "(format check, same style chain as code_format). "
         "Returns a structured list of issues; the first 5 include surrounding "
         "source-context lines (→ marks the offending line). "
         "Other extensions (e.g. .js/.ts/.go/.nim) are NOT supported by this "
         "tool. Requires the linter to be installed: "
-        "pip install ruff (Python) or pip install cpplint (C/C++)."
+        "pip install ruff (Python) or pip install clang-format (C/C++)."
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -36,12 +37,12 @@ class CodeCheckTool(FunctionTool):
                     "type": "string",
                     "description": (
                         "Path to the source file. Extension determines the linter: "
-                        ".py → ruff; .c/.cpp/.cc/.cxx/.h/.hpp/.hxx → cpplint."
+                        ".py → ruff; .c/.cpp/.cc/.cxx/.h/.hpp/.hxx → cppcheck + clang-format."
                     ),
                 },
                 "linter": {
                     "type": "string",
-                    "enum": ["auto", "ruff", "cpplint"],
+                    "enum": ["auto", "ruff", "clang-format"],
                     "description": (
                         "Override the linter. 'auto' (default) picks by extension."
                     ),

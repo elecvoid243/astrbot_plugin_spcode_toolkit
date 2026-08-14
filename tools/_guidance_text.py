@@ -71,8 +71,8 @@ CODE_CHECK_GUIDANCE_MARKER: str = "# Use `code_check` for linting"
 CODE_CHECK_GUIDANCE: str = f"""
 {CODE_CHECK_GUIDANCE_MARKER}
 When you need to lint or inspect a Python or C/C++ source file:
-- Priority use the built-in `code_check` tool. It runs ruff (for .py) or cpplint / cppcheck (for .c/.cpp/.h/.hpp).
-- DO NOT call `ruff check`, `cpplint`, or `cppcheck` via `subprocess.run([...])` or shell.
+- Priority use the built-in `code_check` tool. It runs ruff (for .py) or cppcheck + clang-format (for .c/.cpp/.h/.hpp).
+- DO NOT call `ruff check`, `cppcheck`, or `clang-format` via `subprocess.run([...])` or shell.
 """
 
 
@@ -81,8 +81,8 @@ CODE_FORMAT_GUIDANCE_MARKER: str = "# Use `code_format` for formatting"
 CODE_FORMAT_GUIDANCE: str = f"""
 {CODE_FORMAT_GUIDANCE_MARKER}
 When you need to format a Python or C/C++/Java/JS/TS/C# source file:
-- Priority use the built-in `code_format` tool. It runs ruff format (for .py) or AStyle (for other supported extensions) internally without spawning a subprocess.
-- DO NOT call `ruff format`, `astyle`, or any other external formatter via `subprocess.run([...])` or shell.
+- Priority use the built-in `code_format` tool. It runs ruff format (for .py) or clang-format (for other supported extensions) internally without spawning a subprocess.
+- DO NOT call `ruff format`, `clang-format`, or any other external formatter via `subprocess.run([...])` or shell.
 """
 
 # vivado-mcp 集成 (PR-5 2026-07-23)

@@ -2,17 +2,19 @@
 
 v2.14 (2026-06-25) 引入。
 v2.14.1 (2026-06-25) 简化 LLM 暴露面:
-  - 移除 formatter 参数:后缀名自动路由(.py → ruff, 其他 → astyle)
+  - 移除 formatter 参数:后缀名自动路由(.py → ruff, 其他 → clang-format)
   - 移除 style/indent 参数:从插件配置注入(``code_format.default_style`` /
-    ``code_format.default_indent``),LLM 不再关心 astyle 风格细节
+    ``code_format.default_indent``),LLM 不再关心风格细节
+2026-08-14: astyle → clang-format 迁移(format/check 同源,
+  项目内 .clang-format 文件优先,配置作 fallback-style)。
 
 仿照 file_remove.custom_blacklist 模式:FunctionTool 实例属性
 ``default_style`` / ``default_indent`` 由 main.py 在初始化时从 _config 注入。
 
 - Python: ruff format
-- C/C++/Java/JS/TS/C#: AStyle(通过 stdin/stdout 调用)
+- C/C++/Java/JS/TS/C#: clang-format(通过 stdin/stdout 二进制管道调用)
 
-Author: elecvoid243, 2026-06-25
+Author: elecvoid243, 2026-06-25; clang-format 迁移 2026-08-14
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ class CodeFormatTool(FunctionTool):
         "Set check=true for dry-run (detect changes without writing the file). "
         "Supported extensions: .py (ruff format); "
         ".c/.cpp/.h/.hpp/.cc/.cxx/.hxx/.hh/.java/.js/.jsx/.mjs/.cjs/.cs "
-        "(AStyle). Other extensions are rejected. "
+        "(clang-format). Other extensions are rejected. "
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -45,7 +47,7 @@ class CodeFormatTool(FunctionTool):
                     "type": "string",
                     "description": (
                         "Path of the source file. Extension determines the formatter "
-                        "(.py → ruff; other supported extensions → AStyle)."
+                        "(.py → ruff; other supported extensions → clang-format)."
                     ),
                 },
                 "check": {
@@ -61,7 +63,7 @@ class CodeFormatTool(FunctionTool):
         }
     )
 
-    default_style: str = "linux"
+    default_style: str = "llvm"
     default_indent: int = 4
 
     async def call(

@@ -96,8 +96,8 @@ _DEFAULT_CONFIG = {
     "file_remove_blacklist": [],  # file_remove 用户自定义黑名单：绝对路径前缀列表
     # v2.14.1: code_format 配置(从 code_format 分组拍平;LLM 不可见,
     # 注入到 CodeFormatTool 实例属性 default_style / default_indent)
-    "default_style": "allman",  # astyle 默认风格
-    "default_indent": 4,  # astyle 默认缩进空格数
+    "default_style": "llvm",  # clang-format 默认风格(兼容 legacy astyle 风格名)
+    "default_indent": 4,  # clang-format 默认缩进空格数
     # v2.9.x (2026-07-27): /plan /build 命令的模式切换提示文本开关。
     # True = 保持原行为(yield 提示到消息页面);False = 静默切换。
     "plan_mode_command_feedback": True,
@@ -145,6 +145,14 @@ class SPCodeToolkit(star.Star):
         os.environ["CPPCHECK_SHORTCIRCUIT"] = _config.get(
             "cppcheck_shortcircuit", "all"
         )
+        # clang-format 风格配置注入环境变量,供 tools/code_check.py 的
+        # 格式检查路径读取(code_format 走 FunctionTool 实例属性,见下方注入)
+        os.environ["CLANG_FORMAT_STYLE"] = str(
+            _config.get("default_style") or "llvm"
+        )
+        os.environ["CLANG_FORMAT_INDENT"] = str(
+            _config.get("default_indent") or 4
+        )
 
         # 子系统管理器句柄 — 详见 tools/*/ 子包
         self.agentsmd = AgentsmdSubsystem(plugin=self, is_path_safe=_is_path_safe)
@@ -172,9 +180,9 @@ class SPCodeToolkit(star.Star):
             # 走实例属性。_conf_schema.json 的 code_format 分组已定义默认值;
             # _flatten_config 会把 code_format.{default_style, default_indent}
             # 拍平为顶层的 default_style / default_indent,与其他 flat key 风格一致。
-            # 缺失时用 dataclass 默认("allman" / 4)。)
+            # 缺失时用 dataclass 默认("llvm" / 4)。)
             elif isinstance(t, CodeFormatTool):
-                t.default_style = str(_config.get("default_style") or "allman")
+                t.default_style = str(_config.get("default_style") or "llvm")
                 try:
                     t.default_indent = int(_config.get("default_indent") or 4)
                 except (TypeError, ValueError):

@@ -1,5 +1,4 @@
 ruff
-cpplint
+clang-format
 send2trash
-astyle
 vivado-mcp>=0.1.0

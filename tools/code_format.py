@@ -3,20 +3,28 @@
 与 code_check 的关系:code_check 是**只读**检查,code_format 是**写**工具
 (可能修改文件)。LLM 在 plan 模式下不应调用本工具。
 
-设计要点(2026-06-25, v2.14 引入):
+设计要点(2026-06-25, v2.14 引入;2026-08-14 astyle → clang-format 迁移):
 
 1. **formatter = "auto" 路由**
    - .py → ruff format
-   - .c/.cpp/.cc/.cxx/.h/.hpp/.hxx/.hh/.java/.js/.jsx/.ts/.tsx/.mjs/.cjs/.cs → AStyle
+   - .c/.cpp/.cc/.cxx/.h/.hpp/.hxx/.hh/.java/.js/.jsx/.mjs/.cjs/.cs → clang-format
 
-2. **astyle 调用的稳定性问题**
-   AStyle 3.x 默认行为是"输出到 stdout 不原地修改",且不写回原文件
-   时 exit=1(反直觉)。我们的策略是 **永远 stdin/stdout 调用**:
-   - 读原文件 → stdin 喂给 AStyle
-   - 拿 stdout 结果与原文件比较
-   - check=False 时,只有 changed 才写回(不创建 .orig 备份)
-   - check=True 时,**永远不写回**
-   这样 astyle 的 --suffix 行为差异、--quiet 等开关都不影响主流程。
+2. **clang-format 调用(2026-08-14 替换 astyle)**
+   Spec: docs/superpowers/specs/2026-08-14-clang-format-unify-design.md
+   - format 与 code_check 同源:同一参数链,保证"格式化后必通过格式检查"。
+   - 永远 **stdin/stdout 二进制模式** 调用:
+     - 读原文件字节 → stdin 喂给 clang-format(字节级保真,GBK/BOM 不被强转)
+     - ``--assume-filename=<绝对路径>`` → 语言检测 + ``.clang-format`` 向上发现
+     - 项目内 ``.clang-format`` 优先(自实现向上发现,找到 → ``--style=file``);
+       找不到时用插件配置 default_style/default_indent 拼内联
+       ``--style={BasedOnStyle: X, IndentWidth: N}`` 兜底
+       (clang-format 17 的 --fallback-style 只接受预设名,拒绝内联 YAML,
+       故不用它)
+     - 拿 stdout 字节与原文件比较
+     - check=False 且 changed 才写回(写回 clang-format 原始输出字节)
+     - check=True 时,**永远不写回**
+   - clang-format 原生处理 CRLF(DeriveLineEnding 保留主导行尾),无需
+     astyle 时代的 CRLF→LF 归一化 workaround。
 
 3. **ruff 调用**
    - check=False: `ruff format <file>`(直接写回)
@@ -25,7 +33,7 @@
 
 4. **idempotent 语义**
    第二次格式化同一文件 → changed=False(我们用 stdlib difflib 比对,
-   不依赖工具本身的"未变"信号,因为 astyle 永远返回新内容)。
+   不依赖工具本身的"未变"信号)。
 
 5. **错误分类**
    - 工具未安装 → ok=False + error="X 未安装" + proposal(参考 code_check)
@@ -34,32 +42,34 @@
    - 解析失败 → ok=False + 原始 stderr 摘要
    - 超时 → ok=False + error="X 超时"
 
-Author: elecvoid243, 2026-06-25
+Author: elecvoid243, 2026-06-25; clang-format 迁移 2026-08-14
 """
 
 from __future__ import annotations
 
 import difflib
 import json
+import logging
+import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 from ._helpers import (
     _NO_WINDOW_KWARGS,
     _decode_text_bytes,
     _get_console_python,
-    detect_console_encoding,
     proposal_reply,
 )
 
+logger = logging.getLogger(__name__)
+
 # ── 扩展名 → formatter 路由表 ─────────────────────────
-# 顺序敏感:.py 必须先于 ASTYLE_SUFFIXES 集合。
+# 顺序敏感:.py 必须先于 CLANG_FORMAT_SUFFIXES 集合。
 PY_SUFFIXES = {".py"}
 
-# AStyle 3.6 官方支持的语言: C, C++, C++/CLI, Objective-C, C#, Java
-# 加上社区共识的 JS/TS 兼容(sucessful rendering but no language-specific rules)。
-ASTYLE_SUFFIXES: set[str] = {
+# clang-format 官方支持的语言: C, C++, Objective-C, C#, Java, JavaScript,
+# TypeScript, ProtoBuf 等。本集合与 astyle 时代保持一致。
+CLANG_FORMAT_SUFFIXES: set[str] = {
     # C / C++
     ".c",
     ".cpp",
@@ -71,7 +81,7 @@ ASTYLE_SUFFIXES: set[str] = {
     ".hh",
     # Java
     ".java",
-    # JavaScript (astyle 兼容处理,无语言特定规则)
+    # JavaScript
     ".js",
     ".jsx",
     ".mjs",
@@ -80,22 +90,34 @@ ASTYLE_SUFFIXES: set[str] = {
     ".cs",
 }
 
-# astyle --style= 选项的合法值(对应 AStyle 3.6 文档)
-VALID_ASTYLE_STYLES: frozenset[str] = frozenset(
+# clang-format --fallback-style BasedOnStyle 的合法预设值
+VALID_CLANG_FORMAT_STYLES: frozenset[str] = frozenset(
     {
-        "allman",
-        "java",
-        "kr",
-        "linux",
+        "llvm",
         "google",
-        "stroustrup",
-        "whitesmith",
-        "horstmann",
-        "ratliff",
-        "vtk",
-        "none",
+        "chromium",
+        "microsoft",
+        "webkit",
+        "gnu",
     }
 )
+
+# legacy astyle --style= 值 → clang-format 预设/内联 style 串映射。
+# 向后兼容:_conf_schema.json 的 default_style 历史上是 astyle 风格名,
+# 既有用户配置里可能仍存着这些值(AGENTS.md 规则 9:不改字段名,迁移配置)。
+# 映射为 "{...}" 完整 style 串时,default_indent 不再叠加(串内已自带缩进语义)。
+LEGACY_ASTYLE_STYLE_MAP: dict[str, str] = {
+    "allman": "{BasedOnStyle: llvm, BreakBeforeBraces: Allman}",
+    "kr": "llvm",
+    "stroustrup": "llvm",
+    "linux": "{BasedOnStyle: llvm, IndentWidth: 8, UseTab: Always}",
+    "java": "llvm",
+    "whitesmith": "llvm",
+    "horstmann": "llvm",
+    "ratliff": "llvm",
+    "vtk": "llvm",
+    "none": "llvm",
+}
 
 # 格式化文件大小上限(10 MB)。超过则拒绝,防止 LLM 误把巨型文件喂进来。
 _MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -115,17 +137,21 @@ def format(
     formatter: str = "auto",
     *,
     check: bool = False,
-    style: str = "allman",
+    style: str = "llvm",
     indent: int = 4,
 ) -> dict:
     """对单个源文件运行代码格式化。
 
     Args:
         filepath: 源文件绝对路径。
-        formatter: auto / ruff / astyle。
+        formatter: auto / ruff / clang-format。
         check: True=dry-run,只检测不写入。
-        style: astyle style 预设(仅 astyle 生效)。
-        indent: 缩进空格数(astyle → --indent=spaces=N;ruff 不支持,作为 metadata)。
+        style: clang-format 预设(llvm/google/chromium/microsoft/webkit/gnu);
+            兼容 legacy astyle 风格名(自动映射,见 LEGACY_ASTYLE_STYLE_MAP)。
+            仅 clang-format 生效,且仅在项目内无 .clang-format 文件时作为
+            fallback-style 生效。
+        indent: 缩进空格数(clang-format → fallback-style 的 IndentWidth;
+            ruff 不支持,作为 metadata)。
 
     Returns:
         ok=True  → {
@@ -170,24 +196,29 @@ def format(
                 "ok": False,
                 "error": (
                     f"不支持的扩展名: {p.suffix}。"
-                    f"code_format 仅支持 Python 和 AStyle 支持的语言。"
+                    f"code_format 仅支持 Python 和 clang-format 支持的语言。"
                 ),
                 "supported_extensions": _supported_extensions(),
             }
-    elif formatter not in ("ruff", "astyle"):
+    elif formatter not in ("ruff", "clang-format"):
         return {
             "ok": False,
             "error": f"不支持的 formatter: {formatter}",
-            "supported": ["auto", "ruff", "astyle"],
+            "supported": ["auto", "ruff", "clang-format"],
         }
 
-    # ── 3. 风格参数校验(astyle) ──
+    # ── 3. 风格参数校验(clang-format) ──
     formatter_options = {"style": style, "indent": indent}
-    if formatter == "astyle" and style not in VALID_ASTYLE_STYLES:
+    if (
+        formatter == "clang-format"
+        and style not in VALID_CLANG_FORMAT_STYLES
+        and style not in LEGACY_ASTYLE_STYLE_MAP
+    ):
         return {
             "ok": False,
-            "error": f"不支持的 astyle 风格: {style}",
-            "supported_styles": sorted(VALID_ASTYLE_STYLES),
+            "error": f"不支持的 clang-format 风格: {style}",
+            "supported_styles": sorted(VALID_CLANG_FORMAT_STYLES),
+            "legacy_styles": sorted(LEGACY_ASTYLE_STYLE_MAP),
         }
     if not isinstance(indent, int) or indent < 1 or indent > 16:
         return {
@@ -199,7 +230,7 @@ def format(
     if formatter == "ruff":
         result = _format_with_ruff(p, check=check, indent=indent)
     else:
-        result = _format_with_astyle(
+        result = _format_with_clang_format(
             p,
             check=check,
             style=style,
@@ -220,13 +251,13 @@ def _detect_formatter(p: Path) -> str | None:
     suffix = p.suffix.lower()
     if suffix in PY_SUFFIXES:
         return "ruff"
-    if suffix in ASTYLE_SUFFIXES:
-        return "astyle"
+    if suffix in CLANG_FORMAT_SUFFIXES:
+        return "clang-format"
     return None
 
 
 def _supported_extensions() -> list[str]:
-    return sorted(PY_SUFFIXES | ASTYLE_SUFFIXES)
+    return sorted(PY_SUFFIXES | CLANG_FORMAT_SUFFIXES)
 
 
 # ── ruff 路径 ────────────────────────────────────────
@@ -303,7 +334,7 @@ def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
             evidence={"python_file": str(p), "exception": str(e)},
             options=[
                 "pip install ruff",
-                "切换到 formatter=astyle(不适用,仅 C/C++/Java/JS/TS/C#)",
+                "切换到 formatter=clang-format(不适用,仅 C/C++/Java/JS/TS/C#)",
             ],
         )
 
@@ -355,157 +386,175 @@ def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
     return result
 
 
-# ── astyle 路径 ──────────────────────────────────────
+# ── clang-format 路径 ────────────────────────────────
 #
-# v2.15.1(2026-07-01)回滚:astyle 不是 Python 库(PyPI 包名为 astyle 但仅作为
-# wrapper 暴露 astyle.exe CLI,无可 import 的 astyle 模块),必须用命令行调用。
-# 路径查找:**从 sys.executable 推算**到 <python_dir>/Scripts/astyle.exe
-# (Windows) 或 <python_dir>/bin/astyle (Unix)。
-# WHY:pip install astyle 会把 astyle.exe 放到 python 环境的 Scripts/ 目录。
-# 用户评审意见"不要用 shutil.which,astyle 位置与 sys.executable 有关系"。
+# 2026-08-14 迁移:astyle → clang-format。
+# Spec: docs/superpowers/specs/2026-08-14-clang-format-unify-design.md
 #
-# 黑框防御链(与 ruff 路径相同):
-#   1. ``**_NO_WINDOW_KWARGS`` → 抑制父进程无 console 时 Windows 自动分配新控制台
-#   2. 显式 ``encoding="utf-8"`` + ``errors="replace"`` → 避免中文 Windows
-#      默认 cp936 解码 ruff JSON 失败
-#   3. astyle.exe 是 .exe 二进制,**不是** .bat / .cmd → cmd.exe 不会介入,
-#      CREATE_NO_WINDOW 即可彻底抑制
+# 设计要点:
+#   1. clang-format 以 pip 包形式安装(``pip install clang-format``,
+#      requirements.txt 已声明),通过 ``shutil.which("clang-format")`` 定位;
+#      pip 包安装的是 .exe 二进制(非 .bat/.cmd),CREATE_NO_WINDOW 即可抑制黑框。
+#   2. 永远 **二进制 stdin/stdout** 调用:读原文件 bytes → stdin → stdout bytes
+#      直接写回。clang-format 对 stdin 字节流透明传递(不重编码),GBK 源文件、
+#      UTF-8 BOM 都保持字节级保真(astyle 时代的编码 workaround 全部移除)。
+#   3. ``--assume-filename=<绝对路径>``:clang-format 用它做语言检测,并从
+#      该路径向上递归查找 ``.clang-format`` / ``_clang-format``。
+#   4. ``--style=file --fallback-style=<兜底>``:项目内 .clang-format 优先;
+#      没有时 fallback-style 生效(配置 default_style/default_indent)。
+#   5. clang-format 原生保留主导行尾(DeriveLineEnding),CRLF 源文件不会
+#      出现 astyle 时代的双空行 bug,无需 CRLF→LF 归一化。
+#
+# Author: elecvoid243, 2026-08-14
 
 
-def _format_with_astyle(
+def _find_clang_format() -> list[str]:
+    """查找 clang-format 可执行路径(pip 包 clang-format 安装到 PATH/Scripts)。"""
+    found = shutil.which("clang-format")
+    return [found] if found else []
+
+
+def _resolve_clang_format_style(style: str, indent: int) -> str:
+    """把配置的 style(+indent) 解析为 clang-format 内联 ``--style={...}`` 字符串。
+
+    - clang-format 预设(llvm/google/...)→ ``{BasedOnStyle: <预设>, IndentWidth: <N>}``
+    - legacy astyle 风格名 → 查 LEGACY_ASTYLE_STYLE_MAP;
+      映射为完整 ``{...}`` 串时原样返回(串内已含缩进语义,indent 不再叠加);
+      映射为预设名时按预设路径叠加 IndentWidth。
+
+    本函数同时被 tools/code_check.py 复用,保证 format 与 check 的
+    style 参数链完全一致(format/check 同源)。
+
+    实现备注(2026-08-14):最初设计用 ``--style=file --fallback-style={...}``,
+    但 clang-format 17 的 ``--fallback-style`` 只接受预设名(none/llvm/...),
+    拒绝内联 ``{...}`` YAML,IndentWidth 无法随行。因此改为自实现
+    ``.clang-format`` 向上发现(见 _clang_format_flags):找到 → ``--style=file``;
+    找不到 → ``--style=<本函数返回的内联串>``,语义与 fallback-style 等价。
+    """
+    base = style
+    if style in LEGACY_ASTYLE_STYLE_MAP:
+        mapped = LEGACY_ASTYLE_STYLE_MAP[style]
+        logger.warning(
+            "[code_format] default_style=%r 是 legacy astyle 风格名,"
+            "已映射为 clang-format %r;建议在插件配置中改用 clang-format 预设"
+            "(llvm/google/chromium/microsoft/webkit/gnu)",
+            style,
+            mapped,
+        )
+        if mapped.startswith("{"):
+            return mapped
+        base = mapped
+    return f"{{BasedOnStyle: {base}, IndentWidth: {indent}}}"
+
+
+# clang-format 配置文件名(向上递归查找,与 clang-format 原生 --style=file 行为一致)
+_CLANG_FORMAT_CONFIG_NAMES = (".clang-format", "_clang-format")
+
+
+def _find_clang_format_config(p: Path) -> Path | None:
+    """从文件所在目录向上递归查找 .clang-format / _clang-format。"""
+    d = p if p.is_dir() else p.parent
+    for parent in (d, *d.parents):
+        for name in _CLANG_FORMAT_CONFIG_NAMES:
+            candidate = parent / name
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def _clang_format_flags(p: Path, *, style: str, indent: int) -> list[str]:
+    """clang-format 旗标部分(不含可执行路径),供测试断言与 code_check 复用。
+
+    - 项目内存在 .clang-format → ``--style=file``(clang-format 原生发现)
+    - 否则 → ``--style={BasedOnStyle: X, IndentWidth: N}`` 内联兜底
+    """
+    flags = [f"--assume-filename={p}"]
+    if _find_clang_format_config(p) is not None:
+        flags.append("--style=file")
+    else:
+        flags.append(f"--style={_resolve_clang_format_style(style, indent)}")
+    return flags
+
+
+def _format_with_clang_format(
     p: Path,
     *,
     check: bool,
     style: str,
     indent: int,
 ) -> dict:
-    """C/C++/Java/JS/TS/C#: 调 astyle.exe (CLI,via subprocess.run)。
-
-    设计要点:
-      - **不**走 Python 库 import。astyle 是 C++ 程序(AStyle 3.6.x),
-        路径**从 sys.executable 推算**到 <python_dir>/Scripts/astyle.exe
-        (Windows) 或 <python_dir>/bin/astyle (Unix)。这样:
-          - 不依赖 shutil.which 走 PATHEXT(可能匹配到 .bat/.cmd 触发
-            cmd.exe 黑框)
-          - 不需要 ASTYLE_PATH 环境变量
-          - 路径与 python 环境严格绑定,跨环境不会误调用
-      - 永远 stdin/stdout 模式:astyle 收 ``--stdin`` (隐式 via input=)
-        写 stdout,我们自己决定要不要写回原文件。
-      - astyle.exe 走 .exe 不走 .bat/.cmd → ``**_NO_WINDOW_KWARGS`` 可彻底
-        抑制 pythonw.exe 启动下的 cmd 黑框。
+    """C/C++/Java/JS/TS/C#: 调 clang-format (CLI,二进制 stdin/stdout)。
 
     流程:
-      1. 推算 astyle.exe 路径
-      2. 读原文件 → 探测编码并解码为 str（v2.23.0 起按原编码写回）
-      3. ``subprocess.run([astyle.exe, --style=X, --indent=spaces=N], input=before_text)``
-      4. compare → changed
-      5. check=False & changed=True → 写回原文件(保持原编码)
+      1. shutil.which("clang-format") 定位可执行文件
+      2. 读原文件 bytes(不做任何重编码/行尾归一化)
+      3. ``subprocess.run(args, input=before_bytes)`` 二进制管道
+      4. 字节级/text 级比较 → changed
+      5. check=False & changed=True → 写回 clang-format 原始输出字节
       6. check=True → 永远不写
 
     Args:
         p: 待格式化 C/C++/Java/JS/TS/C# 文件路径
         check: True = dry-run,不写回
-        style: astyle 风格(allman / gnu / linux / google / ...)
-        indent: 缩进空格数
+        style: clang-format 预设或 legacy astyle 风格名
+        indent: 缩进空格数(fallback-style 的 IndentWidth)
 
     Returns:
         标准 format() 返回 dict
     """
-    # 1. 路径查找:从 sys.executable 推算 astyle.exe 位置
-    #    WHY:pip install astyle 会把 astyle.exe 放到 python 环境的 Scripts/
-    #    目录(<python_dir>/Scripts/astyle.exe on Windows;Scripts 在非 win32
-    #    不存在,所以 fallback 到 <python_dir>/bin/astyle)。
-    #    这样**不**依赖 shutil.which 走 PATHEXT(可能匹配到 .bat/.cmd 触发
-    #    cmd.exe 黑框),也不需要 ASTYLE_PATH 环境变量。
-    py_dir = Path(sys.executable).parent
-    if sys.platform == "win32":
-        astyle_path = py_dir / "Scripts" / "astyle.exe"
-    else:
-        astyle_path = py_dir / "bin" / "astyle"
-    if not astyle_path.exists():
+    cmd = _find_clang_format()
+    if not cmd:
         return proposal_reply(
             False,
-            f"astyle 未安装,无法格式化 C/C++/Java/JS/TS/C# 文件。"
-            f"预期位置 {astyle_path} 不存在。"
-            f"请运行: pip install astyle",
-            error="astyle 未安装",
-            evidence={"expected_path": str(astyle_path), "file": str(p)},
+            "clang-format 未安装,无法格式化 C/C++/Java/JS/TS/C# 文件。"
+            "请运行: pip install clang-format",
+            error="clang-format 未安装",
+            evidence={"file": str(p)},
             options=[
-                "pip install astyle(会在 Scripts/ 下生成 astyle.exe)",
+                "pip install clang-format",
                 "切换到 formatter=ruff(不适用,仅 Python)",
             ],
         )
 
-    # 2. 读源文件 → 探测编码(复用 tools._helpers 统一解码链:
-    #    utf-8-sig BOM → utf-8 → cp936 → gbk → gb18030 → latin-1)
+    # 二进制读取:不重编码、不归一化行尾,保持字节级保真
     before_bytes = p.read_bytes()
     file_size_before = len(before_bytes)
-    before_text, encoding = _decode_text_bytes(before_bytes)
+    # 解码仅供 changed 检测/diff 摘要(utf-8-sig BOM → utf-8 → cp936 → ...)
+    before_text, _encoding = _decode_text_bytes(before_bytes)
 
-    # 2.5 归一化行尾 (2026-07-31 修复 CRLF 双空行 bug):
-    #   报告:code_format 遇到 CRLF 源文件时,会把每个 CRLF 变为双空行。
-    #   根因:astyle.exe 的 stdin 按 \n 分行,如果直接喂入 "\r\n",astyle
-    #   会把 "\r" 当作行内字符 → 在空行 ("\r\n\r\n") 处把 "\r" 误识别为
-    #   一行内容,导致 "\r\n\r\n" 被拆成 "}\r" + 空白行,输出统一 \n 后形
-    #   成 "}\n\n\n" (双空行)。
-    #   修复:stdin 之前把 CR / CRLF 归一为 LF,避免 astyle 误识别。
-    #   (注:这样会把原 CRLF 源文件改写为 LF 文件。这是已知权衡——
-    #   与 ruff 路径保持一致:ruff format 默认也会按 LF 重写。)
-    if "\r" in before_text:
-        before_text = before_text.replace("\r\n", "\n").replace("\r", "\n")
-
-    # 3. spawn astyle.exe + stdin/stdout 模式
-    args = [
-        str(astyle_path),  # subprocess.run 需 str 或 os.PathLike,这里显式转 str
-        f"--style={style}",
-        f"--indent=spaces={indent}",
-    ]
+    args = cmd + _clang_format_flags(p, style=style, indent=indent)
     try:
         r = subprocess.run(
             args,
-            input=before_text,
+            input=before_bytes,
             capture_output=True,
-            text=True,
-            # WHY: astyle.exe 是 C++ 程序,stdout 走系统 ANSI 代码页(cn=cp936)。
-            # 配合 errors="replace" 容错,避免解码异常时 stdout 变 None。
-            encoding=detect_console_encoding(),
-            errors="replace",
             timeout=_FORMAT_TIMEOUT,
-            # astyle.exe 是 CUI 子程序;pythonw.exe 启动下抑制黑窗。
-            # 双保险:.exe 路径(已通过 which 校验) → cmd.exe 不会介入 → 不会触发
-            # pythonw 主动 AllocConsole() 路径(原因 B)。
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
             **_NO_WINDOW_KWARGS,
         )
     except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "astyle 超时"}
+        return {"ok": False, "error": "clang-format 超时"}
     except Exception as e:
-        return {"ok": False, "error": f"astyle 调用失败: {e}"}
+        return {"ok": False, "error": f"clang-format 调用失败: {e}"}
 
-    # 4. 解析结果
-    if r.returncode not in (0, 1):
-        # astyle 返回非 0/1 → 真错误
+    if r.returncode != 0:
+        err_text, _ = _decode_text_bytes(r.stderr or b"")
         return {
             "ok": False,
-            "error": f"astyle 返回异常退出码 {r.returncode}",
-            "evidence": {"stderr": (r.stderr or "")[:500]},
+            "error": f"clang-format 返回异常退出码 {r.returncode}",
+            "evidence": {"stderr": err_text[:500]},
         }
 
-    after_text = r.stdout
+    after_bytes = r.stdout or b""
+    after_text, _ = _decode_text_bytes(after_bytes)
+    file_size_after = len(after_bytes)
 
-    # 4.5 防御性归一化 astyle 输出 (2026-07-31):
-    #   理论上 astyle stdout 总是纯 LF,但部分平台/版本在 Windows ANSI 解码
-    #   时可能残留 CR (errors="replace" 的副作用)。在比对与写回前再次归一
-    #   一次,防止 stdin 归一化失效时输出仍把 "\r" 误带回文件。
-    if after_text and "\r" in after_text:
-        after_text = after_text.replace("\r\n", "\n").replace("\r", "\n")
-    file_size_after = len(after_text.encode(encoding))
-
-    # 用 splitlines() 行内比较,容错 \n / \r\n / \r(Windows write_text 会 \n → \r\n)
+    # 用 splitlines() 行级比较,容错 \n / \r\n / \r 差异
     changed = _content_changed(before_text, after_text)
 
     result: dict = {
         "ok": True,
-        "formatter": "astyle",
+        "formatter": "clang-format",
         "changed": changed,
         "file_size_before": file_size_before,
         "file_size_after": file_size_after,
@@ -523,21 +572,20 @@ def _format_with_astyle(
             result["diff_summary"] = _summarize_diff(diff_text)
     else:
         if changed:
-            # 写回原文件,保持原编码(v2.23.0: 不再固定 UTF-8,
-            # GBK/cp936 等编码的源文件不会被 astyle 强转 UTF-8)
+            # 写回 clang-format 原始输出字节:编码/BOM/行尾全部保持
             try:
-                p.write_text(after_text, encoding=encoding)
-            except (OSError, UnicodeEncodeError) as e:
+                p.write_bytes(after_bytes)
+            except OSError as e:
                 return {"ok": False, "error": f"写回文件失败: {e}"}
 
     if not changed:
-        result["proposal"] = f"{p.name} 已符合 astyle 格式规范"
+        result["proposal"] = f"{p.name} 已符合 clang-format 格式规范"
     else:
         delta = file_size_after - file_size_before
         sign = "+" if delta >= 0 else ""
         action = "预览将格式化" if check else "已重新格式化"
         result["proposal"] = (
-            f"astyle {action} {p.name}({sign}{delta} 字节,"
+            f"clang-format {action} {p.name}({sign}{delta} 字节,"
             f" {file_size_before} → {file_size_after})"
         )
 
@@ -578,9 +626,8 @@ def _summarize_diff(diff_text: str, max_lines: int = _DIFF_PREVIEW_LINES) -> str
 def _content_changed(before: str, after: str) -> bool:
     """判断两段文本内容是否实质不同(行尾规范化)。
 
-    WHY: Windows 上 ``Path.write_text`` 会把 ``\\n`` → ``\\r\\n``;
-    astyle stdin/stdout 保留 ``\\n``。直接 ``==`` 比较会把
-    "行尾差异"误判为 changed(导致 idempotent 失效)。
+    WHY: 行尾差异(``\\n`` vs ``\\r\\n``)不应误判为 changed(导致
+    idempotent 失效)。
 
     实现:用 ``splitlines()`` 拆成行列表比较——它自动处理 ``\\n`` /
     ``\\r\\n`` / ``\\r`` 任意混合,行内字符原样。
@@ -594,12 +641,16 @@ def _content_changed(before: str, after: str) -> bool:
 __all__ = [
     "format",
     "PY_SUFFIXES",
-    "ASTYLE_SUFFIXES",
-    "VALID_ASTYLE_STYLES",
+    "CLANG_FORMAT_SUFFIXES",
+    "VALID_CLANG_FORMAT_STYLES",
+    "LEGACY_ASTYLE_STYLE_MAP",
     "_detect_formatter",
     "_supported_extensions",
+    "_find_clang_format",
+    "_resolve_clang_format_style",
+    "_clang_format_flags",
     "_format_with_ruff",
-    "_format_with_astyle",
+    "_format_with_clang_format",
 ]
 
 

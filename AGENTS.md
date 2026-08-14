@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.23.2** · Author: elecvoid243 · 最后更新: 2026-08-11
+> **当前版本: v2.24.0** · Author: elecvoid243 · 最后更新: 2026-08-14
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -10,7 +10,7 @@
 - **项目绝对路径**: `F:\github\astrbot_plugin_spcode_toolkit`
 - **项目类型**: AstrBot 插件（Python）
 - **Python 版本**: 3.10+（用到 `list[str]`、`X | None` 等内置泛型）
-- **依赖管理**: `requirements.txt`（含 lint 工具与运行时依赖：`ruff`、`cpplint`、`astyle`、`send2trash`；AstrBot 宿主环境装运行时依赖）
+- **依赖管理**: `requirements.txt`（含 lint 工具与运行时依赖：`ruff`、`clang-format`、`send2trash`；AstrBot 宿主环境装运行时依赖）
 - **测试框架**: pytest
 - **目标平台**: 以 Windows 为首选（`es.exe` / PowerShell 路径）；Linux/macOS 有 fallback
 - **仓库**: https://github.com/elecvoid243/astrbot_plugin_spcode_toolkit
@@ -27,13 +27,9 @@ ruff check .
 
 # Python 代码自动修复（可选，提交前请审阅 diff）
 ruff check . --fix
-
-# C/C++ lint（单文件）
-cpplint path/to/file.cpp
-cpplint path/to/file.h
 ```
 
-> **注意**: 当需要 lint Python/C++ 文件时，优先使用内置 `code_check` 工具（运行 ruff / cpplint），不要通过 `subprocess.run` 或 shell 调用。格式化同理使用内置 `code_format` 工具。
+> **注意**: 当需要 lint Python/C++ 文件时，优先使用内置 `code_check` 工具（Python 走 ruff；C/C++ 走 cppcheck 正确性 + clang-format 格式检查，与 code_format 同源），不要通过 `subprocess.run` 或 shell 调用。格式化同理使用内置 `code_format` 工具（C/C++/Java/JS/TS/C# 走 clang-format，项目内 `.clang-format` 优先）。
 
 ### 测试（pytest）
 
@@ -154,7 +150,7 @@ astrbot_plugin_spcode_toolkit/
 ├── main.py                       # 插件入口：注册工具/命令/事件 + L1 鉴权 + 多个 @filter.on_llm_request 钩子
 ├── metadata.yaml                 # 插件元信息（AstrBot 加载识别）
 ├── _conf_schema.json             # 配置 schema（分组结构，_flatten_config 拍平）
-├── requirements.txt              # lint + 运行时依赖：ruff, cpplint, astyle, send2trash
+├── requirements.txt              # lint + 运行时依赖：ruff, clang-format, send2trash
 ├── README.md                     # 项目说明（面向用户/社区）
 ├── AGENTS.md                     # 本文件（面向 coding agent）
 │
@@ -427,7 +423,7 @@ astrbot_plugin_spcode_toolkit/
 - 工具层错误：**返回结构化错误给 LLM**，而非抛出异常中断会话
 - 路径操作**必须经过 `tools/_path_safety.py` 校验**，防止沙箱逃逸
 - 高危操作（文件删除等）实现**双层黑名单 + 批量确认**机制（参考 `file_remove.py`）
-- 外部进程调用（cppcheck / cpplint / es.exe / codegraph MCP / git）：**必须**处理退出码与 stderr
+- 外部进程调用（cppcheck / clang-format / es.exe / codegraph MCP / git）：**必须**处理退出码与 stderr
 - 资源清理：`try/finally` 或 `contextlib` 确保子进程、文件句柄、网络连接关闭
 - 自定义异常：为每个工具模块定义专属异常类（如 `FileRemoveError`）
 
@@ -468,7 +464,7 @@ astrbot_plugin_spcode_toolkit/
 10. **路径安全**：任何涉及用户输入路径的代码，先调用 `_path_safety` 校验，**不要**自己实现路径判断
 11. **Web API 参数安全**：`?worktree=` 等用户控制的路径参数，必须经过 `_validate_worktree_param`（位于 `tools/_helpers.py`）的 6 步防御链：**关键不变量 - git-common-dir 不匹配 = 直接拒绝**
 12. **配置拍平**：`_conf_schema.json` 是分组结构，`main.py._flatten_config()` 会把嵌套分组拍平为顶层键（如 `codegraph.codegraph_enabled` -> `codegraph_enabled`）。新增配置项时保持此约定
-13. **版本号统一**：当前版本统一为 **v2.23.2**。发布时同步更新 `metadata.yaml` 的 `version` 字段
+13. **版本号统一**：当前版本统一为 **v2.24.0**。发布时同步更新 `metadata.yaml` 的 `version` 字段
 
 ## Project 加载 — 静默变体 (2026-07-28)
 
@@ -707,4 +703,4 @@ pytest tests/ --cov=tools                    # 覆盖率
 
 ---
 
-> Author: elecvoid243 · 本文档同步至 v2.23.2 (2026-08-11)
+> Author: elecvoid243 · 本文档同步至 v2.24.0 (2026-08-14)

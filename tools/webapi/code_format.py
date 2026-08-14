@@ -34,7 +34,7 @@ def _elapsed(t0: float) -> int:
 
 
 def _plugin_format_style(plugin: SPCodeToolkit) -> str:
-    return str(plugin._config.get("default_style") or "allman")
+    return str(plugin._config.get("default_style") or "llvm")
 
 
 def _plugin_format_indent(plugin: SPCodeToolkit) -> int:

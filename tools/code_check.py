@@ -8,17 +8,26 @@ duplicate work.
   Python (ruff):     a single `ruff check` invocation handles parse errors AND
                      PEP 8 / common-lint issues.
   C/C++ (cppcheck    cppcheck runs FIRST for correctness; if it reports any
-          + cpplint): problem-level issue, return immediately and skip cpplint.
-                     Otherwise fall through to cpplint for style checks.
+          + clang-   problem-level issue, return immediately and skip the format
+          format):   check. Otherwise fall through to clang-format (dry-run diff
+                     against the formatter output) for style checks.
+
+2026-08-14 迁移:cpplint → clang-format。
+Spec: docs/superpowers/specs/2026-08-14-clang-format-unify-design.md
+cpplint 的 Google C++ 风格硬编码与 code_format 的可配置风格互相打架;
+clang-format 与 code_format 共用同一参数链(--style=file + 同一 fallback-style),
+format/check 同源,格式化后必通过格式检查。
 
 Supported extensions:
   .py   → ruff
-  .c .cpp .cc .cxx .h .hpp .hxx .hh → cppcheck (auto) + cpplint fallback
+  .c .cpp .cc .cxx .h .hpp .hxx .hh → cppcheck (auto) + clang-format fallback
 """
 
 from __future__ import annotations
 
+import difflib
 import json
+import logging
 import os
 import re
 import shutil
@@ -27,10 +36,14 @@ from pathlib import Path
 
 from ._helpers import (
     _NO_WINDOW_KWARGS,
+    _decode_text_bytes,
     _get_console_python,
     detect_console_encoding,
     proposal_reply,
 )
+from .code_format import _clang_format_flags, _find_clang_format
+
+logger = logging.getLogger(__name__)
 
 # 扩展名 → linter 映射
 _PY_SUFFIXES = {".py"}
@@ -40,13 +53,6 @@ _CPP_SUFFIXES = {".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx", ".hh"}
 _CONTEXT_LINES = 2
 _MAX_CONTEXT_ISSUES = 5
 
-# cpplint 单行输出格式: "<path>:<lineno>:  <message>  [<category>] [<level>]"
-# 例: "src/foo.cpp:42:  Line ends in whitespace.  [whitespace/end_of_line] [4]"
-_CPPLINT_LINE_RE = re.compile(
-    r"^(?P<path>.+?):(?P<line>\d+):\s+(?P<message>.+?)\s+\[(?P<category>[^\]]+)\]\s+\[(?P<level>\d+)\]\s*$"
-)
-_CPPLINT_TOTAL_RE = re.compile(r"^Total errors found.*:\s*(\d+)", re.IGNORECASE)
-
 
 def _detect_linter(p: Path) -> str | None:
     """根据文件扩展名选择 linter。返回 None 表示不支持。"""
@@ -54,7 +60,7 @@ def _detect_linter(p: Path) -> str | None:
     if suffix in _PY_SUFFIXES:
         return "ruff"
     if suffix in _CPP_SUFFIXES:
-        return "cpplint"  # auto 模式走 cpplint 入口（内部已含 cppcheck 短路）
+        return "clang-format"  # auto 模式走 clang-format 入口（内部已含 cppcheck 短路）
     return None
 
 
@@ -74,9 +80,9 @@ def check(
 
     Args:
         filepath: 源文件路径。扩展名决定默认 linter。
-        linter: auto (按扩展名) / ruff / cpplint / cppcheck。
+        linter: auto (按扩展名) / ruff / clang-format / cppcheck。
         fix: True 时对 Python (ruff) 执行 ``ruff check --fix`` 自动修复。
-            仅 ruff 支持;cpplint/cppcheck 传入 fix=True 返回错误。
+            仅 ruff 支持;clang-format/cppcheck 传入 fix=True 返回错误。
         cppcheck_enable: 显式覆盖 cppcheck 额外检查类目;None 走配置链。
         cppcheck_shortcircuit: 显式覆盖 cppcheck 短路模式;None 走配置链。
 
@@ -89,8 +95,8 @@ def check(
         return {"ok": False, "error": f"文件不存在: {filepath}"}
 
     if linter == "auto":
-        # auto 模式：按扩展名路由，且 .c/.cpp 等 C/C++ 走 _run_cpplint
-        # （含 cppcheck 短路逻辑），而不是 _run_cpplint_only
+        # auto 模式：按扩展名路由，且 .c/.cpp 等 C/C++ 走 _run_clang_format
+        # （含 cppcheck 短路逻辑），而不是 _run_clang_format_check
         linter = _detect_linter(p)
         if not linter:
             return {
@@ -100,11 +106,11 @@ def check(
                 ),
                 "supported_extensions": _supported_extensions(),
             }
-        # C/C++ 在 auto 模式下走含 cppcheck 短路的 _run_cpplint
-        if linter == "cpplint":
+        # C/C++ 在 auto 模式下走含 cppcheck 短路的 _run_clang_format
+        if linter == "clang-format":
 
             def runner(p: Path) -> dict:
-                return _run_cpplint(
+                return _run_clang_format(
                     p,
                     cppcheck_enable=cppcheck_enable,
                     shortcircuit_mode=cppcheck_shortcircuit,
@@ -117,11 +123,11 @@ def check(
                 "error": f"auto 模式不支持的 linter: {linter}",
             }
     else:
-        # 显式 linter：cpplint 走 _run_cpplint_only（**不**调 cppcheck），
-        # cppcheck 走 _run_cppcheck_only（**不**调 cpplint）
+        # 显式 linter：clang-format 走 _run_clang_format_check（**不**调 cppcheck），
+        # cppcheck 走 _run_cppcheck_only（**不**调 clang-format）
         runners = {
             "ruff": _run_ruff,
-            "cpplint": _run_cpplint_only,
+            "clang-format": _run_clang_format_check,
             "cppcheck": lambda p: _run_cppcheck_only(
                 p,
                 cppcheck_enable=cppcheck_enable,
@@ -154,7 +160,7 @@ def check(
     return result
 
 
-# ── C/C++: cppcheck（先于 cpplint，正确性优先）──────────
+# ── C/C++: cppcheck（先于 clang-format，正确性优先）──────────
 
 
 # cppcheck 问题级 severity（过滤掉 information/note/debug/missingInclude 等噪声）
@@ -341,7 +347,7 @@ def _run_cppcheck(
     """
     cppcheck_cmd = _find_cppcheck()
     if not cppcheck_cmd:
-        return None  # 未安装，让 caller 跑 cpplint
+        return None  # 未安装，让 caller 跑 clang-format
     try:
         # v2.21.1+: --enable 类目由 cppcheck_enable 配置驱动
         # 默认空=不传 --enable (cppcheck 只报 error);用户多选可启用额外类目
@@ -387,7 +393,7 @@ def _run_cppcheck(
             "options": ["逐个修复", "确认是否有意为之"],
         }
     except subprocess.TimeoutExpired:
-        # 超时视为工具不可用，让 caller 跑 cpplint
+        # 超时视为工具不可用，让 caller 跑 clang-format
         return {
             "ok": False,
             "error": "cppcheck 超时",
@@ -426,7 +432,7 @@ def _run_ruff(p: Path, fix: bool = False) -> dict:
             "ruff 未安装，无法检查 Python 文件。请运行: pip install ruff",
             error="ruff 未安装",
             evidence={"python_file": str(p)},
-            options=["pip install ruff", "切换到 linter=cpplint 不适用（仅 C/C++）"],
+            options=["pip install ruff", "切换到 linter=clang-format 不适用（仅 C/C++）"],
         )
 
     if not fix:
@@ -483,7 +489,7 @@ def _run_ruff_once(p: Path, ruff_cmd: list, *, fix: bool) -> dict:
             capture_output=True,
             text=True,
             # ruff 输出 UTF-8 JSON;显式 encoding 防止中文 Windows 下默认 cp936
-            # 触发 UnicodeDecodeError(stdout 变 None);与 cpplint 路径保持一致。
+            # 触发 UnicodeDecodeError(stdout 变 None)。
             encoding="utf-8",
             errors="replace",
             timeout=30,
@@ -507,84 +513,164 @@ def _run_ruff_once(p: Path, ruff_cmd: list, *, fix: bool) -> dict:
         return {"ok": False, "error": str(e)}
 
 
-# ── C/C++: cpplint（pure；先调 cppcheck 见 _run_cpplint） ──
+# ── C/C++: clang-format（pure；先调 cppcheck 见 _run_clang_format） ──
+#
+# 2026-08-14 迁移:cpplint → clang-format。
+# 格式检查 = 用与 code_format 完全相同的参数链跑 clang-format,
+# 对比输出与原文:一致 → 0 issues;不一致 → 按 diff hunk 生成 per-line issues。
+# style/indent 走配置链(模块级覆盖 > 环境变量 > DEFAULT_CONFIG > 默认),
+# 由 main.py 在 __init__ 时注入环境变量(CLANG_FORMAT_STYLE / CLANG_FORMAT_INDENT)。
 
 
-def _find_cpplint() -> list:
-    """查找 cpplint 可执行路径：优先 PATH，备选 python -m cpplint。"""
-    if shutil.which("cpplint"):
-        return ["cpplint"]
-    try:
-        subprocess.run(
-            [_get_console_python(), "-m", "cpplint", "--version"],
-            capture_output=True,
-            timeout=5,
-            check=True,
-            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
-            **_NO_WINDOW_KWARGS,
+def _get_clang_format_style_config() -> tuple[str, int]:
+    """读取 clang-format 风格配置。优先级:模块级覆盖 > 环境变量 > DEFAULT_CONFIG > 默认。
+
+    允许测试通过 ``code_check.CLANG_FORMAT_STYLE = "google"`` /
+    ``code_check.CLANG_FORMAT_INDENT = 2`` 临时覆盖。
+    """
+    style: str | None = None
+    indent: int | None = None
+
+    # 1) 模块级覆盖
+    module_style = globals().get("CLANG_FORMAT_STYLE")
+    if isinstance(module_style, str) and module_style:
+        style = module_style
+    module_indent = globals().get("CLANG_FORMAT_INDENT")
+    if isinstance(module_indent, int) and 1 <= module_indent <= 16:
+        indent = module_indent
+
+    # 2) 环境变量(main.py 在 __init__ 时注入)
+    if style is None:
+        env_style = os.environ.get("CLANG_FORMAT_STYLE", "")
+        if env_style:
+            style = env_style
+    if indent is None:
+        env_indent = os.environ.get("CLANG_FORMAT_INDENT", "")
+        if env_indent:
+            try:
+                candidate = int(env_indent)
+                if 1 <= candidate <= 16:
+                    indent = candidate
+            except ValueError:
+                pass
+
+    # 3) DEFAULT_CONFIG / 4) 硬编码默认
+    if style is None or indent is None:
+        try:
+            from ._config import DEFAULT_CONFIG
+
+            if style is None:
+                cfg_style = DEFAULT_CONFIG.get("default_style")
+                style = str(cfg_style) if cfg_style else "llvm"
+            if indent is None:
+                try:
+                    indent = int(DEFAULT_CONFIG.get("default_indent") or 4)
+                except (TypeError, ValueError):
+                    indent = 4
+        except Exception:
+            style = style or "llvm"
+            indent = indent or 4
+    return style, indent
+
+
+def _clang_format_issues_from_diff(before_text: str, after_text: str) -> list[dict]:
+    """对比原文与 clang-format 输出,按 diff hunk 生成 per-line issues。
+
+    issue 带 ``line`` 字段(原文件行号),兼容 _add_context() 上下文附加逻辑。
+    """
+    issues: list[dict] = []
+    before_lines = before_text.splitlines()
+    after_lines = after_text.splitlines()
+    matcher = difflib.SequenceMatcher(a=before_lines, b=after_lines)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        # insert 在文件末尾时 i1 可能越界,clamp 到合法行号
+        line = min(max(i1 + 1, 1), max(len(before_lines), 1))
+        issues.append(
+            {
+                "line": line,
+                "category": "format",
+                "message": (
+                    f"代码未按 clang-format 风格格式化"
+                    f"(原第 {i1 + 1}-{i2} 行 → 格式化后第 {j1 + 1}-{j2} 行)"
+                ),
+            }
         )
-        return [_get_console_python(), "-m", "cpplint"]
-    except Exception:
-        return []
+    return issues
 
 
-def _run_cpplint_only(p: Path) -> dict:
-    """只跑 cpplint（不调 cppcheck）。供 linter='cpplint' 显式调用，以及作为
-    cppcheck 短路检查通过后的 fallback。"""
-    cpplint_cmd = _find_cpplint()
-    if not cpplint_cmd:
+def _run_clang_format_check(p: Path) -> dict:
+    """只跑 clang-format 格式检查（不调 cppcheck）。供 linter='clang-format'
+    显式调用，以及作为 cppcheck 短路检查通过后的 fallback。"""
+    clang_format_cmd = _find_clang_format()
+    if not clang_format_cmd:
         return proposal_reply(
             False,
-            "cpplint 未安装，无法检查 C/C++ 文件。请运行: pip install cpplint",
-            error="cpplint 未安装",
+            "clang-format 未安装，无法检查 C/C++ 文件格式。"
+            "请运行: pip install clang-format",
+            error="clang-format 未安装",
             evidence={"cpp_file": str(p)},
-            options=["pip install cpplint", "切换到 linter=ruff 不适用（仅 Python）"],
+            options=[
+                "pip install clang-format",
+                "切换到 linter=ruff 不适用（仅 Python）",
+            ],
         )
+
+    style, indent = _get_clang_format_style_config()
+    args = clang_format_cmd + _clang_format_flags(p, style=style, indent=indent)
+    before_bytes = p.read_bytes()
+    before_text, _ = _decode_text_bytes(before_bytes)
     try:
         r = subprocess.run(
-            cpplint_cmd + [str(p)],
+            args,
+            input=before_bytes,
             capture_output=True,
-            text=True,
-            # WHY: cpplint 是 Python 写的，stdout/stderr 默认 utf-8；但用户的
-            # 中文源码/注释、文件路径被 cpplint 印出时，Windows 下走控制台编码。
-            # 用 detect_console_encoding() 自动适配，与 cppcheck 保持一致。
-            encoding=detect_console_encoding(),
-            errors="replace",
             timeout=30,
             # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
             **_NO_WINDOW_KWARGS,
         )
-        # cpplint 把 issues 写到 STDERR，把 "Done processing" + "Total errors" 写到 STDOUT。
-        # 早期版本只用 r.stdout 解析时漏掉了所有 issues（count=0 但 cpplint_total_reported>0）。
-        # 合并两流后用同一套正则解析，对未来 stream 分配变化也保持兼容。
-        combined = (r.stderr or "") + "\n" + (r.stdout or "")
-        issues, total_reported = _parse_cpplint_output(combined)
-
-        if r.returncode == 0 and not issues:
-            result = {"ok": True, "linter": "cpplint", "issues": [], "count": 0}
-        else:
-            result = {
-                "ok": True,
-                "linter": "cpplint",
-                "issues": issues,
-                "count": len(issues),
-            }
-            if total_reported is not None and total_reported != len(issues):
-                result["cpplint_total_reported"] = total_reported
-            if issues:
-                result["proposal"] = f"cpplint 发现 {len(issues)} 个问题"
-                result["options"] = ["逐个修复", "确认是否有意为之"]
-        return result
     except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "cpplint 超时"}
+        return {"ok": False, "error": "clang-format 超时"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+    if r.returncode != 0:
+        # clang-format 无法解析(如语法错误):stderr 摘要作为 syntax issue 返回,
+        # 不抛异常中断会话
+        err_text, _ = _decode_text_bytes(r.stderr or b"")
+        issue = {
+            "line": 1,
+            "category": "syntax",
+            "message": f"clang-format 解析失败: {err_text.strip()[:300]}",
+        }
+        return {
+            "ok": True,
+            "linter": "clang-format",
+            "issues": [issue],
+            "count": 1,
+            "proposal": "clang-format 无法解析文件(可能存在语法错误)",
+            "options": ["先修复语法错误", "确认文件类型是否正确"],
+        }
+
+    after_text, _ = _decode_text_bytes(r.stdout or b"")
+    issues = _clang_format_issues_from_diff(before_text, after_text)
+    result: dict = {
+        "ok": True,
+        "linter": "clang-format",
+        "issues": issues,
+        "count": len(issues),
+    }
+    if issues:
+        result["proposal"] = f"clang-format 发现 {len(issues)} 处格式差异"
+        result["options"] = ["运行 code_format 自动修复", "逐个修复"]
+    return result
 
 
 def _filter_cppcheck_by_mode(result: dict | None, mode: str) -> dict:
     """按 shortcircuit 模式过滤 cppcheck issues。
 
-    用途：_run_cpplint 入口需要按 mode 判断"是否有硬错误"以决定是否短路。
+    用途：_run_clang_format 入口需要按 mode 判断"是否有硬错误"以决定是否短路。
     merge 模式不短路时，**不**调用此函数，直接用 raw cppcheck 全部 issues。
     """
     if result is None:
@@ -624,7 +710,7 @@ def _filter_cppcheck_by_mode(result: dict | None, mode: str) -> dict:
         "count": len(issues),
         "proposal": (
             f"cppcheck 发现 {len(issues)} 条代码正确性问题；"
-            f"cpplint 发现 {len(suppressed)} 条{suppressed_desc} 代码风格问题 "
+            f"另有 {len(suppressed)} 条{suppressed_desc} 提示被短路模式过滤 "
         ),
         "options": ["逐个修复", "确认是否有意为之"],
         "cppcheck_suppressed": [
@@ -665,7 +751,7 @@ def _run_cppcheck_only(
     return r
 
 
-def _run_cpplint(
+def _run_clang_format(
     p: Path,
     *,
     cppcheck_enable: list[str] | None = None,
@@ -674,8 +760,8 @@ def _run_cpplint(
     """auto 模式下的 C/C++ 入口。
 
     根据 shortcircuit 模式分派：
-      - merge:   两个工具都跑，组装分组输出（linters.cppcheck + linters.cpplint）
-      - 其它:    原短路逻辑（cppcheck 有问题就立即返回，否则跑 cpplint）
+      - merge:   两个工具都跑，组装分组输出（linters.cppcheck + linters.clang_format）
+      - 其它:    原短路逻辑（cppcheck 有问题就立即返回，否则跑 clang-format）
     """
     mode = (
         _get_shortcircuit_mode()
@@ -695,16 +781,16 @@ def _run_cpplint(
                 _add_context(p, cppcheck_filtered["issues"])
             return cppcheck_filtered
 
-    # 不短路：跑 cpplint，两个结果合并
+    # 不短路：跑 clang-format 格式检查，两个结果合并
     # 合并用 cppcheck 全部 severity（不应用 mode 过滤），让 LLM 看到所有提示
-    cpplint_result = _run_cpplint_only(p)
-    return _merge_linter_results(p, cppcheck_raw, cpplint_result)
+    clang_format_result = _run_clang_format_check(p)
+    return _merge_linter_results(p, cppcheck_raw, clang_format_result)
 
 
 def _extract_linter_block(result, expected_linter: str) -> dict:
     """把单工具 result 转换为 merge 模式的 block 结构。
 
-    用于 _merge_linter_results：把 _run_cppcheck / _run_cpplint_only 的返回值
+    用于 _merge_linter_results：把 _run_cppcheck / _run_clang_format_check 的返回值
     统一包装成前端易于分组的 schema（含 available / ok / issues / count / error）。
     """
     if result is None:
@@ -726,7 +812,7 @@ def _extract_linter_block(result, expected_linter: str) -> dict:
     }
 
 
-def _merge_linter_results(p: Path, cppcheck_result, cpplint_result) -> dict:
+def _merge_linter_results(p: Path, cppcheck_result, clang_format_result) -> dict:
     """merge 模式：两个工具都跑，把结果组装成分组输出。
 
     Schema（最简化）：
@@ -735,36 +821,36 @@ def _merge_linter_results(p: Path, cppcheck_result, cpplint_result) -> dict:
       - 取消顶层 issues/count：避免与 linters.* 重复，消除"哪个是权威源"歧义
     """
     cpp_block = _extract_linter_block(cppcheck_result, "cppcheck")
-    cp_block = _extract_linter_block(cpplint_result, "cpplint")
+    cf_block = _extract_linter_block(clang_format_result, "clang-format")
 
     # 防止 None issues
     cpp_block["issues"] = list(cpp_block.get("issues") or [])
-    cp_block["issues"] = list(cp_block.get("issues") or [])
+    cf_block["issues"] = list(cf_block.get("issues") or [])
 
     # merge 模式特有：两个工具的 issues 都附加 code context（统一为前 5 条）
     if cpp_block["issues"]:
         _add_context(p, cpp_block["issues"])
-    if cp_block["issues"]:
-        _add_context(p, cp_block["issues"])
+    if cf_block["issues"]:
+        _add_context(p, cf_block["issues"])
 
     # 给每条 issue 加 _linter 标记，方便 LLM 单条引用时识别来源
     for iss in cpp_block["issues"]:
         iss["_linter"] = "cppcheck"
-    for iss in cp_block["issues"]:
-        iss["_linter"] = "cpplint"
+    for iss in cf_block["issues"]:
+        iss["_linter"] = "clang-format"
 
     # 构造 proposal（LLM 决策参考；唯一允许在 merge 顶层出现的"摘要"字段）
-    total_count = cpp_block["count"] + cp_block["count"]
-    available_count = sum(1 for b in (cpp_block, cp_block) if b["available"])
+    total_count = cpp_block["count"] + cf_block["count"]
+    available_count = sum(1 for b in (cpp_block, cf_block) if b["available"])
 
     if total_count == 0:
         if available_count == 2:
-            proposal_text = "cppcheck + cpplint 都通过"
+            proposal_text = "cppcheck + clang-format 都通过"
         else:
             proposal_text = f"通过（{available_count}/2 个工具可用）"
     else:
         parts = []
-        for name, block in (("cppcheck", cpp_block), ("cpplint", cp_block)):
+        for name, block in (("cppcheck", cpp_block), ("clang-format", cf_block)):
             if block["available"] and block["count"] > 0:
                 parts.append(f"{name} {block['count']}")
         proposal_text = f"{' + '.join(parts)} 共 {total_count} 个问题"
@@ -774,45 +860,11 @@ def _merge_linter_results(p: Path, cppcheck_result, cpplint_result) -> dict:
         "linter": "merge",
         "linters": {
             "cppcheck": cpp_block,
-            "cpplint": cp_block,
+            "clang_format": cf_block,
         },
         "proposal": proposal_text,
     }
 
-
-def _parse_cpplint_output(stdout: str) -> tuple[list[dict], int | None]:
-    """解析 cpplint 输出为 issues 列表。
-
-    cpplint 会在每行打印 "<path>:<lineno>:  <message>  [<category>] [<level>]"，
-    末尾会有 "Total errors found: N"。解析失败的行会被忽略。
-
-    Returns:
-        (issues, total_or_None)  total 是 cpplint 自己报告的总数
-    """
-    issues: list[dict] = []
-    total: int | None = None
-    for line in stdout.splitlines():
-        m_total = _CPPLINT_TOTAL_RE.search(line)
-        if m_total:
-            try:
-                total = int(m_total.group(1))
-            except (ValueError, IndexError):
-                pass
-            continue
-        m = _CPPLINT_LINE_RE.match(line)
-        if m:
-            try:
-                issues.append(
-                    {
-                        "line": int(m.group("line")),
-                        "message": m.group("message").strip(),
-                        "category": m.group("category").strip(),
-                        "level": int(m.group("level")),
-                    }
-                )
-            except (ValueError, IndexError):
-                continue
-    return issues, total
 
 
 # ── 通用：为前 N 个 issue 附加代码上下文 ─────────────
@@ -837,7 +889,7 @@ def _get_line_context(
 
 
 def _add_context(p: Path, issues: list, max_issues: int = _MAX_CONTEXT_ISSUES) -> None:
-    """为前 max_issues 个问题附加代码上下文。ruff/cpplint 输出位置字段名不同，兼容处理。"""
+    """为前 max_issues 个问题附加代码上下文。各 linter 输出位置字段名不同，兼容处理。"""
     for issue in issues[:max_issues]:
         line_num = issue.get("line")
         if not line_num:

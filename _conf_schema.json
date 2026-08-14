@@ -41,7 +41,7 @@
   },
   "code_check": {
     "description": "code_check — Python/C/C++ 语法+风格合并检查",
-    "hint": "Python 用 ruff,C/C++ 用 cppcheck+cpplint。",
+    "hint": "Python 用 ruff,C/C++ 用 cppcheck(正确性)+clang-format(格式,与 code_format 同源)。",
     "type": "object",
     "items": {
       "cppcheck_path": {
@@ -68,20 +68,21 @@
   },
   "code_format": {
     "description": "code_format — 源代码自动格式化(写入工具)",
-    "hint": "Python 用 ruff format, C/C++/Java/JS/TS/C# 用 AStyle via stdin/stdout。默认不勾选,需在 enabled_tools 显式启用。",
+    "hint": "Python 用 ruff format, C/C++/Java/JS/TS/C# 用 clang-format via stdin/stdout(项目内 .clang-format 文件优先)。默认不勾选,需在 enabled_tools 显式启用。",
     "type": "object",
     "items": {
       "default_style": {
-        "description": "astyle 默认风格 (仅 C/C++/Java/JS/TS/C# 生效)",
-        "hint": "allman=Linux kernel / google=Google C++ / kr=K&R / stroustrup=Stroustrup / linux=Linux kernel close-brace",
+        "description": "clang-format 默认风格 (仅 C/C++/Java/JS/TS/C# 生效;项目内 .clang-format 文件优先于此配置)",
+        "hint": "clang-format 预设:llvm / google / chromium / microsoft / webkit / gnu。兼容 legacy astyle 风格名(allman/google/kr/linux/stroustrup 等,自动映射到 clang-format 预设)。",
         "type": "string",
-        "options": ["allman", "google", "kr", "linux", "stroustrup",
+        "options": ["llvm", "google", "chromium", "microsoft", "webkit", "gnu",
+                    "allman", "kr", "linux", "stroustrup",
                     "whitesmith", "horstmann", "ratliff", "vtk", "java", "none"],
-        "default": "allman"
+        "default": "llvm"
       },
       "default_indent": {
-        "description": "astyle 默认缩进空格数 (1-16)",
-        "hint": "仅 astyle 生效;ruff 用自身默认配置。",
+        "description": "clang-format 默认缩进空格数 (1-16)",
+        "hint": "仅在无 .clang-format 文件时作为 fallback-style 的 IndentWidth 生效;ruff 用自身默认配置。",
         "type": "int",
         "default": 4,
         "min": 1,

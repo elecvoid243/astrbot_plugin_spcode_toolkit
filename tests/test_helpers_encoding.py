@@ -242,35 +242,42 @@ def test_code_check_cppcheck_uses_detected_encoding():
     assert result["ok"] is True
 
 
-def test_code_check_cpplint_uses_detected_encoding():
-    """code_check._run_cpplint_only 调用 subprocess 时应使用探测的编码。"""
+def test_code_check_clang_format_uses_binary_pipe():
+    """code_check._run_clang_format_check 调用 subprocess 时应使用二进制管道。
+
+    2026-08-14 (cpplint → clang-format 迁移):clang-format 对 stdin/stdout
+    字节流透明传递(不重编码),因此以 bytes 输入、不传 text/encoding,
+    GBK 源文件保持字节级保真。
+    """
     from tools import code_check
 
     fake_file = Path(__file__)
     captured = {}
 
     def fake_run(*args, **kwargs):
+        captured["input"] = kwargs.get("input")
+        captured["text"] = kwargs.get("text")
         captured["encoding"] = kwargs.get("encoding")
-        captured["errors"] = kwargs.get("errors")
         import subprocess as _sp
 
-        # cpplint 输出格式: <path>:<lineno>:  <message>  [<category>] [<level>]
-        line = "src/foo.cpp:42:  中文提示信息  [whitespace] [4]\n"
         return _sp.CompletedProcess(
             args=args[0] if args else [],
             returncode=0,
-            stdout="Done processing.\nTotal errors found: 1\n",
-            stderr=line,
+            stdout=kwargs.get("input", b""),  # 原样返回 → 0 issues
+            stderr=b"",
         )
 
     with patch.object(code_check.subprocess, "run", side_effect=fake_run):
-        with patch.object(code_check, "_find_cpplint", return_value=["fake-cpplint"]):
-            result = code_check._run_cpplint_only(fake_file)
+        with patch.object(
+            code_check, "_find_clang_format", return_value=["fake-clang-format"]
+        ):
+            result = code_check._run_clang_format_check(fake_file)
 
-    assert captured.get("encoding") is not None, "_run_cpplint_only 必须传 encoding"
-    assert captured["encoding"] == detect_console_encoding()
+    assert isinstance(captured.get("input"), bytes), "clang-format stdin 必须是 bytes"
+    assert not captured.get("text"), "clang-format 调用不应传 text=True"
+    assert captured.get("encoding") is None, "clang-format 调用不应传 encoding"
     assert result["ok"] is True
-    assert result["count"] >= 1
+    assert result["count"] == 0
 
 
 # ── 辅助 ──────────────────────────────────────────────
