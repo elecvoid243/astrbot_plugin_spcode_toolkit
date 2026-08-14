@@ -67,6 +67,7 @@ async def handle(
 
     explicit_remote = body.get("remote")
     explicit_branch = body.get("branch")
+    explicit_remote_branch = body.get("remote_branch")
     if explicit_remote is not None and not _is_valid_remote_name(explicit_remote):
         return _failure(
             ReasonCode.INVALID_REMOTE,
@@ -75,6 +76,14 @@ async def handle(
     if explicit_branch is not None and not _is_valid_ref_name(explicit_branch):
         return _failure(
             ReasonCode.INVALID_BRANCH,
+            branch=str(explicit_branch or ""),
+        )
+    if explicit_remote_branch is not None and not _is_valid_ref_name(
+        explicit_remote_branch
+    ):
+        return _failure(
+            ReasonCode.INVALID_BRANCH,
+            remote=str(explicit_remote or ""),
             branch=str(explicit_branch or ""),
         )
 
@@ -164,7 +173,12 @@ async def handle(
         set_upstream = upstream is None
         if set_upstream:
             push_args.append("-u")
-        push_args.extend([remote, branch])
+        # remote_branch 显式指定且与本地分支不同名时，用 refspec `local:remote`
+        # 推送到远端不同名分支；否则保持 `git push <remote> <branch>`（同名）。
+        if explicit_remote_branch is not None and explicit_remote_branch != branch:
+            push_args.extend([remote, f"{branch}:{explicit_remote_branch}"])
+        else:
+            push_args.extend([remote, branch])
 
     result = await _run_git_async(
         push_args,
@@ -192,12 +206,13 @@ async def handle(
     pushed = not _is_everything_up_to_date(stdout, stderr)
     local_sha = await _read_head_sha(git_bin, directory)
     new_upstream = await _read_upstream(git_bin, directory)
-    remote_branch = f"{remote}/{branch}"
+    actual_remote_branch = explicit_remote_branch or branch
+    remote_branch_label = f"{remote}/{actual_remote_branch}"
 
     logger.info(
         "git-push: %s -> %s (pushed=%s, set_upstream=%s, umo=%s)",
         branch,
-        remote_branch,
+        remote_branch_label,
         pushed,
         set_upstream,
         effective_umo,
@@ -210,7 +225,7 @@ async def handle(
             set_upstream=set_upstream,
             remote=remote,
             branch=branch,
-            remote_branch=remote_branch,
+            remote_branch=remote_branch_label,
             local_sha=local_sha,
             upstream=new_upstream,
             directory=directory,

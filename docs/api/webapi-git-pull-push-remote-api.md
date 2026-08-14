@@ -243,6 +243,7 @@ async function pullProject(options: {
 {
   "remote": "origin",
   "branch": "main",
+  "remote_branch": "main",
   "umo": "webchat:FriendMessage:...",
   "worktree": "F:/workspace/project"
 }
@@ -251,7 +252,8 @@ async function pullProject(options: {
 | 字段 | 类型 | 必传 | 默认 | 说明 |
 |------|------|------|------|------|
 | `remote` | `string` | 否 | 当前 upstream remote；否则 `origin` | remote 必须已存在 |
-| `branch` | `string` | 否 | 当前本地分支 | detached HEAD 返回 `detached_head` |
+| `branch` | `string` | 否 | 当前本地分支 | 要推送的**本地**分支；detached HEAD 返回 `detached_head` |
+| `remote_branch` | `string` | 否 | 与 `branch` 同名 | 远端**目标**分支名；与 `branch` 不同时执行 `git push <remote> <branch>:<remote_branch>` |
 | `umo` | `string` | 否 | 最近加载项目 | 标准参数 |
 | `worktree` | `string` | 否 | primary worktree | 标准参数 |
 
@@ -259,6 +261,7 @@ async function pullProject(options: {
 
 - 已有 upstream 且未显式指定 remote/branch：执行普通 `git push`。
 - 显式指定 remote/branch：执行 `git push <remote> <branch>`，不改变既有 upstream。
+- `remote_branch` 与 `branch` 不同名：执行 `git push <remote> <branch>:<remote_branch>`（refspec），推送到远端不同名分支。
 - 没有 upstream：执行 `git push -u <remote> <branch>`。
 - 不支持 force push，不推送 tags。
 
@@ -328,13 +331,22 @@ async function pullProject(options: {
 ### 3.5 fetch 示例
 
 ```ts
-async function pushProject(options: { umo?: string; worktree?: string }) {
+async function pushProject(options: {
+  umo?: string;
+  worktree?: string;
+  remote?: string;
+  branch?: string;
+  remoteBranch?: string;
+}) {
   const response = await fetch("/spcode/git-push", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       umo: options.umo,
       worktree: options.worktree,
+      remote: options.remote,
+      branch: options.branch,
+      remote_branch: options.remoteBranch,
     }),
   });
   const envelope = await response.json();

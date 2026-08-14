@@ -161,3 +161,38 @@ async def test_invalid_body():
     plugin = _make_plugin()
     result = await handle(plugin, body=None)
     assert result["data"]["reason"] == "invalid_body"
+
+
+async def test_push_to_explicit_remote_branch(tmp_path: Path):
+    """显式 remote_branch 时推送到远端不同名分支 (refspec local:remote)。"""
+    bare = tmp_path / "remote.git"
+    _init_bare(bare)
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "remote", "add", "origin", str(bare))
+    plugin = _make_plugin()
+    umo = _load(repo, "u:push-remote-branch")
+    _commit(repo, "a.txt", "a")
+
+    result = await handle(
+        plugin,
+        umo=umo,
+        body={
+            "remote": "origin",
+            "branch": "main",
+            "remote_branch": "release",
+        },
+    )
+
+    assert result["data"]["success"] is True
+    assert result["data"]["pushed"] is True
+    assert result["data"]["remote_branch"] == "origin/release"
+    heads = _git(repo, "ls-remote", "--heads", str(bare))
+    assert "refs/heads/release" in heads
+
+
+async def test_invalid_remote_branch():
+    """remote_branch 含非法 ref 字符 → invalid_branch。"""
+    plugin = _make_plugin()
+    result = await handle(plugin, body={"remote_branch": "bad branch"})
+    assert result["data"]["reason"] == "invalid_branch"
