@@ -63,7 +63,7 @@ class CodegraphManager:
         1. 校验目录(必须存在)
         2. 更新 plugin._config["codegraph_project"]
         3. 如果 MCP server 正在跑,重启它以应用新的 --path 参数
-        4. 后续 LLM 调用的 codegraph_* 工具会以新项目为默认根
+        4. 后续 LLM 调用的 codegraph_explore 会以新项目为默认根
         """
         # 1. 路径校验(必须存在的目录)
         target = resolve_project_path(
@@ -138,7 +138,8 @@ class CodegraphManager:
             _state.set_active_project_path(target_str)
             yield event.plain_result(
                 f"✅ codegraph 已切换到新项目: {target_str}\n"
-                "   后续 LLM 调用的 codegraph_* 工具默认在此目录下操作"
+                "   后续 LLM 调用的 codegraph_explore 默认在此目录下操作"
+                "(codegraph >= 1.5 默认仅暴露该工具)"
             )
             logger.info(f"codegraph MCP 已重启,新 --path: {target_str}")
         except Exception as e:
@@ -281,8 +282,8 @@ class CodegraphManager:
                 if init:
                     yield event.plain_result(
                         f"✅ codegraph 初始化完成: {target_str}\n"
-                        f"   下一步:在对话中用 codegraph_status 验证索引,"
-                        f"或直接用 codegraph_explore 触发懒加载建索引"
+                        f"   下一步:在对话中调用 codegraph_explore 使用索引"
+                        f"(codegraph >= 1.5 默认仅暴露该工具)"
                     )
                 else:
                     yield event.plain_result(

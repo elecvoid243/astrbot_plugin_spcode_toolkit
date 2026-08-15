@@ -26,12 +26,17 @@ PROJECT_PATH_GUIDANCE_TEMPLATE: str = """
 在对项目进行修改、写入等操作时，优先使用git worktree（如果可用）
 """
 
+# v2.24.1 (2026-08-15): codegraph >= 1.5 默认仅暴露 codegraph_explore 一个工具
+# (官方有意裁剪, tools.ts DEFAULT_MCP_TOOLS = {'explore'}),故指引从 codegraph_*
+# 泛称收紧为 codegraph_explore,避免 LLM 尝试调用不可见的 codegraph_node/status 等。
+# 2026-08-15: 第二条改为"永远显式传 projectPath"——避免 LLM 省略参数时
+# 落到 --path 默认项目之外的上下文(跨项目/多项目场景更可靠)。
 PROJECT_CODEGRAPH_GUIDANCE: str = f"""
 {PROJECT_GUIDANCE_MARKER}
 A codegraph project is loaded. When dealing with the code for this project:
-- Priority use `codegraph_*` tool (e.g. codegraph_explore) for code lookup, call chain analysis, and symbol localization.
-- When the code to look up is not in the current project directory, explicitly provide the path.
-- When the codegraph_* tool is unavailable or when viewing non code index files (e.g. configurations, logs), return to a generic lookup tool like `astrbot_file_grep_tool`
+- Priority use the `codegraph_explore` tool for code lookup, call chain analysis, and symbol localization.
+- Always explicitly pass the `projectPath` argument in every `codegraph_explore` call.
+- When `codegraph_explore` is unavailable or when viewing non code index files (e.g. configurations, logs), return to a generic lookup tool like `astrbot_file_grep_tool`
 """
 
 

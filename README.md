@@ -11,7 +11,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | 类别 | 能力 |
 |------|------|
 | 代码质量 | `code_check` 语法+风格合并检查；`code_format` 源码自动格式化 |
-| 代码理解 | 通过 codegraph 官方 MCP server 注入 8 个 `codegraph_*` 语义搜索/调用链工具 |
+| 代码理解 | 通过 codegraph 官方 MCP server 注入 `codegraph_explore` 语义搜索工具（codegraph ≥ 1.5 默认仅暴露该工具） |
 | 文件操作 | `astrbot_file_remove` 沙箱化删除；`astrbot_file_compare` 结构化差异比较 |
 | 文件搜索 | `es_search` Everything/locate/fd/Python 兜底文件名搜索 |
 | 任务管理 | `todo_*` 6 工具，LLM 自我管理跨会话持久化任务清单 |
@@ -38,9 +38,9 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | `todo_create` / `todo_query` / `todo_add` / `todo_update` / `todo_delete` / `todo_clear` | 任务管理（6 个，组别名 `todo_list`） | LLM 自我管理任务清单；v2.12 把 `todo_modify` 拆为 3 个独立工具，消除 `mode` 误用 |
 | `astrbot_inta_shell_start` / `_send` / `_read` / `_stop` / `_list` | 交互式 Shell（5 个，组别名 `inta_shell`） | 持久子进程多轮双向通信 |
 
-### MCP 工具（codegraph，8 个）
+### MCP 工具（codegraph，默认 1 个）
 
-由 codegraph 官方 MCP server 自动注入：`codegraph_search` / `_callers` / `_callees` / `_impact` / `_node` / `_explore` / `_status` / `_files`
+由 codegraph 官方 MCP server 自动注入。**codegraph ≥ 1.5 默认只暴露 `codegraph_explore` 一个工具**（官方有意裁剪，`DEFAULT_MCP_TOOLS = {'explore'}`）；其余 7 个（`codegraph_search` / `_callers` / `_callees` / `_impact` / `_node` / `_status` / `_files`）handler 仍可用但默认不列出，需设置环境变量 `CODEGRAPH_MCP_TOOLS=explore,node,search,...` 重新启用。
 
 ### vivado-mcp 集成 (v2.21+)
 
@@ -211,7 +211,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | `code_check` (C/C++) | cppcheck（先跑正确性检查）+ clang-format（后跑格式检查） | 返回安装提示 |
 | `code_format` (Python) | ruff | 返回安装提示 |
 | `code_format` (C/C++/Java/JS/TS/C#) | clang-format | 返回安装提示 |
-| `codegraph_*` (8 个) | `@colbymchenry/codegraph` (npm) + MCP server 已配置 | 8 个工具全部不在 LLM 工具列表；插件其它工具照常 |
+| `codegraph_explore` (默认 1 个) | `@colbymchenry/codegraph` (npm) + MCP server 已配置 | 工具不在 LLM 工具列表；插件其它工具照常 |
 | `es_search` (Windows) | Everything + es.exe | 返回安装提示 |
 | `es_search` (Linux/macOS) | locate / fd / Python 兜底 | 自动降级到 Python `os.walk` |
 
@@ -357,7 +357,7 @@ todo_clear()
 
 **重复 load 防护**：当前会话已加载项目时再次 `/project load` 会被拒绝（需先 `/project unload`），避免半残状态。
 
-**注入行为**：加载成功后，system_prompt 末尾会追加"优先使用 codegraph 工具组"指引，引导 LLM 在该项目中调用 `codegraph_search` / `codegraph_explore` / `codegraph_callers` 等高级语义搜索，而不是退而使用低效的 `astrbot_file_grep_tool`。
+**注入行为**：加载成功后，system_prompt 末尾会追加"优先使用 codegraph 工具"指引，引导 LLM 在该项目中调用 `codegraph_explore` 进行语义搜索（codegraph ≥ 1.5 默认仅暴露该工具），而不是退而使用低效的 `astrbot_file_grep_tool`。
 
 ### /plan 与 /build - Plan/Build 模式（v2.8）
 
@@ -386,7 +386,7 @@ todo_clear()
 
 ## codegraph 集成
 
-[codegraph](https://github.com/colbymchenry/codegraph) 是基于 SQLite 知识图谱的代码智能工具。spcode 插件自动启动 codegraph 官方 MCP server，把 8 个 `codegraph_*` 工具注入到 LLM。
+[codegraph](https://github.com/colbymchenry/codegraph) 是基于 SQLite 知识图谱的代码智能工具。spcode 插件自动启动 codegraph 官方 MCP server，把 `codegraph_explore` 工具注入到 LLM（codegraph ≥ 1.5 默认仅暴露该工具，其余 `codegraph_*` 需设 `CODEGRAPH_MCP_TOOLS` 环境变量重新启用）。
 
 ### 安装
 
@@ -413,9 +413,9 @@ codegraph index       # 可选--首次 explore 调用会懒加载
 
 **Linux/macOS**：指向含 `node` 和 `codegraph.js` 的目录。
 
-填好后**重启 AstrBot**，spcode 插件会启动 MCP server 并把 8 个 `codegraph_*` 工具注入到 LLM。
+填好后**重启 AstrBot**，spcode 插件会启动 MCP server 并把 `codegraph_explore` 工具注入到 LLM。
 
-> **如果未配置 `codegraph_install_dir`**：MCP server 不会启动（不会自动扫描系统），LLM 看不到 8 个 `codegraph_*` 工具。`/codegraph init|uninit` 命令仍可通过 auto-detect 工作（前提是 `codegraph` 在系统 PATH 中）。
+> **如果未配置 `codegraph_install_dir`**：MCP server 不会启动（不会自动扫描系统），LLM 看不到 `codegraph_explore` 工具。`/codegraph init|uninit` 命令仍可通过 auto-detect 工作（前提是 `codegraph` 在系统 PATH 中）。
 
 ### 管理员命令
 
@@ -425,7 +425,7 @@ codegraph index       # 可选--首次 explore 调用会懒加载
 /codegraph set D:/projects/my-app          # 修改默认项目根目录
 ```
 
-`/codegraph set` 的作用：把 `codegraph_project` 改为新目录。如果当前 MCP server 在跑，spcode 会自动重启它以应用新 `--path` 参数；之后所有 LLM 调用的 `codegraph_*` 工具默认在新目录下操作。
+`/codegraph set` 的作用：把 `codegraph_project` 改为新目录。如果当前 MCP server 在跑，spcode 会自动重启它以应用新 `--path` 参数；之后 LLM 调用的 `codegraph_explore` 默认在新目录下操作。
 
 ## AGENTS.md 管理
 

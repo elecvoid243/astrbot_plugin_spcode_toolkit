@@ -132,13 +132,16 @@ _PROJECT_GUIDANCE_MARKER: str = "# Use Codegraph"
 
 
 # /project load 后注入到 system_prompt 末尾的指引。
-# 设计目标:让 LLM 优先使用 codegraph 工具组而非 astrbot_file_grep_tool,
+# 设计目标:让 LLM 优先使用 codegraph 工具而非 astrbot_file_grep_tool,
 # 提升代码搜索/分析的效率与准确性(已建好语义索引,无需 grep 全文本)。
+# v2.24.1 (2026-08-15): codegraph >= 1.5 默认仅暴露 codegraph_explore,
+# 指引同步从 codegraph_* 泛称收紧(与 _guidance_text.PROJECT_CODEGRAPH_GUIDANCE 一致)。
 _PROJECT_CODEGRAPH_GUIDANCE: str = f"""
 {_PROJECT_GUIDANCE_MARKER}
 A codegraph project is loaded. When dealing with the code for this project:
-- Priority use codegraph_* tool (e.g. codegraph_explore) for code lookup, call chain analysis, and symbol localization.
-- When the codegraph_* tool is unavailable or when viewing non code index files (e.g. configurations, logs), return to a generic lookup tool like `astrbot_file_grep_tool`
+- Priority use the `codegraph_explore` tool for code lookup, call chain analysis, and symbol localization.
+- Always explicitly pass the `projectPath` argument in every `codegraph_explore` call.
+- When the codegraph tool is unavailable or when viewing non code index files (e.g. configurations, logs), return to a generic lookup tool like `astrbot_file_grep_tool`
 """
 
 
