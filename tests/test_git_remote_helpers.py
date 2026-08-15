@@ -69,9 +69,7 @@ def test_remote_error_classification():
         _classify_remote_error("fatal: Could not resolve host example")
         == ReasonCode.NETWORK_ERROR
     )
-    assert (
-        _classify_remote_error("命令超时 (60.0s)") == ReasonCode.NETWORK_ERROR
-    )
+    assert _classify_remote_error("命令超时 (60.0s)") == ReasonCode.NETWORK_ERROR
     assert (
         _classify_remote_error("! [rejected] main -> main (non-fast-forward)")
         == ReasonCode.NON_FAST_FORWARD
@@ -101,6 +99,30 @@ def test_up_to_date_detection():
     assert not _is_already_up_to_date("Updating abc..def", "")
     assert _is_everything_up_to_date("", "Everything up-to-date\n")
     assert not _is_everything_up_to_date("main -> main", "")
+
+
+def test_remote_verbose_parse_fetch_wins():
+    """git remote -v 双行(fetch/push)解析, fetch URL 优先。"""
+    from tools.webapi.git_remotes import _parse_remote_verbose
+
+    tab = chr(9)
+    out = (
+        f"origin{tab}https://example.com/old.git (fetch)\n"
+        f"origin{tab}https://example.com/old.git (push)\n"
+        f"upstream{tab}git@github.com:o/u.git (push)\n"
+    )
+    parsed = _parse_remote_verbose(out)
+    assert parsed == [
+        {"name": "origin", "url": "https://example.com/old.git"},
+        {"name": "upstream", "url": "git@github.com:o/u.git"},
+    ]
+
+
+def test_remote_verbose_parse_ignores_garbage():
+    """空行 / 缺 tab 的行被忽略, 名称排序稳定。"""
+    from tools.webapi.git_remotes import _parse_remote_verbose
+
+    assert _parse_remote_verbose("  \nnot-a-remote-line\n") == []
 
 
 @pytest.mark.asyncio

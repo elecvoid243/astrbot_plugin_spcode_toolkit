@@ -91,7 +91,9 @@ from . import (
     git_merge,  # v2.22.0 (2026-07-28)
     git_pull,  # 2026-08-12 — POST git-pull
     git_push,  # 2026-08-12 — POST git-push
+    git_remote_remove,  # 2026-08-16 — POST git-remote-remove
     git_remote_set_url,  # 2026-08-12 — POST git-remote-set-url
+    git_remotes,  # 2026-08-16 — GET git-remotes
     git_repo_check,  # v2.18.0 (2026-07-16) - GET git 仓库探测
     git_revert,  # v2.17.0 (2026-07-16) - PR-G POST endpoint
     git_show,
@@ -455,6 +457,18 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "upsert git remote URL（存在则 set-url，不存在则 add）",
     ),
     (
+        "/spcode/git-remotes",  # 2026-08-16
+        ["GET"],
+        git_remotes.handle,
+        "列出已配置 git remote（name + url）",
+    ),
+    (
+        "/spcode/git-remote-remove",  # 2026-08-16
+        ["POST"],
+        git_remote_remove.handle,
+        "删除已配置 git remote",
+    ),
+    (
         "/spcode/code-check",  # 2026-08-12
         ["POST"],
         code_check.handle,
@@ -521,6 +535,8 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_pull": git_pull.handle,  # 2026-08-12
     "handle_post_git_push": git_push.handle,  # 2026-08-12
     "handle_post_git_remote_set_url": git_remote_set_url.handle,  # 2026-08-12
+    "handle_get_git_remotes": git_remotes.handle,  # 2026-08-16
+    "handle_post_git_remote_remove": git_remote_remove.handle,  # 2026-08-16
     "handle_post_code_check": code_check.handle,  # 2026-08-12
     "handle_post_code_format": code_format.handle,  # 2026-08-12
 }
@@ -622,6 +638,7 @@ def register_webapi_routes(plugin: SPCodeToolkit) -> None:
     2026-08-13: 55 -> 56 (+git-commit-amend)
     2026-08-15: 56 -> 57 (+home-directory GET /spcode/home-directory)
     2026-08-15: 57 -> 58 (+drives GET /spcode/drives)
+    2026-08-16: 58 -> 60 (+git-remotes GET +git-remote-remove POST)
     """
     for route, methods, handler, desc in ROUTES:
         try:
@@ -667,7 +684,9 @@ __all__ = [
     "git_log",
     "git_pull",  # 2026-08-12
     "git_push",  # 2026-08-12
+    "git_remote_remove",  # 2026-08-16
     "git_remote_set_url",  # 2026-08-12
+    "git_remotes",  # 2026-08-16
     "git_repo_check",  # v2.18.0
     "git_revert",  # v2.17.0
     "git_show",

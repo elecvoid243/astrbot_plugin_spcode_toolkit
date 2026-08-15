@@ -82,9 +82,7 @@ async def handle(
     effective_umo = ctx["umo"]
     git_bin = plugin._git_binary()
 
-    exists, current_url, probe_error = await _get_remote_url(
-        git_bin, directory, remote
-    )
+    exists, current_url, probe_error = await _get_remote_url(git_bin, directory, remote)
     if exists and current_url == url:
         action = "unchanged"
     else:
@@ -114,6 +112,23 @@ async def handle(
             )
         action = "added" if not exists else "updated"
 
+    # 2026-08-16 (elecvoid243): 成功响应附带当前已配置远端名列表。
+    # Dashboard 推送对话框的远端下拉据此即时刷新 —— 新 `remote add`
+    # 的远端在 fetch 前没有任何 refs/remotes/* 分支, 仅靠
+    # git-branches 的 for-each-ref 永远看不到它。
+    remotes: list[str] = []
+    list_result = await _run_git_async(
+        [git_bin, "-C", directory, "remote"],
+        encoding="utf-8",
+        timeout=5.0,
+    )
+    if list_result.get("ok"):
+        remotes = [
+            line.strip()
+            for line in (list_result.get("stdout") or "").splitlines()
+            if line.strip()
+        ]
+
     logger.info(
         "git-remote-set-url: %s %s (%s, umo=%s)",
         remote,
@@ -129,6 +144,7 @@ async def handle(
             action=action,
             remote=remote,
             url=url,
+            remotes=remotes,
             directory=directory,
             umo=effective_umo,
             worktree=directory,

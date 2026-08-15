@@ -309,6 +309,87 @@ def test_branches_etag_no_upstream_change_keeps_cache(tmp_path):
         _state.pop(umo)
 
 
+# ── v2.24 (2026-08-16) ETag 感知 remote 配置变化 ─────────────
+# 场景: ``git remote add / set-url`` 只改 .git/config —— HEAD /
+# porcelain / upstream_track 均不变 —— 若不把 ``git remote`` 输出
+# 拼入 ETag, dashboard 的 git-branches 持续命中 304, 推送对话框
+# 的远端列表(remoteNames)永不刷新。
+
+
+def test_branches_returns_configured_remotes(loaded_umo, existing_repo):
+    """响应携带 ``remotes`` 字段: git remote 配置的远端名列表。"""
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(existing_repo),
+            "remote",
+            "add",
+            "upstream",
+            "https://example.com/upstream.git",
+        ],
+        check=True,
+    )
+    plugin = _make_plugin()
+    result = _run(git_branches.handle(plugin, umo=loaded_umo))
+    assert result["data"]["reason"] is None
+    # existing_repo fixture 是本地仓库(无 origin), 只添加了 upstream。
+    assert result["data"]["remotes"] == ["upstream"], (
+        f"remotes 字段应列出已配置远端: {result['data']['remotes']!r}"
+    )
+
+
+def test_branches_etag_changes_after_remote_add(tmp_path):
+    """v2.24 修复: ``git remote add`` 后 ETag 必须变 + remotes 更新。"""
+    from tools.project import state as _state
+    from unittest.mock import patch
+
+    local_repo, _ = _setup_repo_with_remote(tmp_path)
+    umo = "test:branches:remoteadd"
+    _state.put(umo, {"directory": str(local_repo), "loaded_at": _time.time()})
+    try:
+        plugin = _make_plugin()
+
+        # ── 第 1 次:仅 origin,记录 ETag ──
+        r1 = _run(git_branches.handle(plugin, umo=umo))
+        etag_before = r1.headers.get("ETag")
+        assert etag_before, f"first response missing ETag: {dict(r1.headers)}"
+        assert r1["data"]["remotes"] == ["origin"]
+
+        # ── git remote add upstream:只改 .git/config, 不动 refs/worktree ──
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(local_repo),
+                "remote",
+                "add",
+                "upstream",
+                "https://example.com/upstream.git",
+            ],
+            check=True,
+        )
+
+        # ── 第 2 次: ETag 必须变 → 200 (非 304) ──
+        from astrbot.api import web
+        from tests.conftest import make_web_request_mock
+
+        with patch.object(web, "request", make_web_request_mock()):
+            r2 = _run(git_branches.handle(plugin, umo=umo))
+        etag_after = r2.headers.get("ETag")
+        assert etag_after, f"second response missing ETag: {dict(r2.headers)}"
+        assert etag_after != etag_before, (
+            f"v2.24 修复失效: remote add 后 ETag 未变 "
+            f"(before={etag_before!r}, after={etag_after!r}). "
+            f"dashboard 持续 304 命中 → 推送对话框远端列表不刷新。"
+        )
+        assert r2["data"]["remotes"] == ["origin", "upstream"], (
+            f"remotes 字段应包含新远端: {r2['data']['remotes']!r}"
+        )
+    finally:
+        _state.pop(umo)
+
+
 # ── 解析器 ────────────────────────────────────────────────
 
 

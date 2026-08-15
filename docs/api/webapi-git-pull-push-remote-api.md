@@ -395,6 +395,7 @@ URL 校验：
     "action": "updated",
     "remote": "origin",
     "url": "https://example.com/org/repo.git",
+    "remotes": ["origin", "upstream"],
     "directory": "F:/workspace/project",
     "umo": "webchat:FriendMessage:...",
     "worktree": "F:/workspace/project",
@@ -412,6 +413,11 @@ URL 校验：
 | `added` | remote 不存在，已执行 `git remote add` |
 | `updated` | remote 已存在且 URL 不同，已执行 `git remote set-url` |
 | `unchanged` | remote 已存在且 URL 相同，未执行写命令 |
+
+`remotes`（2026-08-16 新增）：`git remote` 配置的完整远端名列表。
+供 Dashboard 推送对话框的远端下拉即时刷新——新 `remote add` 的远端
+在 fetch 前没有任何 `refs/remotes/*` 分支，仅靠 `git-branches` 的
+for-each-ref 永远看不到它。
 
 ### 4.3 fetch 示例
 
@@ -439,7 +445,100 @@ async function setRemoteUrl(options: {
 
 ---
 
-## 5. TypeScript 类型
+## 5. `GET /spcode/git-remotes`（2026-08-16 新增）
+
+列出已配置的 Git remote（name + url）。供 Dashboard "设置 Remote URL"
+对话框展示已有远端、点击行填充表单以便更新、以及配合删除。
+
+**Query 参数**:
+
+| 字段 | 类型 | 必传 | 说明 |
+|------|------|------|------|
+| `umo` | str | 否 | 最近加载项目（标准 preflight 参数） |
+| `worktree` | str | 否 | primary worktree（走 6 步防御链） |
+
+**成功响应 (HTTP 200)**:
+
+```json
+{
+  "status": "ok",
+  "data": {
+    "success": true,
+    "remotes": [
+      { "name": "origin", "url": "https://example.com/org/repo.git" },
+      { "name": "upstream", "url": "git@github.com:org/up.git" }
+    ],
+    "total": 2,
+    "directory": "F:/workspace/project",
+    "umo": "webchat:FriendMessage:...",
+    "worktree": "F:/workspace/project",
+    "reason": null,
+    "stderr": "",
+    "elapsed_ms": 12
+  }
+}
+```
+
+说明：
+
+- 数据源为 `git remote -v`；同一 remote 的 fetch / push 双行合并为
+  一条，**fetch URL 优先**（无 fetch 行时才用 push URL）。
+- 按名称排序返回。无 remote 时返回空数组。
+- 不设置 ETag（对话框打开时按需拉取，低频、无需缓存协商）。
+
+**错误 reason**: 通用 preflight 失败（`no_project_loaded` /
+`not_a_git_repo` / `worktree_invalid` / `git_error`）。
+
+---
+
+## 6. `POST /spcode/git-remote-remove`（2026-08-16 新增）
+
+删除已配置的 Git remote（`git remote remove <name>`）。删除前先
+`git remote get-url` 确认存在，避免误报；成功响应附带剩余远端名
+列表，前端可即时刷新推送对话框的远端下拉。
+
+**Body (JSON, 必传)**:
+
+```json
+{
+  "remote": "upstream",
+  "umo": "webchat:...",
+  "worktree": "F:/repo-or-worktree"
+}
+```
+
+| 字段 | 类型 | 必传 | 默认 | 说明 |
+|------|------|------|------|------|
+| `remote` | str | 是 | — | 要删除的 remote 名称 |
+| `umo` | str | 否 | 最近加载项目 | 标准 preflight 参数 |
+| `worktree` | str | 否 | primary worktree | 走 6 步防御链 |
+
+**成功响应 (HTTP 200)**:
+
+```json
+{
+  "status": "ok",
+  "data": {
+    "success": true,
+    "removed": true,
+    "remote": "upstream",
+    "remotes": ["origin"],
+    "directory": "F:/workspace/project",
+    "umo": "webchat:FriendMessage:...",
+    "worktree": "F:/workspace/project",
+    "reason": null,
+    "stderr": "",
+    "elapsed_ms": 40
+  }
+}
+```
+
+**错误 reason**: `invalid_body` / `invalid_remote` / `remote_not_found`
+（remote 不存在）/ 通用 preflight 失败 / `git_error`。
+
+---
+
+## 7. TypeScript 类型
 
 ```ts
 type SpcodeEnvelope<T> = {
@@ -483,11 +582,22 @@ type GitRemoteSetUrlData = {
   remote: string;
   url?: string;
 };
+
+type GitRemotesData = {
+  remotes: Array<{ name: string; url: string }>;
+  total: number;
+};
+
+type GitRemoteRemoveData = {
+  removed: boolean;
+  remote: string;
+  remotes: string[];
+};
 ```
 
 ---
 
-## 6. ReasonCode 前端处理
+## 8. ReasonCode 前端处理
 
 | ReasonCode | 建议 UI 文案 / 动作 |
 |------------|-------------------|
@@ -512,9 +622,10 @@ type GitRemoteSetUrlData = {
 
 ---
 
-## 7. 安全说明
+## 9. 安全说明
 
-- 3 个端点均复用 `_git_endpoint_preflight` 与 `worktree` 防御链。
+- 5 个端点（git-pull / git-push / git-remote-set-url / git-remotes /
+  git-remote-remove）均复用 `_git_endpoint_preflight` 与 `worktree` 防御链。
 - 所有 Git 参数通过 argv 传递，不经过 shell。
 - 不支持 `--force` 与 `--force-with-lease`。
 - 不支持交互式凭据输入。

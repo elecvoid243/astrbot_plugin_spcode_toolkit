@@ -81,6 +81,28 @@ async def handle(
         # 即不感知 upstream_track 变化 (保留旧行为作为兜底)。
         pass
 
+    # v2.24 (2026-08-16, elecvoid243): 把 ``git remote`` 配置列表纳入
+    # ETag 与响应。``git remote add / set-url`` 只改 .git/config ——
+    # HEAD / porcelain / upstream_track 均不变 —— 若不加入此因子,
+    # dashboard 推送对话框的远端列表会持续命中 304 永不刷新
+    # (新 `remote add` 的远端在 fetch 前也没有 refs/remotes/* ref)。
+    remotes: list[str] = []
+    try:
+        remote_result = await _run_git_async(
+            [git_bin, "-C", str(repo_dir), "remote"],
+        )
+        if remote_result.get("ok", False):
+            remotes = [
+                line.strip()
+                for line in (remote_result.get("stdout") or "").splitlines()
+                if line.strip()
+            ]
+            if remotes:
+                extra_etag_inputs += ("\n".join(remotes),)
+    except Exception:
+        # git remote 失败不阻塞主流程: ETag 回退, remotes 返回空列表。
+        pass
+
     etag = await _compute_git_etag(git_bin, repo_dir, extra_inputs=extra_etag_inputs)
     if etag and if_none_match and etag == if_none_match:
         content = _make_envelope(
@@ -159,6 +181,7 @@ async def handle(
         total=len(branches),
         current=current_name,
         detached=detached,
+        remotes=remotes,
         elapsed_ms=round((_time.monotonic() - t0) * 1000, 2),
     )
 

@@ -54,6 +54,8 @@ async def test_adds_missing_origin(tmp_path: Path):
     assert result["data"]["success"] is True
     assert result["data"]["action"] == "added"
     assert _git(repo, "remote", "get-url", "origin") == url
+    # 2026-08-16: 成功响应附带已配置远端列表, 供推送对话框即时刷新。
+    assert result["data"]["remotes"] == ["origin"]
 
 
 async def test_updates_existing_origin(tmp_path: Path):
@@ -69,6 +71,7 @@ async def test_updates_existing_origin(tmp_path: Path):
     assert result["data"]["success"] is True
     assert result["data"]["action"] == "updated"
     assert _git(repo, "remote", "get-url", "origin") == url
+    assert result["data"]["remotes"] == ["origin"]
 
 
 async def test_same_url_is_unchanged(tmp_path: Path):
@@ -84,6 +87,7 @@ async def test_same_url_is_unchanged(tmp_path: Path):
     assert result["data"]["success"] is True
     assert result["data"]["action"] == "unchanged"
     assert _git(repo, "remote", "get-url", "origin") == url
+    assert result["data"]["remotes"] == ["origin"]
 
 
 async def test_invalid_url():

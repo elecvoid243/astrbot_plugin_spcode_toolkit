@@ -179,6 +179,8 @@ def test_routes_table_has_forty_six_endpoints() -> None:
         "/spcode/git-pull",
         "/spcode/git-push",
         "/spcode/git-remote-set-url",
+        "/spcode/git-remotes",  # 2026-08-16 — 列出 remote (GET)
+        "/spcode/git-remote-remove",  # 2026-08-16 — 删除 remote (POST)
         "/spcode/code-check",
         "/spcode/code-format",
         "/spcode/git-commit-amend",
@@ -203,9 +205,12 @@ def test_routes_table_has_forty_six_endpoints() -> None:
     # 2026-08-03: +1 POST (git-squash);2026-08-06 对账补登 conflict 系列(此前漏记)
     # 2026-08-06: +2 POST (project-unload / codegraph-set) +1 GET (operation-progress)
     # 50 entries total: 17 GET + 31 POST + 1 PATCH + 1 DELETE
+    # 2026-08-16: +1 GET (git-remotes) +1 POST (git-remote-remove)
     methods = [m for entry in ROUTES for m in entry[1]]
-    assert methods.count("GET") == 19  # +operation-progress +home-directory +drives
-    assert methods.count("POST") == 37  # +git-commit-amend
+    assert (
+        methods.count("GET") == 20
+    )  # +operation-progress +home-directory +drives +git-remotes
+    assert methods.count("POST") == 38  # +git-commit-amend +git-remote-remove
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
 
@@ -326,6 +331,28 @@ class TestGitCommitAmendEndpointSmoke:
 
         assert git_commit_amend.handle is not None
         assert "/spcode/git-commit-amend" in self._route_paths()
+
+
+class TestGitRemotesEndpointsSmoke:
+    """2026-08-16 git-remotes / git-remote-remove route registration smoke."""
+
+    @staticmethod
+    def _route_paths() -> set[str]:
+        from tools.webapi import ROUTES
+
+        return {entry[0] for entry in ROUTES}
+
+    def test_git_remotes_route_registered(self) -> None:
+        from tools.webapi import git_remotes
+
+        assert git_remotes.handle is not None
+        assert "/spcode/git-remotes" in self._route_paths()
+
+    def test_git_remote_remove_route_registered(self) -> None:
+        from tools.webapi import git_remote_remove
+
+        assert git_remote_remove.handle is not None
+        assert "/spcode/git-remote-remove" in self._route_paths()
 
 
 # === _wrap adapter ====================================================
@@ -496,10 +523,11 @@ def test_register_webapi_routes_calls_context_fifty_three_times() -> None:
     2026-08-06: +2 POST (project-unload / codegraph-set) +1 GET (operation-progress) → 50
     2026-08-15: +1 GET (home-directory) → 57
     2026-08-15: +1 GET (drives) → 58
+    2026-08-16: +1 GET (git-remotes) +1 POST (git-remote-remove) → 60
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    assert plugin.context.register_web_api.call_count == 58
+    assert plugin.context.register_web_api.call_count == 60
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -516,11 +544,12 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 58 routes
+    # Should not raise; should attempt all 60 routes
     # (含 2026-08-12 新增的 git-pull / git-push / git-remote-set-url /
-    # code-check / code-format;2026-08-13 git-commit-amend;2026-08-15 home-directory / drives)。
+    # code-check / code-format;2026-08-13 git-commit-amend;2026-08-15
+    # home-directory / drives;2026-08-16 git-remotes / git-remote-remove)。
     register_webapi_routes(plugin)
-    assert call_count == 58
+    assert call_count == 60
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

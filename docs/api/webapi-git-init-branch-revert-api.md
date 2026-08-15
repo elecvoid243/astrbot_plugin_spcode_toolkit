@@ -117,10 +117,17 @@ v2.17.0 (2026-07-15) 新增 6 个 git 相关端点,涵盖 **仓库生命周期 �
     ],
     "default": "main",
     "detached": false,
+    "remotes": ["origin", "upstream"],
     "total": 5
   }
 }
 ```
+
+`remotes`（2026-08-16 新增）：`git remote` 配置的完整远端名列表
+（与分支 ref 无关，新 `remote add` 后立即可见）。该列表同时拼入
+ETag 计算——`git remote add/set-url` 只改 `.git/config`，HEAD /
+porcelain / upstream_track 均不变，若不纳入此因子则持续命中 304，
+Dashboard 推送对话框的远端列表永不刷新。
 
 **响应头**: `ETag`, `Cache-Control: private, max-age=1`
 
