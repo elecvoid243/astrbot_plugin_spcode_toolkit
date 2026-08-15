@@ -12,6 +12,8 @@ Dashboard / WebUI:
   * ``/spcode/git-status``      (GET)   # v2.13+
   * ``/spcode/git-log``         (GET)   # v3.7
   * ``/spcode/file-browser``    (GET)
+  * ``/spcode/home-directory``  (GET) # 2026-08-15 — 目录选择器起始目录
+  * ``/spcode/drives``          (GET) # 2026-08-15 — 目录选择器盘符枚举
   * ``/spcode/file-binary``     (GET)   # 2026-07-22 — 原始字节流(供 BinaryPreview)
   * ``/spcode/file-restore``    (POST)
   * ``/spcode/file-discard-hunk`` (POST) # v2.16.0 (2026-07-06)
@@ -61,6 +63,7 @@ from . import (
     codegraph_set,  # 2026-08-06 静默切换 codegraph 项目 (POST /spcode/codegraph-set)
     codegraph_status,  # v2.14.x (2026-06-28)
     docs_crud,  # spec B (2026-07-11): POST/PATCH/DELETE /spcode/docs
+    drives,  # 2026-08-15 GET /spcode/drives(目录选择器盘符枚举)
     file_binary,  # 2026-07-22: GET /spcode/file-binary(原始字节,供 BinaryPreview)
     file_browser,
     file_discard_hunk,  # v2.16.0 (2026-07-06)
@@ -102,6 +105,7 @@ from . import (
     git_worktree_remove,  # v2.14.0 (2026-06-26)
     git_worktree_unlock,  # v2.14.0 (2026-06-26)
     git_worktrees,
+    home_directory,  # 2026-08-15 GET /spcode/home-directory(目录选择器起始目录)
     operation_progress,  # 2026-08-06 静默操作实时进度 (GET /spcode/operation-progress)
     plan_mode,
     project_load,  # 2026-07-28 静默加载项目 (POST /spcode/project-load)
@@ -275,6 +279,18 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["GET"],
         file_binary.handle,
         "读取白名单文件(PDF/DOCX/XLSX/CSV/MD)的原始字节,支持 ?ref= 历史版本",
+    ),
+    (
+        "/spcode/home-directory",  # 2026-08-15 目录选择器起始目录
+        ["GET"],
+        home_directory.handle,
+        "返回宿主账户 home 目录(目录选择器起始位置,供 dashboard 应用内文件浏览器使用)",
+    ),
+    (
+        "/spcode/drives",  # 2026-08-15 目录选择器盘符枚举
+        ["GET"],
+        drives.handle,
+        "返回宿主可用磁盘/根目录列表(目录选择器'此电脑'视图,Windows 多盘符导航)",
     ),
     (
         "/spcode/file-search",  # v2.15.0 (2026-07-02)
@@ -471,6 +487,8 @@ HANDLERS: dict[str, Callable] = {
     "handle_get_git_log": git_log.handle,
     "handle_get_git_show": git_show.handle,  # v3.8 (2026-06-25)
     "handle_get_file_browser": file_browser.handle,
+    "handle_get_home_directory": home_directory.handle,  # 2026-08-15
+    "handle_get_drives": drives.handle,  # 2026-08-15
     "handle_post_file_discard_hunk": file_discard_hunk.handle,
     "handle_post_file_search": file_search.handle,  # v2.15.0 (2026-07-02)
     "handle_post_file_name_search": file_name_search.handle,  # v2.15.0 (2026-07-02)
@@ -602,6 +620,8 @@ def register_webapi_routes(plugin: SPCodeToolkit) -> None:
     2026-08-12: 50 -> 53 (+git-pull +git-push +git-remote-set-url)
     2026-08-12: 53 -> 55 (+code-check +code-format)
     2026-08-13: 55 -> 56 (+git-commit-amend)
+    2026-08-15: 56 -> 57 (+home-directory GET /spcode/home-directory)
+    2026-08-15: 57 -> 58 (+drives GET /spcode/drives)
     """
     for route, methods, handler, desc in ROUTES:
         try:
@@ -625,6 +645,7 @@ __all__ = [
     "code_format",  # 2026-08-12
     "codegraph_status",  # v2.14.x (2026-06-28)
     "docs_crud",  # spec B (2026-07-11)
+    "drives",  # 2026-08-15
     "file_browser",
     "file_binary",  # 2026-07-22: 原始字节流(供 BinaryPreview)
     "file_discard_hunk",  # v2.16.0 (2026-07-06)
@@ -660,6 +681,7 @@ __all__ = [
     "git_worktree_remove",  # v2.14.0
     "git_worktree_unlock",  # v2.14.0
     "git_worktrees",
+    "home_directory",  # 2026-08-15
     "plan_mode",
     "project_load",  # 2026-07-28 静默加载
     "project_status",

@@ -141,6 +141,8 @@ def test_routes_table_has_forty_six_endpoints() -> None:
         "/spcode/git-unstage",  # PR-4 (2026-06-24)
         "/spcode/git-commit",  # PR-5 (2026-06-24)
         "/spcode/file-browser",
+        "/spcode/home-directory",  # 2026-08-15 — 目录选择器起始目录
+        "/spcode/drives",  # 2026-08-15 — 目录选择器盘符枚举
         "/spcode/file-binary",  # 2026-07-22 — 原始字节流(供 BinaryPreview)
         "/spcode/file-restore",
         "/spcode/file-discard-hunk",  # v2.16.0 (2026-07-06)
@@ -202,7 +204,7 @@ def test_routes_table_has_forty_six_endpoints() -> None:
     # 2026-08-06: +2 POST (project-unload / codegraph-set) +1 GET (operation-progress)
     # 50 entries total: 17 GET + 31 POST + 1 PATCH + 1 DELETE
     methods = [m for entry in ROUTES for m in entry[1]]
-    assert methods.count("GET") == 17  # +operation-progress
+    assert methods.count("GET") == 19  # +operation-progress +home-directory +drives
     assert methods.count("POST") == 37  # +git-commit-amend
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
@@ -492,10 +494,12 @@ def test_register_webapi_routes_calls_context_fifty_three_times() -> None:
     2026-07-28: +1 POST (project-load 静默加载项目) → 46
     2026-08-03: +1 POST (git-squash) → 47(此前漏记 conflict 系列,对账后 47)
     2026-08-06: +2 POST (project-unload / codegraph-set) +1 GET (operation-progress) → 50
+    2026-08-15: +1 GET (home-directory) → 57
+    2026-08-15: +1 GET (drives) → 58
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    assert plugin.context.register_web_api.call_count == 56
+    assert plugin.context.register_web_api.call_count == 58
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -512,11 +516,11 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 56 routes
+    # Should not raise; should attempt all 58 routes
     # (含 2026-08-12 新增的 git-pull / git-push / git-remote-set-url /
-    # code-check / code-format;2026-08-13 git-commit-amend)。
+    # code-check / code-format;2026-08-13 git-commit-amend;2026-08-15 home-directory / drives)。
     register_webapi_routes(plugin)
-    assert call_count == 56
+    assert call_count == 58
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────
