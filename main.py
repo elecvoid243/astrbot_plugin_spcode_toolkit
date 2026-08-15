@@ -74,6 +74,8 @@ from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
 )
 from .tools.inta_shell.component import LocalInteractiveShellComponent
 from .tools.llm_inject import inject_guidance
+from .tools.operation_progress import begin as _progress_begin
+from .tools.operation_progress import finish as _progress_finish
 from .tools.project import ProjectManager
 from .tools.project.inject import inject_project_path
 from .tools.security import PlanModeController, check_is_admin
@@ -435,9 +437,36 @@ class SPCodeToolkit(star.Star):
 
     @codegraph.command("set")
     async def codegraph_set(self, event, directory: str):
-        """/codegraph set <directory>(委托给 ``CodegraphManager.set_project``)。"""
-        async for msg in self.codegraph.set_project(event, directory):
-            yield msg
+        """/codegraph set <directory>(委托给 ``CodegraphManager.set_project``)。
+
+        v2.24.2 (2026-08-15): 包装 operation-progress(operation=
+        "codegraph_set"),使 chat 命令触发的 MCP 重启也能被 dashboard 的
+        进度轮询感知(SpcodeProjectIndicator 状态气泡"正在重启 codegraph")。
+        - webapi codegraph-set 端点走 set_project_silent(自带 progress),
+          project_load 流水线走 load_impl(自带 project_load progress),
+          两者不受影响;
+        - 若同 umo 已有 running 操作(begin 返回 False)则跳过,避免覆盖;
+        - finish 的 ok/reason 按 yield 消息判定(与 set_project_silent 的
+          ❌ 前缀约定一致)。
+        """
+        umo = event.unified_msg_origin
+        began = _progress_begin(umo, "codegraph_set")
+        messages: list[str] = []
+        try:
+            async for msg in self.codegraph.set_project(event, directory):
+                messages.append(str(msg))
+                yield msg
+        finally:
+            if began:
+                ok = not any(m.startswith("❌") for m in messages)
+                reason = None
+                if not ok:
+                    reason = (
+                        "path_invalid"
+                        if messages and messages[0].startswith("❌")
+                        else "mcp_restart_failed"
+                    )
+                _progress_finish(umo, ok=ok, reason=reason)
 
     @filter.command_group("vivado")
     def vivado(self):
