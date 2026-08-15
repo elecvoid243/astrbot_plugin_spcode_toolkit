@@ -27,7 +27,11 @@ class CodeCheckTool(FunctionTool):
         "source-context lines (→ marks the offending line). "
         "Other extensions (e.g. .js/.ts/.go/.nim) are NOT supported by this "
         "tool. Requires the linter to be installed: "
-        "pip install ruff (Python) or pip install clang-format (C/C++)."
+        "pip install ruff (Python) or pip install clang-format (C/C++). "
+        "IMPORTANT: `filepath` MUST be an absolute path (e.g. "
+        "`F:/repo/src/main.py`); relative paths are resolved against the "
+        "AstrBot root directory, NOT the agent workspace, and will likely "
+        "fail with 'file not found'."
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -36,7 +40,11 @@ class CodeCheckTool(FunctionTool):
                 "filepath": {
                     "type": "string",
                     "description": (
-                        "Path to the source file. Extension determines the linter: "
+                        "ABSOLUTE path to the source file (MUST be absolute, "
+                        "e.g. `F:/repo/src/main.py`). Relative paths are "
+                        "resolved against the AstrBot root directory, not the "
+                        "agent workspace, and will likely fail. "
+                        "Extension determines the linter: "
                         ".py → ruff; .c/.cpp/.cc/.cxx/.h/.hpp/.hxx → cppcheck + clang-format."
                     ),
                 },

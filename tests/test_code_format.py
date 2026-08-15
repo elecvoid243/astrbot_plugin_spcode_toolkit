@@ -408,6 +408,26 @@ def test_function_tool_schema_excludes_internal_params():
     assert "indent" not in exposed
 
 
+def test_filepath_schema_requires_absolute_path():
+    """code_check / code_format 的 filepath schema 必须声明绝对路径(2026-08-15)。
+
+    工具进程 CWD 是 AstrBot 根目录而非 agent 工作区,相对路径会被解析到
+    错误位置导致 file-not-found。在顶层 description + 参数 schema 双重
+    声明,防止 LLM 传相对路径。
+    """
+    from tools.function_tools.code_check import CodeCheckTool
+    from tools.function_tools.code_format import CodeFormatTool
+
+    for tool_cls in (CodeCheckTool, CodeFormatTool):
+        tool = tool_cls()
+        # 顶层 description 提示绝对路径
+        assert "absolute path" in tool.description.lower()
+        # 参数 schema 明确 MUST be absolute
+        fp_desc = tool.parameters["properties"]["filepath"]["description"]
+        assert "MUST be absolute" in fp_desc
+        assert "ABSOLUTE path" in fp_desc
+
+
 # ── 16. 注入的 default_style/default_indent 透传 ──
 
 

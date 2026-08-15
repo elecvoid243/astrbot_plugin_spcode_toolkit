@@ -38,6 +38,10 @@ class CodeFormatTool(FunctionTool):
         "Supported extensions: .py (ruff format); "
         ".c/.cpp/.h/.hpp/.cc/.cxx/.hxx/.hh/.java/.js/.jsx/.mjs/.cjs/.cs "
         "(clang-format). Other extensions are rejected. "
+        "IMPORTANT: `filepath` MUST be an absolute path (e.g. "
+        "`F:/repo/src/main.py`); relative paths are resolved against the "
+        "AstrBot root directory, NOT the agent workspace, and will likely "
+        "fail with 'file not found'."
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -46,7 +50,11 @@ class CodeFormatTool(FunctionTool):
                 "filepath": {
                     "type": "string",
                     "description": (
-                        "Path of the source file. Extension determines the formatter "
+                        "ABSOLUTE path of the source file (MUST be absolute, "
+                        "e.g. `F:/repo/src/main.py`). Relative paths are "
+                        "resolved against the AstrBot root directory, not the "
+                        "agent workspace, and will likely fail. "
+                        "Extension determines the formatter "
                         "(.py → ruff; other supported extensions → clang-format)."
                     ),
                 },
