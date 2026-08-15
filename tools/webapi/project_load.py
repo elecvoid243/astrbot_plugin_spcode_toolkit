@@ -39,9 +39,8 @@ logger = logging.getLogger(__name__)
 #
 # 失败路径(messages 已有"❌ <step_label> 失败, /project load 中止。"
 # 总结 + ProjectLoadAbort)统一映射为 step 自身的 reason 码
-# (agentsmd_init_failed / agentsmd_load_failed / codegraph_init_failed /
-# codegraph_set_failed),前端用 ``substep_messages`` 末尾的"❌"行
-# 显示具体错误。
+# (agentsmd_init_failed / agentsmd_load_failed / codegraph_init_failed),
+# 前端用 ``substep_messages`` 末尾的"❌"行显示具体错误。
 _SILENT_REASON_TO_ENVELOPE: dict[str, str] = {
     "agentsmd_disabled": ReasonCode.FEATURE_DISABLED,
     "codegraph_disabled": ReasonCode.FEATURE_DISABLED,
@@ -50,7 +49,6 @@ _SILENT_REASON_TO_ENVELOPE: dict[str, str] = {
     "agentsmd_init_failed": ReasonCode.GIT_ERROR,
     "agentsmd_load_failed": ReasonCode.GIT_ERROR,
     "codegraph_init_failed": ReasonCode.GIT_ERROR,
-    "codegraph_set_failed": ReasonCode.GIT_ERROR,
     # 2026-07-30: create / git_init 步骤失败映射。create 是路径/文件系统
     # 操作失败,归 PATH_UNSAFE(最接近的现有码);git_init 是 git 子进程失败,
     # 归 GIT_ERROR。前端用 substep_messages 末尾行查看具体错误。
@@ -77,7 +75,7 @@ async def handle(
         directory (str, required): 项目绝对路径。与 ``/project load`` 命令
             的位置参数一致;支持带/不带尾部 ``/``、单/双引号包裹。
         no_agentsmd (bool, optional): 跳过 AGENTS.md init+load。默认 False。
-        no_codegraph (bool, optional): 跳过 codegraph init+set。默认 False。
+        no_codegraph (bool, optional): 跳过 codegraph init。默认 False。
         force (bool, optional): (2026-07-28 引入) 若已加载项目,允许强制
             覆盖为新项目。默认 False — 拒绝重复 load。
         create (bool, optional): (2026-07-30 引入) 目录不存在时自动创建
@@ -309,8 +307,8 @@ def _silent_unload(plugin: SPCodeToolkit, umo: str) -> None:
     直接同步执行最简的卸载逻辑:
       1. 若 state[umo] 不存在 → no-op
       2. 调 ``agentsmd.unload(event)``(同步方法,返回字符串,丢弃)
-      3. 若 ``codegraph_project`` 已配置 → 调 ``codegraph.set_project`` 切回默认
-         (走 async,但 silent_unload 是 sync helper——见下方说明)
+      3. 跳过 codegraph.set_project(load 流程已不含 set 子步骤,
+         旧默认项目残留由用户后续 /codegraph set 管理)
       4. ``state.pop(umo)``
 
     设计权衡:
@@ -320,8 +318,8 @@ def _silent_unload(plugin: SPCodeToolkit, umo: str) -> None:
           把 unload 也 async 化。但 :meth:`ProjectManager.unload_impl`
           已经是 generator,不能直接 await。最简方案:绕开 unload_impl,
           直接调底层 ``agentsmd.unload``(同步)+ ``state.pop``,
-          并跳过 codegraph.set_project(因为 force-load 后会立刻
-          重新 init+set 新目录,旧 set_project 残留会被覆盖)。
+          并跳过 codegraph.set_project(load 流程已不含 set 子步骤,
+          旧默认项目残留由用户后续 /codegraph set 管理)。
         - 这是"webapi force 路径"的特殊妥协,不污染主 ``/project unload``
           路径(后者仍走原 unload_impl,带 yield 反馈)。
     """
@@ -343,9 +341,9 @@ def _silent_unload(plugin: SPCodeToolkit, umo: str) -> None:
     except Exception as exc:  # pragma: no cover - 防御
         logger.warning("project-load: force unload 阶段 agentsmd.unload 失败: %s", exc)
 
-    # 不调 codegraph.set_project — 紧接着的 load 会重新 init+set 新目录,
-    # 旧路径会自然被覆盖。跳过 set_project 既避免 await 嵌套,又
-    # 避免旧 MCP 进程的残留 path 触发"找不到目录"错误。
+    # 不调 codegraph.set_project — load 流程已不含 set 子步骤(2026-08-15),
+    # 旧默认项目残留由用户后续 /codegraph set 管理。跳过 set_project 既
+    # 避免 await 嵌套,又避免旧 MCP 进程的残留 path 触发"找不到目录"错误。
 
     _state.pop(umo)
     logger.info("project-load: force unload 完成 (umo=%s)", umo)

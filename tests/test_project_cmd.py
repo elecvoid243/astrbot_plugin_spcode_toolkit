@@ -172,7 +172,9 @@ def _patch_internal_methods(
         setattr(plugin.agentsmd, method_name, m)
         mocks[method_name] = m
     # PR-6 (2026-06-23): codegraph 业务搬到 tools.codegraph 子包,
-    # main.py 现在调 self.codegraph.init / .set_project。
+    # main.py 现在调 self.codegraph.init(load) / .set_project(unload)。
+    # load 流水线自 2026-08-15 起不再调用 set_project, 但 unload 仍会调,
+    # 故这里保留 mock 供 unload 测试断言。
     codegraph_async = {
         "init": lambda *a, **kw: None,
         "set_project": lambda *a, **kw: None,
@@ -359,7 +361,10 @@ def test_project_load_rejects_user_blacklisted_path(tmp_path):
 
 
 def test_project_load_happy_path_calls_all_steps(tmp_path):
-    """全新加载: 依次调 agentsmd init+load + codegraph init+set,记录状态。"""
+    """全新加载: 依次调 agentsmd init+load + codegraph init,记录状态。
+
+    2026-08-15: codegraph set 子步骤已从 load 流水线移除, 只保留 init。
+    """
     p = tmp_path / "proj"
     p.mkdir()
     plugin = _make_plugin()
@@ -368,11 +373,12 @@ def test_project_load_happy_path_calls_all_steps(tmp_path):
 
     msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
-    # 4 个核心方法都被调用(顺序: agentsmd_init, agentsmd_load, codegraph_init, codegraph_set)
+    # 3 个核心方法都被调用(顺序: agentsmd_init, agentsmd_load, codegraph_init)
     mocks["init"].assert_called_once()
     mocks["load"].assert_called_once()
     mocks["codegraph_init"].assert_called_once()
-    mocks["codegraph_set_project"].assert_called_once()
+    # set_project 不再属于 load 流程(仅 unload 使用)
+    mocks["codegraph_set_project"].assert_not_called()
     # _agentsmd_unload 不该被调
     mocks["unload"].assert_not_called()
     # 调用顺序: 严格按 spec 1→2→3
@@ -382,7 +388,6 @@ def test_project_load_happy_path_calls_all_steps(tmp_path):
         "init",
         "load",
         "codegraph_init",
-        "codegraph_set_project",
     ]:
         all_calls.extend((name, c) for c in mocks[name].mock_calls)
     actual_order = [n for n, _ in all_calls]
@@ -390,7 +395,6 @@ def test_project_load_happy_path_calls_all_steps(tmp_path):
         "init",
         "load",
         "codegraph_init",
-        "codegraph_set_project",
     ], f"调用顺序不符 spec,实际: {actual_order}"
 
     # 状态已记录
@@ -415,7 +419,7 @@ def test_project_load_aborts_on_agentsmd_init_error(tmp_path):
 
     验证:
     - 错误消息被转发
-    - 后续 3 个子方法(agentsmd_load / codegraph_init / codegraph_set)**未被调**
+    - 后续 2 个子方法(agentsmd_load / codegraph_init)**未被调**
     - "✅ 项目已加载" 不出现
     - _loaded_projects[umo] 未被填充
     - 中止总结消息出现
@@ -439,7 +443,7 @@ def test_project_load_aborts_on_agentsmd_init_error(tmp_path):
     )
     # 2. init 确实被调了一次
     mocks["init"].assert_called_once()
-    # 3. 后续 3 个子方法**未被调**(stop at first error)
+    # 3. 后续 2 个子方法**未被调**(stop at first error)
     mocks["load"].assert_not_called()
     mocks["codegraph_init"].assert_not_called()
     mocks["codegraph_set_project"].assert_not_called()
@@ -487,7 +491,7 @@ def test_project_load_aborts_on_agentsmd_load_error(tmp_path):
 
 
 def test_project_load_aborts_on_codegraph_init_error(tmp_path):
-    """agentsmd init+load 都成功,codegraph_init 失败 → 中止,set 不被调。"""
+    """agentsmd init+load 都成功,codegraph_init 失败 → 中止,状态不登记。"""
     p = tmp_path / "proj"
     p.mkdir()
     plugin = _make_plugin()
@@ -505,7 +509,7 @@ def test_project_load_aborts_on_codegraph_init_error(tmp_path):
     mocks["init"].assert_called_once()
     mocks["load"].assert_called_once()
     mocks["codegraph_init"].assert_called_once()
-    # 最后一步 set **未被调**
+    # set_project 不属于 load 流程, 不应被调
     mocks["codegraph_set_project"].assert_not_called()
     # 错误消息 + 中止总结
     assert any("❌ 模拟:codegraph CLI 找不到" in m for m in msgs)
@@ -513,38 +517,6 @@ def test_project_load_aborts_on_codegraph_init_error(tmp_path):
     # 无成功消息
     assert not any("项目已加载" in m for m in msgs)
     # 状态未登记
-    assert _get_loaded("test:umo") is None
-
-
-def test_project_load_aborts_on_codegraph_set_error(tmp_path):
-    """前 3 步都成功,codegraph_set 失败 → 中止,状态不登记。
-
-    验证 codegraph.set_project 是最后一道关卡,它的失败也能被正确捕获。
-    """
-    p = tmp_path / "proj"
-    p.mkdir()
-    plugin = _make_plugin()
-    mocks = _patch_internal_methods(
-        plugin,
-        custom_async_gens={
-            "codegraph_set_project": _make_error_gen("❌ 模拟:MCP 重启失败"),
-        },
-    )
-    event = _make_event(umo="test:umo")
-
-    msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
-
-    # 前 3 步都被调
-    mocks["init"].assert_called_once()
-    mocks["load"].assert_called_once()
-    mocks["codegraph_init"].assert_called_once()
-    mocks["codegraph_set_project"].assert_called_once()
-    # 错误消息 + 中止总结
-    assert any("❌ 模拟:MCP 重启失败" in m for m in msgs)
-    assert any("失败" in m and "中止" in m for m in msgs)
-    # 无成功消息
-    assert not any("项目已加载" in m for m in msgs)
-    # 状态未登记(关键 — 假成功绝不能登记)
     assert _get_loaded("test:umo") is None
 
 
@@ -575,7 +547,8 @@ def test_project_load_does_not_abort_on_warning(tmp_path):
     mocks["init"].assert_called_once()
     mocks["load"].assert_called_once()
     mocks["codegraph_init"].assert_called_once()
-    mocks["codegraph_set_project"].assert_called_once()
+    # set_project 不属于 load 流程, 不应被调
+    mocks["codegraph_set_project"].assert_not_called()
     # 状态已登记
     assert _get_loaded("test:umo") is not None
     # 成功消息

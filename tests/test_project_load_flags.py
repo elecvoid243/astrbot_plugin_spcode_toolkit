@@ -3,9 +3,9 @@
 Author: elecvoid243
 
 覆盖场景:
-- 默认(无 flag):4 个子步骤全部调用
+- 默认(无 flag):3 个子步骤全部调用(set_project 不参与 load)
 - no_agentsmd:跳过 agentsmd.init / agentsmd.load,codegraph 子步骤仍调用
-- no_codegraph:跳过 codegraph.init / codegraph.set_project,agentsmd 子步骤仍调用
+- no_codegraph:跳过 codegraph.init,agentsmd 子步骤仍调用
 - 两个 flag 同时给:都跳过,但 state.put 仍发生(空壳 load)
 - 路由层 (handle_subcommand) 解析 args 中的 flag
 - 路由层:只有 flag 没 directory → 报错
@@ -68,10 +68,13 @@ def _make_plugin(
 
 
 def _patch_substeps_count(plugin) -> dict[str, int]:
-    """把 4 个子步骤替换为带调用计数的成功 async gen。
+    """把 3 个子步骤替换为带调用计数的成功 async gen。
 
     返回 ``call_counts`` 字典,key 为 ``"<子系统>.<方法>"``,value 为累计调用次数。
     测试通过 ``call_counts["agentsmd.init"] == 0`` 断言"该子步骤被跳过"。
+
+    2026-08-15: codegraph.set_project 已不在 load 流水线中, 但保留其计数
+    (恒为 0), 作为"set 永不参与 load"的不变量断言。
 
     设计:
     - 用 ``functools.partial`` 风格的闭包维护计数,避免 ``MagicMock`` 计数
@@ -121,19 +124,19 @@ async def _drive(plugin, event, sub_command, *args):
 # ── 测试用例 ───────────────────────────────────────────
 
 
-def test_default_load_calls_all_4_substeps():
-    """无 flag → 4 个子步骤全部调用一次,state 登记成功。"""
+def test_default_load_calls_all_3_substeps():
+    """无 flag → 3 个子步骤全部调用一次,state 登记成功。"""
     plugin = _make_plugin()
     counters = _patch_substeps_count(plugin)
     event = _make_event("test:default:001")
     msgs = _run(_drive(plugin, event, "load", "/tmp/x"))
     text = "".join(msgs)
 
-    # 4 个子步骤都被调用 1 次
+    # 3 个子步骤都被调用 1 次;set_project 不参与 load(恒 0)
     assert counters["agentsmd.init"] == 1
     assert counters["agentsmd.load"] == 1
     assert counters["codegraph.init"] == 1
-    assert counters["codegraph.set_project"] == 1
+    assert counters["codegraph.set_project"] == 0
 
     # 总结消息包含成功标记
     assert "✅ 项目已加载" in text
@@ -160,9 +163,9 @@ def test_no_agentsmd_skips_agentsmd_substeps_only():
     # agentsmd 子步骤都被跳过
     assert counters["agentsmd.init"] == 0
     assert counters["agentsmd.load"] == 0
-    # codegraph 子步骤仍执行
+    # codegraph 子步骤仍执行(仅 init;set 不参与 load)
     assert counters["codegraph.init"] == 1
-    assert counters["codegraph.set_project"] == 1
+    assert counters["codegraph.set_project"] == 0
 
     # 跳过消息 + 成功消息
     assert "⏭️" in text
@@ -185,7 +188,7 @@ def test_no_codegraph_skips_codegraph_substeps_only():
     msgs = _run(_drive(plugin, event, "load", "/tmp/x", "no_codegraph"))
     text = "".join(msgs)
 
-    # codegraph 子步骤都被跳过
+    # codegraph 子步骤都被跳过(init;set 本就 0)
     assert counters["codegraph.init"] == 0
     assert counters["codegraph.set_project"] == 0
     # agentsmd 子步骤仍执行
@@ -220,7 +223,7 @@ def test_both_flags_loaded_as_empty_shell():
     )
     text = "".join(msgs)
 
-    # 4 个子步骤全部 0 次
+    # 3 个子步骤全部 0 次
     assert counters["agentsmd.init"] == 0
     assert counters["agentsmd.load"] == 0
     assert counters["codegraph.init"] == 0
@@ -383,7 +386,7 @@ def test_load_impl_direct_keyword_args():
     assert counters["agentsmd.init"] == 0
     assert counters["agentsmd.load"] == 0
     assert counters["codegraph.init"] == 1
-    assert counters["codegraph.set_project"] == 1
+    assert counters["codegraph.set_project"] == 0
     _proj_state.reset()
 
 

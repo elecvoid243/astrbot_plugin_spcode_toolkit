@@ -476,7 +476,7 @@ dashboard 的 plan/build chip 直调），
 ### 关键组件
 
 - `tools/project/manager.py:ProjectManager.load_impl_silent` — `async def`（非 generator）
-  变体，行为与 `load_impl` 完全一致（feature flag、路径校验、4 步流水线、state 登记），
+  变体，行为与 `load_impl` 完全一致（feature flag、路径校验、3 步流水线、state 登记），
   返回结构化 `dict` 而非 yield 用户消息。
 - `tools/webapi/project_load.py` — POST handler，body 校验后调
   `plugin.project.load_impl_silent(...)` 并把内部 reason 翻译为 `ReasonCode`。

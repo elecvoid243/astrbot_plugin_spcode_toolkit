@@ -5,7 +5,7 @@ Author: elecvoid243 · 2026-07-28
 覆盖场景:
 - 参数校验:无 umo / 无 body / directory 缺失 / directory 非 str /
   no_agentsmd / no_codegraph / force 类型错
-- 静默 load 成功路径(完整 4 步流水线,不向 event yield)
+- 静默 load 成功路径(完整 3 步流水线,不向 event yield)
 - 失败路径:agentsmd 失败 / codegraph 失败 / 重复 load / 路径不安全 /
   feature 关闭 / no_agentsmd 跳过 / no_codegraph 跳过 / force 覆盖
 - envelope 字段完整且 ReasonCode 正确
@@ -98,7 +98,7 @@ def _make_plugin() -> MagicMock:
 
 
 def _patch_substeps_success(plugin) -> None:
-    """把 4 个子方法 mock 为成功路径 — yield 单一 OK 消息后结束。"""
+    """把 3 个子方法 mock 为成功路径 — yield 单一 OK 消息后结束。"""
 
     async def _ok(*a, **kw):
         yield "mock-substep-ok"
@@ -109,6 +109,8 @@ def _patch_substeps_success(plugin) -> None:
 
     plugin.agentsmd.unload = MagicMock(return_value="mock-unload-ok")
 
+    # 2026-08-15: codegraph 子步骤只剩 init(set_project 不再参与 load,
+    # 但保留 mock 供 unload / 防御性断言使用)。
     for name in ("init", "set_project"):
         m = MagicMock(side_effect=_ok)
         setattr(plugin.codegraph, name, m)
@@ -118,8 +120,7 @@ def _patch_substeps_fail_at(plugin, *, fail_step: str) -> None:
     """让某个子方法 yield ❌ 消息 → 触发 ProjectLoadAbort。
 
     Args:
-        fail_step: "agentsmd_init" / "agentsmd_load" / "codegraph_init"
-                   / "codegraph_set"。
+        fail_step: "agentsmd_init" / "agentsmd_load" / "codegraph_init"。
     """
 
     async def _fail(*a, **kw):
@@ -141,8 +142,6 @@ def _patch_substeps_fail_at(plugin, *, fail_step: str) -> None:
         plugin.agentsmd.load = MagicMock(side_effect=_fail)
     elif fail_step == "codegraph_init":
         plugin.codegraph.init = MagicMock(side_effect=_fail)
-    elif fail_step == "codegraph_set":
-        plugin.codegraph.set_project = MagicMock(side_effect=_fail)
     else:
         raise ValueError(f"unknown fail_step: {fail_step}")
 
@@ -296,7 +295,7 @@ async def test_force_wrong_type_returns_invalid_param() -> None:
 @requires_webapi
 @pytest.mark.asyncio
 async def test_successful_load_full_path(plugin_with_mocks) -> None:
-    """完整 4 步流水线成功 → success=True + loaded=True + 完整 envelope。"""
+    """完整 3 步流水线成功 → success=True + loaded=True + 完整 envelope。"""
     _reset_state()
     plugin = plugin_with_mocks
     result = await _project_load_webapi.handle(
@@ -493,10 +492,7 @@ async def test_codegraph_init_failure_returns_git_error() -> None:
         )
         assert result["data"]["success"] is False
         assert result["data"]["reason"] == "git_error"
-        assert result["data"]["silent_reason"] in {
-            "codegraph_init_failed",
-            "codegraph_set_failed",  # 兜底:step 内部抛 abort 时
-        }
+        assert result["data"]["silent_reason"] == "codegraph_init_failed"
 
 
 # ── no_agentsmd / no_codegraph / force 行为 ───────────────────────
@@ -523,9 +519,9 @@ async def test_no_agentsmd_skips_agentsmd_step() -> None:
         # agentsmd.init / load 都不应被调用
         plugin.agentsmd.init.assert_not_called()
         plugin.agentsmd.load.assert_not_called()
-        # codegraph 子方法被调用
+        # codegraph.init 被调用;set_project 不参与 load
         plugin.codegraph.init.assert_called_once()
-        plugin.codegraph.set_project.assert_called_once()
+        plugin.codegraph.set_project.assert_not_called()
     _reset_state()
 
 

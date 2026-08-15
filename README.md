@@ -83,7 +83,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 | 命令 | 描述 |
 |------|------|
-| `/project load <文件夹路径>` | 一键组合 `agentsmd init+load` + `codegraph init+set` + 注入 codegraph 优先使用指引。需同时启用 agentsmd 和 codegraph |
+| `/project load <文件夹路径>` | 一键组合 `agentsmd init+load` + `codegraph init` + 注入 codegraph 优先使用指引。需同时启用 agentsmd 和 codegraph |
 | `/project unload` | 清掉 AGENTS.md 注入，把 codegraph 默认项目指回配置值 |
 | `/project status` | 查看当前会话已加载项目信息 |
 
@@ -343,7 +343,7 @@ todo_clear()
 把"加载项目"从 4 步压缩为 1 步。需在配置中**同时**启用 agentsmd 和 codegraph。
 
 ```text
-# 一键加载：自动执行 agentsmd init+load、codegraph init+set、注入 codegraph 优先使用指引
+# 一键加载：自动执行 agentsmd init+load、codegraph init（建索引）、注入 codegraph 优先使用指引
 /project load C:/Users/me/projects/myapp
 
 # 卸载：清掉 AGENTS.md 注入，把 codegraph 默认项目指回配置中的 codegraph_project

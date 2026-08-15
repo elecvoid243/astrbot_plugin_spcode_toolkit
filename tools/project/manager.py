@@ -2,15 +2,16 @@
 
 3 步 load 流水线:
 1. agentsmd (init 条件性 + load)  (委托 self._plugin.agentsmd.init/load)
-2. codegraph (init + set_project)  (委托 self._plugin.codegraph.init/set_project)
+2. codegraph (init)  (委托 self._plugin.codegraph.init; 2026-08-15 起仅 init 建索引,
+   不再 set 切换 MCP 默认项目)
 3. state.put(umo, info)  记录状态
 
 任一失败 → 抛 ProjectLoadAbort → load_impl 捕获 → return。
 
 可选 flag(2026-07-25 增强):
 - ``no_agentsmd``:跳过步骤 1/3(完整跳过 init+load)
-- ``no_codegraph``:跳过步骤 2/3(完整跳过 init+set)
-不传任何 flag → 完整执行全部 4 个子步骤。两个 flag 同时给 → 仅做
+- ``no_codegraph``:跳过步骤 2/3(完整跳过 init)
+不传任何 flag → 完整执行全部 3 个子步骤。两个 flag 同时给 → 仅做
 路径校验 + 状态登记(空壳 load)。flag 顺序无关,允许放在 directory 之后。
 
 业务从 main.py:382-718(_project_router + project_load + _project_load_step
@@ -101,7 +102,7 @@ class ProjectManager:
 
     设计意图:
     - handle_subcommand:路由器,分发到 load/unload/status
-    - load_impl:4 步 load 流水线(agentsmd init+load + codegraph init+set)
+    - load_impl:3 步 load 流水线(agentsmd init+load + codegraph init)
     - unload_impl:agentsmd unload + codegraph set default + state.pop
     - status_impl:读 state,格式化输出
     - get_loaded_project:供其他模块(webapi / dashboard)查 loaded state
@@ -203,7 +204,7 @@ class ProjectManager:
         """Implementation of ``/project load <dir> [flags...]``.
 
         Performs the multi-step project load: feature-flag check, duplicate
-        load guard, path safety, agentsmd init+load, codegraph init+set,
+        load guard, path safety, agentsmd init+load, codegraph init,
         records the load into state, and finally yields a summary message.
 
         任一子步骤失败(yield 任何以 ``❌`` 开头的消息)→ 立即中止整个 load:
@@ -267,8 +268,8 @@ class ProjectManager:
             old_dir = existing.get("directory", "")
             yield event.plain_result(f"⏳ 覆盖模式: 正在卸载旧项目 {old_dir} …")
             # 与 unload_impl / webapi _silent_unload 一致: agentsmd.unload
-            # 是同步方法; 不调 codegraph.set_project(紧接着的 load 会重新
-            # init+set 新目录, 旧 set 残留会被覆盖)。
+            # 是同步方法; 不调 codegraph.set_project(load 流程已不含 set
+            # 子步骤, 旧默认项目残留由用户后续 /codegraph set 管理)。
             yield self._plugin.agentsmd.unload(event)
             _state.pop(umo)
             yield event.plain_result(f"✅ 旧项目已卸载, 继续加载新项目: {old_dir}")
@@ -331,7 +332,8 @@ class ProjectManager:
                 ):
                     yield msg
 
-            # 步骤 2/3: codegraph init + set(PR-6 委托给 manager)
+            # 步骤 2/3: codegraph init(PR-6 委托给 manager; 2026-08-15 起
+            # 仅 init 建索引, 不再 set 切换 MCP 默认项目)
             if no_codegraph:
                 yield event.plain_result(
                     "⏭️ [2/3] codegraph 步骤已跳过(用户指定 no_codegraph)。"
@@ -342,14 +344,6 @@ class ProjectManager:
                     event,
                     self._plugin.codegraph.init(event, str(target)),
                     "[2/3] codegraph init",
-                ):
-                    yield msg
-
-                yield event.plain_result(f"⏳ [2/3] codegraph set: {target}")
-                async for msg in project_load_step(
-                    event,
-                    self._plugin.codegraph.set_project(event, str(target)),
-                    "[2/3] codegraph set",
                 ):
                     yield msg
         except ProjectLoadAbort:
@@ -596,7 +590,7 @@ class ProjectManager:
         """``/project load`` 的静默变体,供 webapi 端点调用(2026-07-28 引入)。
 
         与 :meth:`load_impl` 行为完全一致(feature flag 校验、路径校验、
-        4 步流水线、state 登记),**唯一差异**是不向 ``event`` 产出任何
+        3 步流水线、state 登记),**唯一差异**是不向 ``event`` 产出任何
         聊天框可见消息——所有步骤结果收集到返回的 ``dict`` 里,供
         dashboard / API 调用方直接读取。
 
@@ -612,7 +606,7 @@ class ProjectManager:
         设计:
             - **不是** ``async generator``——返回 ``dict``,调用方直接
               ``await plugin.project.load_impl_silent(...)`` 拿到结果。
-            - 内部**仍然**通过 ``project_load_step`` 走 4 步流水线,
+            - 内部**仍然**通过 ``project_load_step`` 走 3 步流水线,
               复用 ProjectLoadAbort 行为。子步骤 yield 的每条消息被
               收集到 ``substep_messages`` 字段(供调用方排查失败用),
               **不**经过 ``event.plain_result``(走 ``MagicMock`` 化的
@@ -737,7 +731,7 @@ class ProjectManager:
                     "previous_directory": "",
                 }
 
-        # 4. 4 步流水线(子步骤 yield 全部收集,不回传 event)
+        # 4. 3 步流水线(子步骤 yield 全部收集,不回传 event)
         try:
             # 步骤 1/3: agentsmd
             if no_agentsmd:
@@ -775,7 +769,7 @@ class ProjectManager:
                     if _last_message_failed(messages):
                         failed_reason = "agentsmd_load_failed"
 
-            # 步骤 2/3: codegraph
+            # 步骤 2/3: codegraph(仅 init; 2026-08-15 起移除 set 子步骤)
             if failed_reason is None:
                 if no_codegraph:
                     messages.append(
@@ -794,19 +788,6 @@ class ProjectManager:
                         pass
                     if _last_message_failed(messages):
                         failed_reason = "codegraph_init_failed"
-                    if failed_reason is None:
-                        messages.append(f"⏳ [2/3] codegraph set: {target}")
-                        try:
-                            async for msg in project_load_step(
-                                event,
-                                self._plugin.codegraph.set_project(event, str(target)),
-                                "[2/3] codegraph set",
-                            ):
-                                messages.append(_msg_to_text(msg))
-                        except ProjectLoadAbort:
-                            pass
-                        if _last_message_failed(messages):
-                            failed_reason = "codegraph_set_failed"
         except ProjectLoadAbort:
             # 2026-08-06: 各子步骤的 abort 已在步骤内被捕获并赋值
             # failed_reason;此分支仅做最外层防御兜底(理论上不可达)。

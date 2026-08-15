@@ -115,10 +115,10 @@ async def _drive(plugin, event, sub_command, *args):
 # 依赖旧版"无条件记录 _loaded_projects" 的 bug 行为 — bug 修了之后
 # 路径不存在导致子步骤失败, load 正确中止, 测试就 fail。
 # (v2.7.1 修复: 子步骤 yield ❌ 即中止)
-# 修法: 用 mock 模拟 4 个子步骤全部成功,让测试聚焦于 _project_router 的
+# 修法: 用 mock 模拟 3 个子步骤全部成功,让测试聚焦于 _project_router 的
 # 分发逻辑和 _loaded_projects 的状态机,而不是子步骤的副作用。
 def _patch_substeps_success(plugin):
-    """Mock 4 个子步骤为成功路径 — yield 单一 OK 消息后结束。
+    """Mock 3 个子步骤为成功路径 — yield 单一 OK 消息后结束。
 
     PR-5 (2026-06-23): agentsmd 子方法已搬到 plugin.agentsmd.* 上,
     codegraph 子方法暂留 plugin._codegraph_*。
@@ -135,7 +135,8 @@ def _patch_substeps_success(plugin):
     # agentsmd 同步方法 — plugin.agentsmd.unload
     plugin.agentsmd.unload = MagicMock(return_value="mock-unload-ok")
     # codegraph 子方法 — PR-6 (2026-06-23) 已搬到 plugin.codegraph.<method>
-    for method_name in ("init", "set_project"):
+    # 2026-08-15: load 流水线只剩 init(set_project 仅 unload 使用)。
+    for method_name in ("init",):
         m = MagicMock()
         m.side_effect = _ok
         setattr(plugin.codegraph, method_name, m)
@@ -143,7 +144,7 @@ def _patch_substeps_success(plugin):
 
 @pytest.fixture
 def plugin_with_mocks():
-    """提供 plugin 实例并已 mock 4 个子步骤为成功路径。
+    """提供 plugin 实例并已 mock 3 个子步骤为成功路径。
 
     适用于需要触发 ``/project load`` 成功路径的测试。
     """

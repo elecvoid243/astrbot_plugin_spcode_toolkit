@@ -39,7 +39,7 @@ async def project_load_step(
 ) -> AsyncIterator[str]:
     """Forward messages from a sub-step; abort on first "❌" message.
 
-    用作 :meth:`ProjectManager.load_impl` 中所有 4 个子步骤的统一包装层:
+    用作 :meth:`ProjectManager.load_impl` 中所有 3 个子步骤的统一包装层:
 
     - **透传**: ``sub_gen`` 产出的每条消息都原样 ``yield`` 出去
     - **检测**: 任何以 ``"❌"`` 开头的消息视为失败
@@ -54,7 +54,7 @@ async def project_load_step(
 
     为什么"❌"而不是返回值?
         子方法(``self.agentsmd.init`` / ``self.agentsmd.load`` /
-        ``self.codegraph.init`` / ``self.codegraph.set_project``)都
+        ``self.codegraph.init``)都
         遵循 "yield 错误消息 + return" 模式,从不抛异常。``❌`` 前缀是
         它们的统一约定。``⚠️`` 不算失败 — ``codegraph.init`` 在
         "已初始化 → 自动 --force 重试" 路径上以 ``⚠️`` 起头但最终可能成功。

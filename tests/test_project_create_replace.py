@@ -10,7 +10,7 @@ Author: elecvoid243
 - 回归: 未知 flag 静默忽略; 不传 create 时不存在目录不会被 mkdir
 
 create / git_init 在路径安全校验之后、agentsmd/codegraph 子步骤之前执行,
-故本文件用 MagicMock 把 4 个子步骤桩为成功, 让断言聚焦于 create / git_init /
+故本文件用 MagicMock 把 3 个子步骤桩为成功, 让断言聚焦于 create / git_init /
 replace 的真实文件系统 / git 副作用与 state 状态机, 而非子步骤细节。
 """
 
@@ -57,7 +57,7 @@ def _make_plugin():
 
 
 def _patch_substeps_success(plugin):
-    """桩 4 个子步骤为成功路径, 让 load 流水线走到 state 登记。"""
+    """桩 3 个子步骤为成功路径, 让 load 流水线走到 state 登记。"""
 
     async def _ok(*args, **kwargs):
         yield "mock-substep-ok"
@@ -68,7 +68,8 @@ def _patch_substeps_success(plugin):
         setattr(plugin.agentsmd, name, m)
     # agentsmd.unload 是同步方法, replace 分支会 yield 其返回值。
     plugin.agentsmd.unload = MagicMock(return_value="mock-unload-ok")
-    for name in ("init", "set_project"):
+    # 2026-08-15: codegraph 只剩 init(set_project 已不在 load 流水线)。
+    for name in ("init",):
         m = MagicMock()
         m.side_effect = _ok
         setattr(plugin.codegraph, name, m)
