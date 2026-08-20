@@ -114,6 +114,7 @@ from . import (
     project_status,
     project_unload,  # 2026-08-06 静默卸载项目 (POST /spcode/project-unload)
     vivado_status,  # PR-4 2026-07-23
+    worktree_activate,  # 2026-08-20 激活/取消激活 worktree (POST /spcode/worktree-activate)
 )
 
 logger = logging.getLogger(__name__)
@@ -343,6 +344,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "解锁 git worktree,main 允许但 git 自身拒绝",
     ),
     (
+        "/spcode/worktree-activate",  # 2026-08-20
+        ["POST"],
+        worktree_activate.handle,
+        "激活/取消激活 worktree(激活后注入 extra_user_content_parts,让 LLM 知道在哪个 worktree 工作)",
+    ),
+    (
         "/spcode/codegraph-status",  # v2.14.x (2026-06-28)
         ["GET"],
         codegraph_status.handle,
@@ -516,6 +523,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_worktree_lock": git_worktree_lock.handle,  # v2.14.0 (2026-06-26)
     "handle_post_git_worktree_remove": git_worktree_remove.handle,  # v2.14.0 (2026-06-26)
     "handle_post_git_worktree_unlock": git_worktree_unlock.handle,  # v2.14.0 (2026-06-26)
+    "handle_post_worktree_activate": worktree_activate.handle,  # 2026-08-20
     "handle_get_codegraph_status": codegraph_status.handle,  # v2.14.x (2026-06-28)
     "handle_post_btw": btw.handle,  # v2.20 (2026-07-17)
     "handle_get_git_file": git_file.handle,  # spec B (2026-07-11)
@@ -639,6 +647,7 @@ def register_webapi_routes(plugin: SPCodeToolkit) -> None:
     2026-08-15: 56 -> 57 (+home-directory GET /spcode/home-directory)
     2026-08-15: 57 -> 58 (+drives GET /spcode/drives)
     2026-08-16: 58 -> 60 (+git-remotes GET +git-remote-remove POST)
+    2026-08-20: 60 -> 61 (+worktree-activate POST /spcode/worktree-activate)
     """
     for route, methods, handler, desc in ROUTES:
         try:
@@ -705,4 +714,5 @@ __all__ = [
     "project_load",  # 2026-07-28 静默加载
     "project_status",
     "vivado_status",  # PR-4 2026-07-23
+    "worktree_activate",  # 2026-08-20
 ]

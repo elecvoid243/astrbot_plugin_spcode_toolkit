@@ -7,11 +7,13 @@ Spec: docs/superpowers/specs/2026-06-18-git-worktree-switcher-design.md §2.2
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .._helpers import _parse_git_worktree_porcelain, run_cmd
 from ..project import state as _proj_state
+from .. import worktree_activation as _wt_activation
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,7 @@ def _make_git_worktrees_empty_envelope(
             "directory": directory,
             "umo": umo,
             "worktrees": None,
+            "active_worktree": None,
             "reason": reason,
             "stderr": stderr,
             "elapsed_ms": elapsed_ms,
@@ -175,6 +178,22 @@ async def handle(
             elapsed_ms=_elapsed(),
         )
 
+    # 7. 解析激活 worktree(2026-08-20 worktree-activate)
+    # 绑定校验:激活记录绑定的 directory 与当前 loaded project 不一致
+    # (项目已切换) → 视为未激活;路径已不在当前 worktree 列表
+    # (worktree 已被删除) → 同样视为未激活并顺手清理过期状态。
+    activation = _wt_activation.get_for_directory(umo, directory)
+    active_worktree = None
+    if activation is not None:
+        active_path = activation.get("path", "")
+        if any(
+            os.path.normcase(w.get("path", "")) == os.path.normcase(active_path)
+            for w in worktrees
+        ):
+            active_worktree = active_path
+        else:
+            _wt_activation.pop(umo)
+
     elapsed = _elapsed()
     logger.debug(f"[git-worktrees] listed {len(worktrees)} worktrees in {elapsed}ms")
     return {
@@ -184,6 +203,7 @@ async def handle(
             "directory": directory,
             "umo": umo,
             "worktrees": worktrees,
+            "active_worktree": active_worktree,
             "reason": None,
             "stderr": "",
             "elapsed_ms": elapsed,

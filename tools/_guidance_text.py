@@ -40,6 +40,18 @@ A codegraph project is loaded. When dealing with the code for this project:
 """
 
 
+# GitDiffSidebar "激活 worktree" 后注入到 extra_user_content_parts 的指引。
+# 与上面 system_prompt 系指引不同:该文本走 TextPart.mark_as_temp(),
+# 仅参与本轮 LLM 请求、不持久化到会话历史;每次请求重新注入,
+# 切换/取消激活立即生效(AstrBot >= v4.24.0 支持 mark_as_temp)。
+ACTIVE_WORKTREE_GUIDANCE_TEMPLATE: str = """
+<active_worktree>
+当前激活的 git worktree: {worktree} (分支: {branch})
+对项目进行文件读写、代码修改、git 操作时，请以该 worktree 路径作为工作目录，除非用户明确指定其他路径。
+</active_worktree>
+"""
+
+
 # astrbot_file_remove_tool 启用时注入到 system_prompt 末尾的指引。
 # 设计目标:让 LLM 优先使用 file_remove 工具(自带路径安全 + 回收站)而非绕过。
 # 无 session state 依赖——只靠 self._tool_names 作为 gate。

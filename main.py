@@ -25,12 +25,14 @@ from astrbot.api.star import (  # noqa: F401  (re-export for test compat: tests/
     StarTools,
     register,
 )
+from astrbot.core.agent.message import TextPart
 
 # 业务子系统 import — 详见 docs/superpowers/specs/2026-06-23-main-py-refactor-design.md
 # main.py 在 PR-0~PR-7 拆分后只保留插件入口职责; 业务逻辑全部下沉到 tools/* 子包。
 from .tools._config_filter import ALL_TOOL_NAMES, filter_enabled_tools
 from .tools._external_tools import merge_external_tool_defaults
 from .tools._guidance_text import (
+    ACTIVE_WORKTREE_GUIDANCE_TEMPLATE,
     CODE_CHECK_GUIDANCE,
     CODE_CHECK_GUIDANCE_MARKER,
     CODE_FORMAT_GUIDANCE,
@@ -82,6 +84,8 @@ from .tools.security import PlanModeController, check_is_admin
 from .tools.vivado import VivadoSubsystem, check_vivado_available
 from .tools.webapi import register_webapi_routes
 from .tools.webapi.git_diff import _GIT_DIFF_ENCODING
+from .tools.worktree_activation import get_for_directory as _get_active_worktree
+from .tools.worktree_activation import reset as _reset_worktree_activation
 
 _DEFAULT_CONFIG = {
     "es_path": "",  # Everything es.exe 路径（空值由 AstrBot 内置 external_tools 默认路径填充）
@@ -149,12 +153,8 @@ class SPCodeToolkit(star.Star):
         )
         # clang-format 风格配置注入环境变量,供 tools/code_check.py 的
         # 格式检查路径读取(code_format 走 FunctionTool 实例属性,见下方注入)
-        os.environ["CLANG_FORMAT_STYLE"] = str(
-            _config.get("default_style") or "llvm"
-        )
-        os.environ["CLANG_FORMAT_INDENT"] = str(
-            _config.get("default_indent") or 4
-        )
+        os.environ["CLANG_FORMAT_STYLE"] = str(_config.get("default_style") or "llvm")
+        os.environ["CLANG_FORMAT_INDENT"] = str(_config.get("default_indent") or 4)
 
         # 子系统管理器句柄 — 详见 tools/*/ 子包
         self.agentsmd = AgentsmdSubsystem(plugin=self, is_path_safe=_is_path_safe)
@@ -592,9 +592,7 @@ class SPCodeToolkit(star.Star):
             yield msg
 
     @filter.on_llm_request()
-    async def _project_inject_path(
-        self, event: AstrMessageEvent, req: ProviderRequest
-    ):
+    async def _project_inject_path(self, event: AstrMessageEvent, req: ProviderRequest):
         """/project load 后,每次 LLM 请求前把项目工作路径注入 system_prompt 末尾。
 
         委托给 ``tools/project/inject.py:inject_project_path``。
@@ -651,6 +649,9 @@ class SPCodeToolkit(star.Star):
         except Exception as e:  # pragma: no cover — 防御性
             logger.warning("[agentsmd] clear state on terminate failed: %s", e)
 
+        # 清空 worktree 激活状态(2026-08-20 worktree-activate)
+        _reset_worktree_activation()
+
         # 停 inta_shell 交互式 Shell 组件
         if _inta_runtime.component is not None:
             try:
@@ -705,6 +706,53 @@ class SPCodeToolkit(star.Star):
             logger.debug(
                 f"[project] 已向会话 {umo} 的 system_prompt 注入 codegraph 指引"
             )
+
+    @filter.on_llm_request()
+    async def _worktree_activation_inject(
+        self, event: AstrMessageEvent, req: ProviderRequest
+    ):
+        """GitDiffSidebar 激活 worktree 后,把激活信息注入 extra_user_content_parts。
+
+        数据源: ``tools.worktree_activation``(per-umo,Dashboard 右键
+        "激活" 经 POST /spcode/worktree-activate 写入)。
+
+        注入形式(与 system_prompt 系指引刻意不同):
+        - ``TextPart.mark_as_temp()`` — 仅参与本轮 LLM 请求,不持久化到
+          会话历史(不污染上下文,也不破坏 system_prompt 缓存)
+        - 每次请求重新注入 → 切换/取消激活立即生效
+
+        跳过条件(任一满足即不注入):
+        1. feature flags(agentsmd_enabled / codegraph_enabled)任一关闭
+        2. 当前 umo 未加载项目
+        3. 激活记录绑定的 directory 与当前 loaded project 不一致(项目已切换)
+        4. 激活路径已不存在(worktree 被删除)
+
+        Author: elecvoid243, 2026-08-20
+        """
+        if not (
+            self._config.get("agentsmd_enabled", True)
+            and self._config.get("codegraph_enabled", True)
+        ):
+            return
+        umo = event.unified_msg_origin
+        loaded = self.get_loaded_project(umo)
+        if loaded is None:
+            return
+        activation = _get_active_worktree(umo, loaded.get("directory"))
+        if activation is None:
+            return
+        path = (activation.get("path") or "").strip()
+        if not path or not os.path.isdir(path):
+            return
+        branch = activation.get("branch") or "detached"
+        req.extra_user_content_parts.append(
+            TextPart(
+                text=ACTIVE_WORKTREE_GUIDANCE_TEMPLATE.format(
+                    worktree=path, branch=branch
+                )
+            ).mark_as_temp()
+        )
+        logger.debug(f"[worktree-activation] 已向会话 {umo} 注入激活 worktree: {path}")
 
     @filter.on_llm_request()
     async def _file_remove_inject_guidance(
