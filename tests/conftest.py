@@ -83,7 +83,7 @@ import pytest  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def _reset_module_state():
+def _reset_module_state(monkeypatch: pytest.MonkeyPatch):
     """每个 test 前 reset 共享 module-level state(防相互污染)。"""
     # 惰性导入 — conftest 在 import 时机要早于 tools.*,直接 import 会触发
     # 包级 ``from .xxx import`` 链,worktree 下 sys.path 还未就绪会报
@@ -104,8 +104,18 @@ def _reset_module_state():
         # plan/build 模式状态自 v3.x 起由核心 astrbot.core.tools.fs_access
         # 持有(进程级全局 per-umo dict)。每个 test 前重置,避免
         # is_active/count_active/was_active 断言被前面 test 的残留污染。
+        # 自定义白名单根(get_custom_roots)走 SharedPreferences,这里替换为
+        # 内存假实现,避免测试读写真实存储。
         from astrbot.core.tools import fs_access as _fs_access
 
+        class _FakeSp:
+            async def session_get(self, umo, key, default=None):
+                return default
+
+            async def session_put(self, umo, key, value):
+                return None
+
+        monkeypatch.setattr(_fs_access, "sp", _FakeSp())
         _fs_access.reset()
     except ImportError:
         pass

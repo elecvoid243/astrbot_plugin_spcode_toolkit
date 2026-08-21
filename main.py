@@ -718,61 +718,62 @@ class SPCodeToolkit(star.Star):
     async def _worktree_activation_inject(
         self, event: AstrMessageEvent, req: ProviderRequest
     ):
-        """GitDiffSidebar 激活 worktree 后,把激活信息注入 extra_user_content_parts。
+        """worktree 激活注入 + 核心动态写根同步。
 
-        数据源: ``tools.worktree_activation``(per-umo,Dashboard 右键
-        "激活" 经 POST /spcode/worktree-activate 写入)。
+        动态写根同步(每次请求,不受 feature flags 影响):
+        ``/project load`` 的项目目录与激活 worktree 都可能在
+        ``data/workspaces`` 之外,workspace 模式不得拦截对它们的写入。
+        每次请求按当前状态重算 ``[project_dir, worktree_path]`` 并写入
+        ``fs_access.set_dynamic_roots`` — 目录失效(项目切换/卸载、
+        worktree 删除)即自动剔除,无过期残留。
 
-        注入形式(与 system_prompt 系指引刻意不同):
+        worktree 指引注入(受 feature flags 门控,形式与 system_prompt
+        系指引刻意不同):
         - ``TextPart.mark_as_temp()`` — 仅参与本轮 LLM 请求,不持久化到
           会话历史(不污染上下文,也不破坏 system_prompt 缓存)
         - 每次请求重新注入 → 切换/取消激活立即生效
 
-        跳过条件(任一满足即不注入):
-        1. feature flags(agentsmd_enabled / codegraph_enabled)任一关闭
-        2. 当前 umo 未加载项目
-        3. 激活记录绑定的 directory 与当前 loaded project 不一致(项目已切换)
-        4. 激活路径已不存在(worktree 被删除)
-
-        动态写根同步(Task 10):每次请求先 ``fs_access.set_dynamic_roots(umo,
-        None)`` 清空,命中有效激活时再设为 ``[path]`` — worktree 可能在
-        ``data/workspaces`` 之外,workspace 模式不得拦截对它的写入;任一跳过
-        条件命中则保持清空,避免残留过期写根。
+        注入跳过条件(任一满足): flags 关闭 / 无有效激活。
 
         Author: elecvoid243, 2026-08-20
         """
         from astrbot.core.tools import fs_access
 
         umo = event.unified_msg_origin
-        # Always reset first: workspace-mode write roots must track the
-        # *current* activation (or none) on every request.
-        fs_access.set_dynamic_roots(umo, None)
+        loaded = self.get_loaded_project(umo)
+        project_dir = ""
+        if loaded is not None:
+            candidate = (loaded.get("directory") or "").strip()
+            if candidate and os.path.isdir(candidate):
+                project_dir = candidate
+        activation = (
+            _get_active_worktree(umo, loaded.get("directory")) if loaded else None
+        )
+        worktree_path = ""
+        if activation is not None:
+            candidate = (activation.get("path") or "").strip()
+            if candidate and os.path.isdir(candidate):
+                worktree_path = candidate
+        roots = [r for r in (project_dir, worktree_path) if r]
+        fs_access.set_dynamic_roots(umo, roots or None)
         if not (
             self._config.get("agentsmd_enabled", True)
             and self._config.get("codegraph_enabled", True)
         ):
             return
-        loaded = self.get_loaded_project(umo)
-        if loaded is None:
+        if not worktree_path:
             return
-        activation = _get_active_worktree(umo, loaded.get("directory"))
-        if activation is None:
-            return
-        path = (activation.get("path") or "").strip()
-        if not path or not os.path.isdir(path):
-            return
-        # The active worktree is a writable root in workspace mode even when
-        # it lives outside data/workspaces.
-        fs_access.set_dynamic_roots(umo, [path])
         branch = activation.get("branch") or "detached"
         req.extra_user_content_parts.append(
             TextPart(
                 text=ACTIVE_WORKTREE_GUIDANCE_TEMPLATE.format(
-                    worktree=path, branch=branch
+                    worktree=worktree_path, branch=branch
                 )
             ).mark_as_temp()
         )
-        logger.debug(f"[worktree-activation] 已向会话 {umo} 注入激活 worktree: {path}")
+        logger.debug(
+            f"[worktree-activation] 已向会话 {umo} 注入激活 worktree: {worktree_path}"
+        )
 
     @filter.on_llm_request()
     async def _file_remove_inject_guidance(
