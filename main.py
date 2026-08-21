@@ -730,14 +730,24 @@ class SPCodeToolkit(star.Star):
         3. 激活记录绑定的 directory 与当前 loaded project 不一致(项目已切换)
         4. 激活路径已不存在(worktree 被删除)
 
+        动态写根同步(Task 10):每次请求先 ``fs_access.set_dynamic_roots(umo,
+        None)`` 清空,命中有效激活时再设为 ``[path]`` — worktree 可能在
+        ``data/workspaces`` 之外,workspace 模式不得拦截对它的写入;任一跳过
+        条件命中则保持清空,避免残留过期写根。
+
         Author: elecvoid243, 2026-08-20
         """
+        from astrbot.core.tools import fs_access
+
+        umo = event.unified_msg_origin
+        # Always reset first: workspace-mode write roots must track the
+        # *current* activation (or none) on every request.
+        fs_access.set_dynamic_roots(umo, None)
         if not (
             self._config.get("agentsmd_enabled", True)
             and self._config.get("codegraph_enabled", True)
         ):
             return
-        umo = event.unified_msg_origin
         loaded = self.get_loaded_project(umo)
         if loaded is None:
             return
@@ -747,6 +757,9 @@ class SPCodeToolkit(star.Star):
         path = (activation.get("path") or "").strip()
         if not path or not os.path.isdir(path):
             return
+        # The active worktree is a writable root in workspace mode even when
+        # it lives outside data/workspaces.
+        fs_access.set_dynamic_roots(umo, [path])
         branch = activation.get("branch") or "detached"
         req.extra_user_content_parts.append(
             TextPart(
