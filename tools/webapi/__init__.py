@@ -495,6 +495,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "git stash pop stash@{index}(应用回工作区并删除该条;冲突时条目保留)",
     ),
     (
+        "/spcode/git-stash-drop",  # 2026-08-21
+        ["POST"],
+        git_stash.handle_drop,
+        "git stash drop stash@{index}(删除该条,不触碰工作区)",
+    ),
+    (
         "/spcode/code-check",  # 2026-08-12
         ["POST"],
         code_check.handle,
@@ -567,6 +573,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_get_git_stash": git_stash.handle_list,  # 2026-08-21
     "handle_post_git_stash": git_stash.handle_push,  # 2026-08-21
     "handle_post_git_stash_pop": git_stash.handle_pop,  # 2026-08-21
+    "handle_post_git_stash_drop": git_stash.handle_drop,  # 2026-08-21
     "handle_post_code_check": code_check.handle,  # 2026-08-12
     "handle_post_code_format": code_format.handle,  # 2026-08-12
 }
@@ -651,7 +658,7 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
 
 def register_webapi_routes(plugin: SPCodeToolkit) -> None:
-    """Register all 64 ``/spcode/*`` routes against ``plugin.context``.
+    """Register all 65 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
     but never raised — a single broken endpoint should not block
@@ -670,7 +677,8 @@ def register_webapi_routes(plugin: SPCodeToolkit) -> None:
     2026-08-15: 57 -> 58 (+drives GET /spcode/drives)
     2026-08-16: 58 -> 60 (+git-remotes GET +git-remote-remove POST)
     2026-08-20: 60 -> 61 (+worktree-activate POST /spcode/worktree-activate)
-    2026-08-21: 61 -> 63 (+git-stash GET +git-stash POST)
+    2026-08-21: 61 -> 65 (+git-stash GET/POST +git-stash-pop POST
+                +git-stash-drop POST)
     """
     for route, methods, handler, desc in ROUTES:
         try:

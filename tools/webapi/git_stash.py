@@ -2,14 +2,16 @@
 
 2026-08-21 (elecvoid243): 供 Dashboard GitDiffSidebar 的 stash 入口。
 
-  * GET  /spcode/git-stash     — 列出 stash 条目(默认最近 50 条),每条带
-                                 文件级 numstat 明细(tracked 改动来自
-                                 ``git diff <sha>^ <sha>``,``-u`` 贮藏的
-                                 untracked 文件来自 ``stash^3`` 提交树)。
-  * POST /spcode/git-stash     — ``git stash push -u -m <message>``
-                                 (含未跟踪文件;message 可选)。
-  * POST /spcode/git-stash-pop — ``git stash pop stash@{index}``(应用回
-                                 工作区并删除该条;冲突时条目保留)。
+  * GET  /spcode/git-stash      — 列出 stash 条目(默认最近 50 条),每条带
+                                  文件级 numstat 明细(tracked 改动来自
+                                  ``git diff <sha>^ <sha>``,``-u`` 贮藏的
+                                  untracked 文件来自 ``stash^3`` 提交树)。
+  * POST /spcode/git-stash      — ``git stash push -u -m <message>``
+                                  (含未跟踪文件;message 可选)。
+  * POST /spcode/git-stash-pop  — ``git stash pop stash@{index}``(应用回
+                                  工作区并删除该条;冲突时条目保留)。
+  * POST /spcode/git-stash-drop — ``git stash drop stash@{index}``(删除
+                                  该条,不触碰工作区)。
 
 失败仍返回 HTTP 200,业务结果看 ``data.success`` / ``data.reason``。
 """
@@ -581,6 +583,124 @@ async def handle_pop(
             sha=sha,
             files=files,
             file_count=len(files),
+            stash_count=stash_count,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
+        ),
+        status_code=200,
+    )
+
+
+async def handle_drop(
+    plugin: SPCodeToolkit,
+    *,
+    umo: str | None = None,
+    worktree: str | None = None,
+    body: dict | None = None,
+) -> dict:
+    """POST /spcode/git-stash-drop handler。
+
+    Body (JSON, 可为空对象): ``{"index": 0}``(stash@{index},默认 0)。
+    执行 ``git stash drop stash@{index}``:删除该贮藏条目,不触碰工作区。
+    """
+    t0 = _time.time()
+
+    def _elapsed() -> int:
+        return int((_time.time() - t0) * 1000)
+
+    def _failure(reason: str, **fields: object) -> dict:
+        return _make_envelope(
+            success=False,
+            reason=reason,
+            elapsed_ms=_elapsed(),
+            dropped=False,
+            **fields,
+        )
+
+    # ── 1. body / index 校验 ──
+    if not isinstance(body, dict):
+        return _failure(ReasonCode.INVALID_BODY)
+
+    index = body.get("index", 0)
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        return _failure(ReasonCode.INVALID_PARAM)
+    stash_ref = f"stash@{{{index}}}"
+
+    # ── 2. preflight ──
+    err, ctx = await _git_endpoint_preflight(plugin, umo=umo, worktree_param=worktree)
+    if err is not None:
+        err["data"]["elapsed_ms"] = _elapsed()
+        err["data"].setdefault("dropped", False)
+        return err
+
+    directory = ctx["directory"]
+    effective_umo = ctx["umo"]
+    git_bin = plugin._git_binary()
+
+    # ── 3. 解析 stash@{index} → sha;不存在 → stash_not_found ──
+    verify = await _run_git_async(
+        [git_bin, "-C", directory, "rev-parse", "--verify", "--quiet", stash_ref],
+        encoding="utf-8",
+        timeout=5.0,
+    )
+    if not verify.get("ok"):
+        return _failure(
+            ReasonCode.STASH_NOT_FOUND,
+            ref=stash_ref,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
+        )
+    sha = verify.get("stdout", "").strip()
+
+    # ── 4. git stash drop ──
+    result = await _run_git_async(
+        [git_bin, "-C", directory, "-c", "color.ui=never", "stash", "drop", stash_ref],
+        encoding="utf-8",
+        timeout=5.0,
+    )
+    if not result.get("ok"):
+        stderr = result.get("stderr", "") or result.get("error", "")
+        combined = f"{result.get('stdout', '')} {stderr}".lower()
+        if (
+            "is not a valid reference" in combined
+            or "too many revisions" in combined
+            or "is not a stash reference" in combined
+        ):
+            reason = ReasonCode.STASH_NOT_FOUND
+        else:
+            reason = ReasonCode.STASH_DROP_FAILED
+        return _failure(
+            reason,
+            ref=stash_ref,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
+            stderr=stderr[:STDERR_TRUNCATE_BYTES],
+        )
+
+    # ── 5. 剩余条目数 ──
+    count_result = await _run_git_async(
+        [git_bin, "-C", directory, "stash", "list", "--format=%H"],
+        encoding="utf-8",
+        timeout=5.0,
+    )
+    stash_count = (
+        len([ln for ln in count_result.get("stdout", "").splitlines() if ln.strip()])
+        if count_result.get("ok")
+        else 0
+    )
+
+    logger.info("git-stash: dropped %s (umo=%s)", stash_ref, effective_umo)
+    return _JSONResponseCompat(
+        _make_envelope(
+            success=True,
+            reason=None,
+            elapsed_ms=_elapsed(),
+            dropped=True,
+            ref=stash_ref,
+            sha=sha,
             stash_count=stash_count,
             directory=directory,
             umo=effective_umo,

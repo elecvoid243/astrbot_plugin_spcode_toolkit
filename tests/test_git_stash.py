@@ -46,6 +46,10 @@ def _pop(plugin, body, *, umo=None, worktree=None):
     return _gt.handle_pop(plugin, body=body, umo=umo, worktree=worktree)
 
 
+def _drop(plugin, body, *, umo=None, worktree=None):
+    return _gt.handle_drop(plugin, body=body, umo=umo, worktree=worktree)
+
+
 def _list(plugin, *, umo=None, worktree=None):
     return _gt.handle_list(plugin, umo=umo, worktree=worktree)
 
@@ -274,4 +278,69 @@ async def test_pop_invalid_params(plugin, tmp_path: Path):
 async def test_pop_no_project_loaded(plugin):
     result = await _pop(plugin, {"index": 0}, umo="u:none")
     assert result["data"]["popped"] is False
+    assert result["data"]["reason"] == "no_project_loaded"
+
+
+# ──────────────────────────────────────────────────────────
+# POST /spcode/git-stash-drop
+# ──────────────────────────────────────────────────────────
+
+
+async def test_drop_removes_entry_and_reindexes(plugin, tmp_path: Path):
+    """drop 只删条目不碰工作区;删 stash@{0} 后旧条目顶上来。"""
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("first change", encoding="utf-8")
+    _load_project(plugin, "u:m", str(tmp_path))
+    await _push(plugin, {"message": "first"}, umo="u:m")
+    (tmp_path / "README.md").write_text("second change", encoding="utf-8")
+    await _push(plugin, {"message": "second"}, umo="u:m")
+
+    result = await _drop(plugin, {"index": 0}, umo="u:m")
+    assert result["data"]["dropped"] is True
+    assert result["data"]["reason"] is None
+    assert result["data"]["ref"] == "stash@{0}"
+    assert result["data"]["stash_count"] == 1
+
+    # 剩下的是旧的 "first";工作区保持干净(drop 不触碰工作区)
+    listing = await _list(plugin, umo="u:m")
+    assert listing["data"]["count"] == 1
+    assert listing["data"]["stashes"][0]["message"].endswith(": first")
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert status.stdout.strip() == ""
+
+
+async def test_drop_missing_entry_returns_stash_not_found(plugin, tmp_path: Path):
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    empty = await _drop(plugin, {"index": 0}, umo="u:m")
+    assert empty["data"]["reason"] == "stash_not_found"
+
+    (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+    await _push(plugin, {}, umo="u:m")
+    missing = await _drop(plugin, {"index": 3}, umo="u:m")
+    assert missing["data"]["reason"] == "stash_not_found"
+
+
+async def test_drop_invalid_params(plugin, tmp_path: Path):
+    _init_git_repo(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    r1 = await _drop(plugin, None, umo="u:m")
+    assert r1["data"]["reason"] == "invalid_body"
+    r2 = await _drop(plugin, {"index": -2}, umo="u:m")
+    assert r2["data"]["reason"] == "invalid_param"
+    r3 = await _drop(plugin, {"index": True}, umo="u:m")
+    assert r3["data"]["reason"] == "invalid_param"
+
+
+async def test_drop_no_project_loaded(plugin):
+    result = await _drop(plugin, {"index": 0}, umo="u:none")
+    assert result["data"]["dropped"] is False
     assert result["data"]["reason"] == "no_project_loaded"

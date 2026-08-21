@@ -460,8 +460,9 @@ class ReasonCode:
     # ── git stash(2026-08-21) ──
     NOTHING_TO_STASH = "nothing_to_stash"  # push: 工作区无 tracked/untracked 改动
     STASH_FAILED = "stash_failed"  # push: git stash push 自身失败
-    STASH_NOT_FOUND = "stash_not_found"  # pop: stash@{index} 不存在 / 已失效
+    STASH_NOT_FOUND = "stash_not_found"  # pop/drop: stash@{index} 不存在 / 已失效
     STASH_CONFLICT = "stash_conflict"  # pop: 应用时冲突(条目保留,未 drop)
+    STASH_DROP_FAILED = "stash_drop_failed"  # drop: git stash drop 自身失败
 
 
 # ── git status --porcelain X/Y 列判定(共享常量)────────────────────
