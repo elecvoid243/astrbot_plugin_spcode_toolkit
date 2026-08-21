@@ -4,6 +4,7 @@ Handler 从 main.py 搬出,行为不变。
 """
 
 from __future__ import annotations
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -53,7 +54,7 @@ def _make_plugin_with_real_plan() -> MagicMock:
     from tools.security.plan_mode import PlanModeController
 
     plugin = MagicMock()
-    plugin._plan = PlanModeController(lambda: {})
+    plugin._plan = PlanModeController(lambda: {}, lambda: {})
     return plugin
 
 
@@ -114,3 +115,31 @@ async def test_plan_mode_post_route_registered():
     matches = [r for r in ROUTES if r[0] == "/spcode/plan-mode" and "POST" in r[1]]
     assert len(matches) == 1
     assert matches[0][2] is plan_mode.handle_set
+
+
+async def test_filter_request_filters_when_core_mode_is_readonly(monkeypatch):
+    """核心模式为 readonly 时,plan 过滤从 req.func_tool 移除写工具。"""
+    from astrbot.core.tools import fs_access
+    from tools.security.plan_mode import PlanModeController
+
+    fs_access.reset()
+    umo = "webchat:FriendMessage:webchat!tester!s1"
+    fs_access.set_mode_for_umo(umo, fs_access.FileAccessMode.READONLY)
+    try:
+        controller = PlanModeController(
+            lambda: {"plan_mode_blocked_tools": ["astrbot_file_write_tool"]},
+            lambda: {},
+        )
+        tool_a = type("T", (), {"name": "astrbot_file_write_tool"})()
+        tool_b = type("T", (), {"name": "es_search"})()
+
+        class _FuncTool:
+            def __init__(self, items):
+                self.tools = list(items)
+
+        req = SimpleNamespace(func_tool=_FuncTool([tool_a, tool_b]), contexts=[])
+        event = SimpleNamespace(unified_msg_origin=umo)
+        controller.filter_request(event, req)
+        assert [t.name for t in req.func_tool.tools] == ["es_search"]
+    finally:
+        fs_access.reset()

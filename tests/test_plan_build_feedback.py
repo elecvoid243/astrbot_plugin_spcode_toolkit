@@ -38,7 +38,7 @@ def _make_plugin(*, feedback: bool | None, blocked: list | None = None):
 
     from tools.security import PlanModeController
 
-    plugin._plan = PlanModeController(lambda: plugin._config)
+    plugin._plan = PlanModeController(lambda: plugin._config, lambda: {})
     return plugin
 
 

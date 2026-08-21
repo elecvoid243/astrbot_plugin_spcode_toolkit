@@ -47,23 +47,23 @@ def _make_tool_set(names: list[str]):
 
 def test_is_active_unknown_umo_returns_false():
     """未注册 umo → build 模式(False)。"""
-    c = PlanModeController(get_config=lambda: {})
+    c = PlanModeController(get_config=lambda: {}, get_core_config=lambda: {})
     assert c.is_active("unknown:umo") is False
 
 
 def test_is_active_none_returns_false():
     """umo=None → False(防御性)。"""
-    c = PlanModeController(get_config=lambda: {})
+    c = PlanModeController(get_config=lambda: {}, get_core_config=lambda: {})
     assert c.is_active(None) is False
 
 
 def test_count_active_zero_initially():
-    c = PlanModeController(get_config=lambda: {})
+    c = PlanModeController(get_config=lambda: {}, get_core_config=lambda: {})
     assert c.count_active() == 0
 
 
 def test_count_active_counts_true_entries():
-    c = PlanModeController(get_config=lambda: {})
+    c = PlanModeController(get_config=lambda: {}, get_core_config=lambda: {})
     c.activate("umo-1")
     c.activate("umo-2")
     c.deactivate("umo-1")
@@ -76,7 +76,7 @@ def test_count_active_counts_true_entries():
 
 
 def test_activate_sets_state_and_resets_reminded():
-    c = PlanModeController(get_config=lambda: {})
+    c = PlanModeController(get_config=lambda: {}, get_core_config=lambda: {})
     c._plan_reminded["umo-1"] = True
     c.activate("umo-1")
     assert c.is_active("umo-1") is True
@@ -84,7 +84,7 @@ def test_activate_sets_state_and_resets_reminded():
 
 
 def test_activate_already_active_resets_reminded():
-    c = PlanModeController(get_config=lambda: {})
+    c = PlanModeController(get_config=lambda: {}, get_core_config=lambda: {})
     c.activate("umo-1")
     c._plan_reminded["umo-1"] = True
     c.activate("umo-1")  # re-activate
@@ -93,19 +93,19 @@ def test_activate_already_active_resets_reminded():
 
 
 def test_deactivate_returns_was_active():
-    c = PlanModeController(get_config=lambda: {})
+    c = PlanModeController(get_config=lambda: {}, get_core_config=lambda: {})
     c.activate("umo-1")
     assert c.deactivate("umo-1") is True
     assert c.is_active("umo-1") is False
 
 
 def test_deactivate_unknown_umo_returns_false():
-    c = PlanModeController(get_config=lambda: {})
+    c = PlanModeController(get_config=lambda: {}, get_core_config=lambda: {})
     assert c.deactivate("unknown") is False
 
 
 def test_deactivate_clears_reminded():
-    c = PlanModeController(get_config=lambda: {})
+    c = PlanModeController(get_config=lambda: {}, get_core_config=lambda: {})
     c.activate("umo-1")
     c._plan_reminded["umo-1"] = True
     c.deactivate("umo-1")
@@ -118,7 +118,7 @@ def test_deactivate_clears_reminded():
 def test_filter_request_build_mode_is_noop():
     """build 模式(默认):不做事,即使配置了 blocked_tools。"""
     cfg = {"plan_mode_blocked_tools": ["astrbot_file_remove"]}
-    c = PlanModeController(get_config=lambda: cfg)
+    c = PlanModeController(get_config=lambda: cfg, get_core_config=lambda: {})
     event = _make_event()
     req = _make_req()
     req.func_tool = MagicMock()
@@ -128,10 +128,14 @@ def test_filter_request_build_mode_is_noop():
     assert len(req.func_tool.tools) == 1
 
 
-def test_filter_request_restores_tools_after_leaving_plan_mode():
-    """plan → build restores the original ToolSet on the next request."""
+def test_filter_request_is_noop_after_leaving_plan_mode():
+    """plan → build: 离开 readonly 后,filter_request 不再触碰 req.func_tool。
+
+    v3.x: 状态由核心 fs_access 持有,main agent 每次请求重建 ToolSet,
+    插件无需(也不再)快照/还原原始 ToolSet。
+    """
     cfg = {"plan_mode_blocked_tools": ["todo_create"]}
-    c = PlanModeController(get_config=lambda: cfg)
+    c = PlanModeController(get_config=lambda: cfg, get_core_config=lambda: {})
     event = _make_event("umo-restore")
     req = _make_req()
     original = _make_tool_set(["todo_create", "todo_query"])
@@ -143,19 +147,21 @@ def test_filter_request_restores_tools_after_leaving_plan_mode():
     assert req.func_tool is not original
 
     c.deactivate("umo-restore")
+    # 下一次请求带来 main agent 重建的完整 ToolSet(此处以 original 模拟),
+    # 钩子必须原样放行。
+    req.func_tool = original
     c.filter_request(event, req)
     assert req.func_tool is original
     assert [tool.name for tool in req.func_tool.tools] == [
         "todo_create",
         "todo_query",
     ]
-    assert "umo-restore" not in c._original_tool_sets
 
 
-def test_toolset_restore_isolated_per_umo():
-    """Restoration uses the snapshot belonging to the current session only."""
+def test_filter_isolation_per_umo():
+    """仅核心模式为 readonly 的会话被过滤,其他会话的 ToolSet 原样保留。"""
     cfg = {"plan_mode_blocked_tools": ["todo_create"]}
-    c = PlanModeController(get_config=lambda: cfg)
+    c = PlanModeController(get_config=lambda: cfg, get_core_config=lambda: {})
     event_a = _make_event("umo-a")
     event_b = _make_event("umo-b")
     req_a = _make_req()
@@ -169,15 +175,17 @@ def test_toolset_restore_isolated_per_umo():
     c.filter_request(event_a, req_a)
     c.filter_request(event_b, req_b)
 
-    c.deactivate("umo-a")
-    c.filter_request(event_a, req_a)
-
-    assert req_a.func_tool is original_a
+    # umo-a 处于 readonly:写工具被过滤,替换为新 ToolSet
+    assert [tool.name for tool in req_a.func_tool.tools] == ["todo_query"]
+    assert req_a.func_tool is not original_a
+    # umo-b 非 readonly:func_tool 原封不动
     assert req_b.func_tool is original_b
     assert [tool.name for tool in req_b.func_tool.tools] == [
         "todo_create",
         "todo_query",
     ]
+
+    c.deactivate("umo-a")
 
 
 # ── filter_request: plan 模式过滤 ─────────────────────────
@@ -186,7 +194,7 @@ def test_toolset_restore_isolated_per_umo():
 def test_filter_request_plan_mode_filters_tools():
     """plan 模式:从 req.func_tool 过滤 blocked_tools 集合。"""
     cfg = {"plan_mode_blocked_tools": ["astrbot_file_remove"]}
-    c = PlanModeController(get_config=lambda: cfg)
+    c = PlanModeController(get_config=lambda: cfg, get_core_config=lambda: {})
     c.activate("umo-1")
     event = _make_event("umo-1")
 
@@ -212,7 +220,7 @@ def test_filter_request_plan_mode_filters_tools():
 def test_filter_request_plan_mode_no_config_logs_warning(caplog):
     """plan 模式激活但 blocked_tools 为空 → warning 日志。"""
     cfg = {"plan_mode_blocked_tools": []}
-    c = PlanModeController(get_config=lambda: cfg)
+    c = PlanModeController(get_config=lambda: cfg, get_core_config=lambda: {})
     c.activate("umo-1")
     event = _make_event("umo-1")
     req = _make_req()
@@ -247,7 +255,7 @@ def test_filter_request_injects_reminder_first_time():
         "plan_mode_blocked_tools": ["astrbot_file_remove"],
         "plan_mode_reminder": "你处于 plan 模式,被禁用:{blocked}",
     }
-    c = PlanModeController(get_config=lambda: cfg)
+    c = PlanModeController(get_config=lambda: cfg, get_core_config=lambda: {})
     c.activate("umo-1")
     event = _make_event("umo-1")
     req = _make_req_with_toolset()
@@ -266,7 +274,7 @@ def test_filter_request_does_not_inject_reminder_twice():
         "plan_mode_blocked_tools": ["astrbot_file_remove"],
         "plan_mode_reminder": "你处于 plan 模式",
     }
-    c = PlanModeController(get_config=lambda: cfg)
+    c = PlanModeController(get_config=lambda: cfg, get_core_config=lambda: {})
     c.activate("umo-1")
     c._plan_reminded["umo-1"] = True  # 标记为已注入
     event = _make_event("umo-1")
@@ -281,7 +289,7 @@ def test_filter_request_does_not_inject_reminder_twice():
 def test_filter_request_empty_reminder_template_marks_reminded():
     """配置中 reminder 为空 → 标记为已注入(避免每轮检查)。"""
     cfg = {"plan_mode_blocked_tools": ["x"], "plan_mode_reminder": ""}
-    c = PlanModeController(get_config=lambda: cfg)
+    c = PlanModeController(get_config=lambda: cfg, get_core_config=lambda: {})
     c.activate("umo-1")
     event = _make_event("umo-1")
     req = _make_req_with_toolset()
@@ -298,7 +306,7 @@ def test_filter_request_reminder_appended_to_last_user_message():
         "plan_mode_blocked_tools": ["x"],
         "plan_mode_reminder": "PLAN_REMINDER_TEXT",
     }
-    c = PlanModeController(get_config=lambda: cfg)
+    c = PlanModeController(get_config=lambda: cfg, get_core_config=lambda: {})
     c.activate("umo-1")
     event = _make_event("umo-1")
     req = _make_req_with_toolset()

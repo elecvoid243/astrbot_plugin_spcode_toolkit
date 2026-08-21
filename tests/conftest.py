@@ -100,6 +100,15 @@ def _reset_module_state():
         _ag_state.reset()
     except ImportError:
         pass
+    try:
+        # plan/build 模式状态自 v3.x 起由核心 astrbot.core.tools.fs_access
+        # 持有(进程级全局 per-umo dict)。每个 test 前重置,避免
+        # is_active/count_active/was_active 断言被前面 test 的残留污染。
+        from astrbot.core.tools import fs_access as _fs_access
+
+        _fs_access.reset()
+    except ImportError:
+        pass
     yield
 
 

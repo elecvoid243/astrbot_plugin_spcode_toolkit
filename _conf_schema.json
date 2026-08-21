@@ -183,6 +183,8 @@
           "astrbot_inta_shell_stop",
           "astrbot_file_write_tool",
           "astrbot_file_edit_tool",
+          "astrbot_execute_shell",
+          "astrbot_shell_session",
           "mcp_vivado__add_files",
           "mcp_vivado__close_project",
           "mcp_vivado__create_project",

@@ -161,7 +161,10 @@ class SPCodeToolkit(star.Star):
         self.codegraph = CodegraphManager(self)
         self._vivado = VivadoSubsystem(plugin=self)
         self.project = ProjectManager(self)
-        self._plan = PlanModeController(get_config=lambda: self._config)
+        self._plan = PlanModeController(
+            get_config=lambda: self._config,
+            get_core_config=lambda: self.context.get_config() if self.context else {},
+        )
 
         # 根据 enabled_tools 配置过滤实际注册的工具
         enabled_names, unknown = filter_enabled_tools(
