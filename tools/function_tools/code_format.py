@@ -82,7 +82,14 @@ class CodeFormatTool(FunctionTool):
         **kwargs,
     ) -> ToolExecResult:
         from .. import code_format
+        from astrbot.core.tools import fs_access
 
+        if not check:
+            # Dry-run (check=true) does not write; only real formats are guarded.
+            try:
+                await fs_access.assert_writable(filepath, context)
+            except PermissionError as exc:
+                return f"Error: {exc}"
         # LLM 不再传 formatter/style/indent,全部从实例属性读
         return await record_and_run(
             self.name,

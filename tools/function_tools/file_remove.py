@@ -73,8 +73,13 @@ class FileRemoveTool(FunctionTool):
         **kwargs,
     ) -> ToolExecResult:
         from .. import file_remove
+        from astrbot.core.tools import fs_access
 
         _record(self.name)
+        try:
+            await fs_access.assert_writable(path, context)
+        except PermissionError as exc:
+            return f"Error: {exc}"
         try:
             result = await run_sync(
                 file_remove.remove,
