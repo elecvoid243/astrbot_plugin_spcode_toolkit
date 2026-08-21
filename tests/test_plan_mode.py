@@ -54,7 +54,7 @@ def _make_plugin_with_real_plan() -> MagicMock:
     from tools.security.plan_mode import PlanModeController
 
     plugin = MagicMock()
-    plugin._plan = PlanModeController(lambda: {}, lambda: {})
+    plugin._plan = PlanModeController(lambda: {}, lambda umo: {})
     return plugin
 
 
@@ -128,7 +128,7 @@ async def test_filter_request_filters_when_core_mode_is_readonly(monkeypatch):
     try:
         controller = PlanModeController(
             lambda: {"plan_mode_blocked_tools": ["astrbot_file_write_tool"]},
-            lambda: {},
+            lambda umo: {},
         )
         tool_a = type("T", (), {"name": "astrbot_file_write_tool"})()
         tool_b = type("T", (), {"name": "es_search"})()

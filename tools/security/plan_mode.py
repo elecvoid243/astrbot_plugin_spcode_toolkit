@@ -42,7 +42,7 @@ class PlanModeController:
     def __init__(
         self,
         get_config: Callable[[], dict],
-        get_core_config: Callable[[], dict],
+        get_core_config: Callable[[str | None], dict],
     ) -> None:
         self._get_config = get_config
         self._get_core_config = get_core_config
@@ -50,17 +50,17 @@ class PlanModeController:
 
     # ── 状态查询 ─────────────────────────────────────
 
-    def _default_mode(self):
+    def _default_mode(self, umo: str | None):
         fs_access = _load_fs_access()
         if fs_access is None:
             return None
-        return fs_access.resolve_default(self._get_core_config() or {})
+        return fs_access.resolve_default(self._get_core_config(umo) or {})
 
     def is_active(self, umo: str | None) -> bool:
         fs_access = _load_fs_access()
         if fs_access is None or not umo:
             return False
-        default = self._default_mode()
+        default = self._default_mode(umo)
         return (
             fs_access.get_mode_for_umo(umo, default=default)
             is fs_access.FileAccessMode.READONLY
@@ -89,7 +89,7 @@ class PlanModeController:
         if fs_access is None:
             return False
         was_active = self.is_active(umo)
-        fs_access.restore_writable_for_umo(umo, default=self._default_mode())
+        fs_access.restore_writable_for_umo(umo, default=self._default_mode(umo))
         self._plan_reminded.pop(umo, None)
         return was_active
 

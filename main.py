@@ -163,7 +163,11 @@ class SPCodeToolkit(star.Star):
         self.project = ProjectManager(self)
         self._plan = PlanModeController(
             get_config=lambda: self._config,
-            get_core_config=lambda: self.context.get_config() if self.context else {},
+            # umo-aware: mirror enforcement's context.get_config(umo) so the
+            # default mode follows the conversation's config profile.
+            get_core_config=lambda umo: (
+                self.context.get_config(umo) if self.context else {}
+            ),
         )
 
         # 根据 enabled_tools 配置过滤实际注册的工具
