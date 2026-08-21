@@ -457,6 +457,12 @@ class ReasonCode:
     STAGED_CHANGES_PRESENT = "staged_changes_present"
     AMEND_FAILED = "amend_failed"
 
+    # ── git stash(2026-08-21) ──
+    NOTHING_TO_STASH = "nothing_to_stash"  # push: 工作区无 tracked/untracked 改动
+    STASH_FAILED = "stash_failed"  # push: git stash push 自身失败
+    STASH_NOT_FOUND = "stash_not_found"  # pop: stash@{index} 不存在 / 已失效
+    STASH_CONFLICT = "stash_conflict"  # pop: 应用时冲突(条目保留,未 drop)
+
 
 # ── git status --porcelain X/Y 列判定(共享常量)────────────────────
 # 从 tools/webapi/file_restore.py 提取(2026-07-06)。两个端点共用:

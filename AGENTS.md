@@ -304,6 +304,7 @@ astrbot_plugin_spcode_toolkit/
         ├── file_binary.py        #   GET    /spcode/file-binary         (2026-07-22, 原始字节流供 BinaryPreview)
         ├── git_stats.py          #   GET    /spcode/git-stats           (v2.21, 2026-07-18, 变更统计面板)
         ├── vivado_status.py      #   GET    /spcode/vivado-status       (v2.21, PR-4 2026-07-23, vivado MCP 状态)
+        ├── git_stash.py          #   GET/POST /spcode/git-stash + POST /spcode/git-stash-pop (2026-08-21, 列表+文件明细 / push -u / pop)
         └── docs_crud.py          #   POST/PATCH/DELETE /spcode/docs     (spec B, 三方法复用一路径)
 ```
 

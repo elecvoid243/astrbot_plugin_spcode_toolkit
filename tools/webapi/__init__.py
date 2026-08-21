@@ -99,6 +99,7 @@ from . import (
     git_show,
     git_squash,  # 2026-08-03 - POST git-squash (HEAD 锚定连续压缩)
     git_stage,
+    git_stash,  # 2026-08-21 — GET/POST git-stash (stash 列表 + stash push -u)
     git_stats,
     git_status,
     git_unstage,
@@ -476,6 +477,24 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "删除已配置 git remote",
     ),
     (
+        "/spcode/git-stash",  # 2026-08-21
+        ["GET"],
+        git_stash.handle_list,
+        "列出 git stash 及每个 stash 的文件明细(numstat,含 -u 贮藏的 untracked)",
+    ),
+    (
+        "/spcode/git-stash",  # 2026-08-21
+        ["POST"],
+        git_stash.handle_push,
+        "git stash push -u(含未跟踪文件,可选 message)",
+    ),
+    (
+        "/spcode/git-stash-pop",  # 2026-08-21
+        ["POST"],
+        git_stash.handle_pop,
+        "git stash pop stash@{index}(应用回工作区并删除该条;冲突时条目保留)",
+    ),
+    (
         "/spcode/code-check",  # 2026-08-12
         ["POST"],
         code_check.handle,
@@ -545,6 +564,9 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_remote_set_url": git_remote_set_url.handle,  # 2026-08-12
     "handle_get_git_remotes": git_remotes.handle,  # 2026-08-16
     "handle_post_git_remote_remove": git_remote_remove.handle,  # 2026-08-16
+    "handle_get_git_stash": git_stash.handle_list,  # 2026-08-21
+    "handle_post_git_stash": git_stash.handle_push,  # 2026-08-21
+    "handle_post_git_stash_pop": git_stash.handle_pop,  # 2026-08-21
     "handle_post_code_check": code_check.handle,  # 2026-08-12
     "handle_post_code_format": code_format.handle,  # 2026-08-12
 }
@@ -629,7 +651,7 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
 
 def register_webapi_routes(plugin: SPCodeToolkit) -> None:
-    """Register all 53 ``/spcode/*`` routes against ``plugin.context``.
+    """Register all 64 ``/spcode/*`` routes against ``plugin.context``.
 
     Called once from ``main.py.initialize()``.  Failures are logged
     but never raised — a single broken endpoint should not block
@@ -648,6 +670,7 @@ def register_webapi_routes(plugin: SPCodeToolkit) -> None:
     2026-08-15: 57 -> 58 (+drives GET /spcode/drives)
     2026-08-16: 58 -> 60 (+git-remotes GET +git-remote-remove POST)
     2026-08-20: 60 -> 61 (+worktree-activate POST /spcode/worktree-activate)
+    2026-08-21: 61 -> 63 (+git-stash GET +git-stash POST)
     """
     for route, methods, handler, desc in ROUTES:
         try:
@@ -701,6 +724,7 @@ __all__ = [
     "git_show",
     "git_squash",  # 2026-08-03
     "git_stage",
+    "git_stash",  # 2026-08-21
     "git_stats",
     "git_status",
     "git_unstage",
