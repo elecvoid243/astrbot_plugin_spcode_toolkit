@@ -52,6 +52,7 @@ import json
 import logging
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from ._helpers import (
@@ -392,9 +393,18 @@ def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
 # Spec: docs/superpowers/specs/2026-08-14-clang-format-unify-design.md
 #
 # 设计要点:
-#   1. clang-format 以 pip 包形式安装(``pip install clang-format``,
-#      requirements.txt 已声明),通过 ``shutil.which("clang-format")`` 定位;
-#      pip 包安装的是 .exe 二进制(非 .bat/.cmd),CREATE_NO_WINDOW 即可抑制黑框。
+#   1. clang-format 以 pip 包形式安装(requirements.txt 已声明)。插件随 AstrBot
+#      运行在 AstrBot 自带的虚拟环境里,pip 包装在**同一个 env**,可执行入口与
+#      python 解释器同环境。因此定位以**当前解释器**为起点,不依赖
+#      AstrBot 主目录/cwd 解析(ASTRBOT_ROOT 变更、desktop 打包布局等都不影响):
+#        a. ``Path(sys.executable).parent / clang-format(.exe)``
+#           —— venv 布局:python.exe 与 pip 入口同在 <env>/Scripts/
+#        b. Windows 再试 ``<...>/Scripts/clang-format.exe`` —— conda 布局兼容:
+#           python.exe 在 <env> 根,pip 入口在 <env>/Scripts/
+#        c. ``shutil.which("clang-format")`` 兜底(dev 环境全局安装)
+#      命中即返回**绝对路径**,不走 PATH/PATHEXT 解析 → 不存在 .bat/.cmd wrapper
+#      顶替风险;pip 包装的是 .exe 二进制(非 .bat/.cmd),CREATE_NO_WINDOW 即可
+#      抑制黑框。
 #   2. 永远 **二进制 stdin/stdout** 调用:读原文件 bytes → stdin → stdout bytes
 #      直接写回。clang-format 对 stdin 字节流透明传递(不重编码),GBK 源文件、
 #      UTF-8 BOM 都保持字节级保真(astyle 时代的编码 workaround 全部移除)。
@@ -408,10 +418,28 @@ def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
 # Author: elecvoid243, 2026-08-14
 
 
+def _current_env_executable_candidates(name: str) -> list[str]:
+    """当前运行解释器所在环境中 ``name`` 可执行文件的候选绝对路径(已过滤存在项)。
+
+    - venv 布局(Windows): ``<env>/Scripts/{name}.exe`` 与 python.exe 同目录
+    - conda 布局(Windows): python.exe 在 ``<env>`` 根,pip 入口在 ``<env>/Scripts/``
+    - POSIX(venv/conda 一致): ``<env>/bin/{name}``
+    """
+    base = Path(sys.executable).resolve().parent
+    exe = f"{name}.exe" if sys.platform == "win32" else name
+    candidates = [base / exe]
+    if sys.platform == "win32":
+        candidates.append(base / "Scripts" / exe)
+    return [str(c) for c in candidates if c.is_file()]
+
+
 def _find_clang_format() -> list[str]:
-    """查找 clang-format 可执行路径(pip 包 clang-format 安装到 PATH/Scripts)。"""
-    found = shutil.which("clang-format")
-    return [found] if found else []
+    """查找 clang-format 可执行路径(3 级:解释器同目录 → Scripts/ → PATH)。"""
+    found = _current_env_executable_candidates("clang-format")
+    if found:
+        return found[:1]
+    which_hit = shutil.which("clang-format")
+    return [which_hit] if which_hit else []
 
 
 def _resolve_clang_format_style(style: str, indent: int) -> str:
@@ -486,7 +514,7 @@ def _format_with_clang_format(
     """C/C++/Java/JS/TS/C#: 调 clang-format (CLI,二进制 stdin/stdout)。
 
     流程:
-      1. shutil.which("clang-format") 定位可执行文件
+      1. ``_find_clang_format()`` 定位可执行文件(解释器同目录 → Scripts/ → PATH)
       2. 读原文件 bytes(不做任何重编码/行尾归一化)
       3. ``subprocess.run(args, input=before_bytes)`` 二进制管道
       4. 字节级/text 级比较 → changed
@@ -646,6 +674,7 @@ __all__ = [
     "LEGACY_ASTYLE_STYLE_MAP",
     "_detect_formatter",
     "_supported_extensions",
+    "_current_env_executable_candidates",
     "_find_clang_format",
     "_resolve_clang_format_style",
     "_clang_format_flags",
