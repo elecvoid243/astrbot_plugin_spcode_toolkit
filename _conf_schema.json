@@ -6,6 +6,7 @@
     "options": [
       "code_check",
       "code_format",
+      "code_crap",
       "es_search",
       "file_remove",
       "file_compare",
@@ -87,6 +88,20 @@
         "default": 4,
         "min": 1,
         "max": 16
+      }
+    }
+  },
+  "code_crap": {
+    "description": "code_crap — CRAP 指标检测(Python→crap4py,C/C++→lizard)",
+    "hint": "CRAP=CC²×(1−覆盖率)³+CC,按函数输出风险分级与改进建议。无覆盖率数据时按最坏情况(覆盖率 0%)计算。只读工具,plan 模式可用。",
+    "type": "object",
+    "items": {
+      "max_crap": {
+        "description": "CRAP 告警阈值",
+        "hint": "risk 分档:<30 ok / 30-60 moderate / >60 high;超过该值的函数进入 proposal 摘要。业界通行值 30。",
+        "type": "int",
+        "default": 30,
+        "min": 1
       }
     }
   },

@@ -14,6 +14,7 @@ from __future__ import annotations
 ALL_TOOL_NAMES: list[str] = [
     "code_check",
     "code_format",  # v2.14 (2026-06-25): 新增;与 code_check 配对
+    "code_crap",  # code_crap (2026-08-30): 新增;CRAP 风险检测(只读)
     # "code_index",
     # "code_explore",
     "es_search",

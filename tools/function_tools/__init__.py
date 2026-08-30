@@ -17,6 +17,7 @@ from ._common import record_and_run  # noqa: F401
 
 # 5 个独立工具(v2.14 加 code_format)
 from .code_check import CodeCheckTool
+from .code_crap import CodeCrapTool
 from .code_format import CodeFormatTool
 from .es_search import EsSearchTool
 from .file_diff import FileDiffTool
@@ -48,6 +49,7 @@ from .inta_shell_stop import IntaShellStopTool
 ALL_TOOL_CLASSES = [
     CodeCheckTool,
     CodeFormatTool,
+    CodeCrapTool,
     EsSearchTool,
     FileRemoveTool,
     FileDiffTool,
@@ -67,6 +69,7 @@ ALL_TOOL_CLASSES = [
 __all__ = [
     "ALL_TOOL_CLASSES",
     "CodeCheckTool",
+    "CodeCrapTool",
     "CodeFormatTool",
     "EsSearchTool",
     "FileRemoveTool",

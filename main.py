@@ -58,6 +58,7 @@ from .tools.codegraph import state as _codegraph_state
 from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
     ALL_TOOL_CLASSES,
     CodeCheckTool,
+    CodeCrapTool,  # code_crap (2026-08-30)
     CodeFormatTool,  # v2.14
     EsSearchTool,
     FileDiffTool,
@@ -104,6 +105,7 @@ _DEFAULT_CONFIG = {
     # 注入到 CodeFormatTool 实例属性 default_style / default_indent)
     "default_style": "llvm",  # clang-format 默认风格(兼容 legacy astyle 风格名)
     "default_indent": 4,  # clang-format 默认缩进空格数
+    "max_crap": 30,  # code_crap CRAP 告警阈值(risk 分档与 proposal 用)
     # v2.9.x (2026-07-27): /plan /build 命令的模式切换提示文本开关。
     # True = 保持原行为(yield 提示到消息页面);False = 静默切换。
     "plan_mode_command_feedback": True,
@@ -196,6 +198,13 @@ class SPCodeToolkit(star.Star):
                     t.default_indent = int(_config.get("default_indent") or 4)
                 except (TypeError, ValueError):
                     t.default_indent = 4
+            elif isinstance(t, CodeCrapTool):
+                # code_crap 的 CRAP 告警阈值注入(LLM 不可见,走实例属性;
+                # 调用参数 max_crap 显式传值时可覆盖)
+                try:
+                    t.max_crap_threshold = float(_config.get("max_crap") or 30)
+                except (TypeError, ValueError):
+                    t.max_crap_threshold = 30.0
 
         # 注册过滤后的工具
         self._tool_names = {t.name for t in tools_to_register}

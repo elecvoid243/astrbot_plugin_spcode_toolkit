@@ -2,3 +2,5 @@ ruff
 clang-format
 send2trash
 vivado-mcp>=0.1.0
+crap4py>=0.1.1,<0.2
+lizard>=1.7
