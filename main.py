@@ -35,6 +35,8 @@ from .tools._guidance_text import (
     ACTIVE_WORKTREE_GUIDANCE_TEMPLATE,
     CODE_CHECK_GUIDANCE,
     CODE_CHECK_GUIDANCE_MARKER,
+    CODE_CRAP_GUIDANCE,
+    CODE_CRAP_GUIDANCE_MARKER,
     CODE_FORMAT_GUIDANCE,
     CODE_FORMAT_GUIDANCE_MARKER,
     FILE_REMOVE_GUIDANCE,
@@ -850,6 +852,21 @@ class SPCodeToolkit(star.Star):
             return
         if inject_guidance(req, CODE_FORMAT_GUIDANCE, CODE_FORMAT_GUIDANCE_MARKER):
             logger.debug("[code_format] 已向 system_prompt 注入优先使用指引")
+
+    @filter.on_llm_request()
+    async def _code_crap_inject_guidance(
+        self, event: AstrMessageEvent, req: ProviderRequest
+    ):
+        """code_crap 工具启用时,把"优先使用 code_crap"指引注入到 system_prompt 末尾。
+
+        - 触发条件:code_crap 在 self._tool_names 中(独立 gate)
+        - 注入位置:req.system_prompt 末尾
+        - 防重复:由 inject_guidance 的 marker 机制保证
+        """
+        if "code_crap" not in self._tool_names:
+            return
+        if inject_guidance(req, CODE_CRAP_GUIDANCE, CODE_CRAP_GUIDANCE_MARKER):
+            logger.debug("[code_crap] 已向 system_prompt 注入优先使用指引")
 
     @filter.on_llm_request()
     async def _vivado_inject(self, event, req: ProviderRequest):

@@ -102,6 +102,15 @@ When you need to format a Python or C/C++/Java/JS/TS/C# source file:
 - DO NOT call `ruff format`, `clang-format`, or any other external formatter via `subprocess.run([...])` or shell.
 """
 
+CODE_CRAP_GUIDANCE_MARKER: str = "# Use `code_crap` for change-risk checks"
+
+CODE_CRAP_GUIDANCE: str = f"""
+{CODE_CRAP_GUIDANCE_MARKER}
+When you write or modify Python or C/C++ code, use the built-in `code_crap` tool to measure change risk (CRAP combines cyclomatic complexity with test coverage per function):
+- After implementing or refactoring functions in a file, run `code_crap` on it; fix functions flagged `moderate`/`high` (split complex functions, add tests).
+- Pass `lcov` when a coverage file exists; without it scores are worst-case (coverage assumed 0%).
+"""
+
 # vivado-mcp 集成 (PR-5 2026-07-23)
 VIVADO_INJECTION_MARKER: str = (
     "# === vivado-mcp integration guidance (auto-injected by spcode) ==="

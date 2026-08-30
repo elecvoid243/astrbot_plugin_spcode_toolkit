@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.24.0** · Author: elecvoid243 · 最后更新: 2026-08-14
+> **当前版本: v2.25.0** · Author: elecvoid243 · 最后更新: 2026-08-30
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -10,7 +10,7 @@
 - **项目绝对路径**: `F:\github\astrbot_plugin_spcode_toolkit`
 - **项目类型**: AstrBot 插件（Python）
 - **Python 版本**: 3.10+（用到 `list[str]`、`X | None` 等内置泛型）
-- **依赖管理**: `requirements.txt`（含 lint 工具与运行时依赖：`ruff`、`clang-format`、`send2trash`；AstrBot 宿主环境装运行时依赖）
+- **依赖管理**: `requirements.txt`（含 lint 工具与运行时依赖：`ruff`、`clang-format`、`crap4py`、`lizard`、`send2trash`；AstrBot 宿主环境装运行时依赖）
 - **测试框架**: pytest
 - **目标平台**: 以 Windows 为首选（`es.exe` / PowerShell 路径）；Linux/macOS 有 fallback
 - **仓库**: https://github.com/elecvoid243/astrbot_plugin_spcode_toolkit
@@ -46,6 +46,8 @@ pytest tests/test_codegraph_cmd.py
 pytest tests/test_codegraph_mcp.py
 pytest tests/test_codegraph_subsystem.py
 pytest tests/test_codegraph_status.py
+pytest tests/test_code_crap.py
+pytest tests/test_code_crap_api.py
 pytest tests/test_code_format.py
 pytest tests/test_config_filter.py
 pytest tests/test_docs_crud.py
@@ -150,7 +152,7 @@ astrbot_plugin_spcode_toolkit/
 ├── main.py                       # 插件入口：注册工具/命令/事件 + L1 鉴权 + 多个 @filter.on_llm_request 钩子
 ├── metadata.yaml                 # 插件元信息（AstrBot 加载识别）
 ├── _conf_schema.json             # 配置 schema（分组结构，_flatten_config 拍平）
-├── requirements.txt              # lint + 运行时依赖：ruff, clang-format, send2trash
+├── requirements.txt              # lint + 运行时依赖：ruff, clang-format, crap4py, lizard, send2trash
 ├── README.md                     # 项目说明（面向用户/社区）
 ├── AGENTS.md                     # 本文件（面向 coding agent）
 │
@@ -227,11 +229,12 @@ astrbot_plugin_spcode_toolkit/
     │   ├── admin.py              #   L1 管理员鉴权
     │   └── plan_mode.py          #   plan/build 模式控制器（过滤工具 + reminder 注入）
     │
-    ├── function_tools/           # 16 个 LLM FunctionTool 类（一文件一工具，PR-2 拆分）
+    ├── function_tools/           # 17 个 LLM FunctionTool 类（一文件一工具，PR-2 拆分）
     │   ├── __init__.py           #   ALL_TOOL_CLASSES 集中注册表
     │   ├── _common.py            #   record_and_run 模板
     │   ├── code_check.py
     │   ├── code_format.py        #   v2.14（写入工具）
+    │   ├── code_crap.py          #   v2.25 CRAP 风险检测（只读）
     │   ├── es_search.py
     │   ├── file_diff.py          #   astrbot_file_compare
     │   ├── file_remove.py
@@ -258,6 +261,7 @@ astrbot_plugin_spcode_toolkit/
     │
     ├── code_check.py             # [legacy 入口] code_check 业务实现
     ├── code_format.py            # [legacy 入口] code_format 业务实现
+    ├── code_crap.py              # [业务实现] code_crap 业务实现（2026-08-30）
     ├── es_search.py              # [legacy 入口] es_search 业务实现
     ├── file_compare.py           # [legacy 入口] 文件差异业务实现
     ├── file_remove.py            # [legacy 入口] 删除业务实现
@@ -312,7 +316,7 @@ astrbot_plugin_spcode_toolkit/
 
 1. **入口层** `main.py`
    - 在 AstrBot 启动时被加载
-   - 注册 AstrBot **工具**（16 个本地 LLM 工具，经 `enabled_tools` 过滤）
+   - 注册 AstrBot **工具**（17 个本地 LLM 工具，经 `enabled_tools` 过滤）
    - 注册 AstrBot **命令**（`/codegraph`(+别名`/cg`)、`/agentsmd`、`/project`、`/vivado`、`/plan`、`/build`）
    - 注册多个 `@filter.on_llm_request()` 钩子：AGENTS.md 注入、codegraph 指引、todo/file_remove/code_check/code_format 指引、L1 鉴权、plan 模式过滤
    - 读取 `_conf_schema.json` 配置（`_flatten_config` 拍平嵌套分组）
@@ -704,4 +708,4 @@ pytest tests/ --cov=tools                    # 覆盖率
 
 ---
 
-> Author: elecvoid243 · 本文档同步至 v2.24.0 (2026-08-14)
+> Author: elecvoid243 · 本文档同步至 v2.25.0 (2026-08-30)
