@@ -314,6 +314,18 @@ def test_line_coverage():
     assert code_crap._line_coverage(10, 16, da_map, "ghost.cpp") is None
 
 
+def test_line_coverage_basename_fallback():
+    """lcov 的 SF 是相对路径、源文件是绝对路径时,按 basename 兜底匹配。
+
+    注:basename 兜底允许跨目录同名匹配(与 crap4py 后缀匹配语义一致),
+    lcov 应由用户保证与被分析文件同源。
+    """
+    da_map = {"src/s.cpp": [(10, 1), (12, 0)]}
+    assert code_crap._line_coverage(10, 16, da_map, "F:/work/proj/src/s.cpp") == 0.5
+    assert code_crap._line_coverage(10, 16, da_map, "F:/anywhere/else/s.cpp") == 0.5
+    assert code_crap._line_coverage(10, 16, da_map, "F:/other/ghost.cpp") is None
+
+
 def test_cpp_path_lcov_and_worst_case(tmp_path: Path):
     pytest.importorskip("lizard", reason="lizard 未安装")
     f = _write_cpp(tmp_path)

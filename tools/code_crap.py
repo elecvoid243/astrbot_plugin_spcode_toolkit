@@ -360,14 +360,23 @@ def _parse_lcov_da(lcov_text: str) -> dict[str, list[tuple[int, int]]]:
 def _match_sf_records(
     da_map: dict[str, list[tuple[int, int]]], source_path: str
 ) -> list[tuple[int, int]] | None:
-    """SF 路径匹配:精确 → 归一化分隔符 → 后缀(与 crap4py _match_sf 同策略)。"""
-    if source_path in da_map:
-        return da_map[source_path]
-    norm = source_path.replace("\\", "/")
+    """SF 路径匹配:精确(绝对/相对) → 归一化分隔符后缀 → basename。
+
+    WHY basename 回退:gcovr/lcov 产出的 SF 常是相对路径(如 src/foo.cpp),
+    而本工具拿到的是绝对路径;先按全路径后缀匹配,再按 basename 兜底
+    (与 Python 路径 module_label=basename 的匹配语义对齐)。
+    同名 basename 歧义时取首个命中(与 crap4py _match_sf 的遍历序一致)。
+    """
+    candidates = [source_path, Path(source_path).name]
+    for cand in candidates:
+        if cand in da_map:
+            return da_map[cand]
+    norm_candidates = [c.replace("\\", "/") for c in candidates]
     for sf, records in da_map.items():
         norm_sf = sf.replace("\\", "/")
-        if norm_sf == norm or norm_sf.endswith("/" + norm):
-            return records
+        for cand in norm_candidates:
+            if norm_sf == cand or norm_sf.endswith("/" + cand):
+                return records
     return None
 
 
@@ -426,12 +435,13 @@ def _analyze_cpp(p: Path, lcov_path: str | None, max_crap: float) -> dict:
         cc = int(fn.cyclomatic_complexity)
         coverage = None
         if da_map is not None:
-            coverage = _line_coverage(fn.line_number, fn.end_line, da_map, str(p))
+            # lizard 的 FunctionInfo 起止行属性是 start_line/end_line(非 line_number)
+            coverage = _line_coverage(fn.start_line, fn.end_line, da_map, str(p))
         base_cov = coverage if coverage is not None else 0.0
         rows.append(
             _build_row(
                 fn.name,
-                fn.line_number,
+                fn.start_line,
                 fn.end_line,
                 cc,
                 coverage,
