@@ -318,11 +318,129 @@ def _analyze_python(p: Path, lcov_path: str | None, max_crap: float) -> dict:
     )
 
 
-# ── C/C++ 路径:lizard(占位,Task 2 实现)──────────────
+# ── C/C++ 路径:lizard ────────────────────────────────
+#
+# WHY 不用 crap4py 的 parse_lcov:它只消费 BRDA(分支)记录;C/C++ 需要
+# DA(行)记录。gcov 分支数据基于汇编级控制流(gcovr issue #339),
+# 对模板/异常代码失真,故 C++ 用行覆盖。
+
+
+def _parse_lcov_da(lcov_text: str) -> dict[str, list[tuple[int, int]]]:
+    """解析 LCOV 的 SF/DA/end_of_record → {sf_path: [(line, count), ...]}。
+
+    容错:行 0 记录、非整数、字段不足均跳过。
+    """
+    result: dict[str, list[tuple[int, int]]] = {}
+    current_sf: str | None = None
+    current: list[tuple[int, int]] = []
+    for raw in lcov_text.splitlines():
+        line = raw.strip()
+        if line.startswith("SF:"):
+            current_sf = line[3:]
+            current = []
+        elif line == "end_of_record":
+            if current_sf is not None:
+                result[current_sf] = current
+            current_sf = None
+            current = []
+        elif line.startswith("DA:") and current_sf is not None:
+            parts = line[3:].split(",")
+            if len(parts) < 2:
+                continue
+            try:
+                lineno = int(parts[0])
+                count = int(parts[1])
+            except ValueError:
+                continue
+            if lineno > 0:
+                current.append((lineno, count))
+    return result
+
+
+def _match_sf_records(
+    da_map: dict[str, list[tuple[int, int]]], source_path: str
+) -> list[tuple[int, int]] | None:
+    """SF 路径匹配:精确 → 归一化分隔符 → 后缀(与 crap4py _match_sf 同策略)。"""
+    if source_path in da_map:
+        return da_map[source_path]
+    norm = source_path.replace("\\", "/")
+    for sf, records in da_map.items():
+        norm_sf = sf.replace("\\", "/")
+        if norm_sf == norm or norm_sf.endswith("/" + norm):
+            return records
+    return None
+
+
+def _line_coverage(
+    start: int,
+    end: int,
+    da_map: dict[str, list[tuple[int, int]]],
+    source_path: str,
+) -> float | None:
+    """函数 [start, end] 行范围覆盖(hit 行 / in-range 行)。
+
+    返回 None = 源文件无 SF 记录(无覆盖率数据);
+    范围内无 DA 记录 = 1.0(对齐 crap4py 零记录=全覆盖语义)。
+    """
+    records = _match_sf_records(da_map, source_path)
+    if records is None:
+        return None
+    in_range = [count for lineno, count in records if start <= lineno <= end]
+    if not in_range:
+        return 1.0
+    return sum(1 for count in in_range if count > 0) / len(in_range)
 
 
 def _analyze_cpp(p: Path, lcov_path: str | None, max_crap: float) -> dict:
-    raise NotImplementedError("Task 2 实现")
+    """C/C++:lizard 逐函数 CC + 自建 LCOV DA 行覆盖。"""
+    try:
+        import lizard
+    except ImportError:
+        return proposal_reply(
+            False,
+            "lizard 未安装,无法分析 C/C++ 文件的 CRAP。请运行: pip install lizard",
+            error="lizard 未安装",
+            evidence={"cpp_file": str(p)},
+            options=["pip install lizard", "切换到 .py 文件(crap4py 路径)"],
+        )
+    crap_score = _get_crap_score()
+    if crap_score is None:
+        return proposal_reply(
+            False,
+            "crap4py 未安装(CRAP 公式依赖)。请运行: pip install crap4py",
+            error="crap4py 未安装",
+            evidence={"cpp_file": str(p)},
+            options=["pip install crap4py"],
+        )
+    try:
+        result = lizard.analyze_file(str(p))
+    except Exception as e:  # lizard 对非法源码抛出的异常类型不稳定,统一兜底
+        return {"ok": False, "error": f"lizard 解析失败: {e}"}
+
+    lcov_text, lcov_warning = _load_lcov_text(lcov_path)
+    da_map = _parse_lcov_da(lcov_text) if lcov_text is not None else None
+    coverage_source = "lcov" if da_map is not None else "none"
+
+    rows: list[dict] = []
+    for fn in result.function_list:
+        cc = int(fn.cyclomatic_complexity)
+        coverage = None
+        if da_map is not None:
+            coverage = _line_coverage(fn.line_number, fn.end_line, da_map, str(p))
+        base_cov = coverage if coverage is not None else 0.0
+        rows.append(
+            _build_row(
+                fn.name,
+                fn.line_number,
+                fn.end_line,
+                cc,
+                coverage,
+                float(crap_score(cc, base_cov)),
+            )
+        )
+    return _finalize(
+        p, "cpp", "lizard", coverage_source, lcov_warning, rows, max_crap
+    )
 
 
 # ── 调试入口 ─────────────────────────────────────────

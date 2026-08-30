@@ -14,6 +14,11 @@ Spec: docs/superpowers/specs/2026-08-30-code-crap-tool-design.md
   10: Python + lcov → 分支覆盖合并
   11: lcov 文件缺失 → 降级 + lcov_warning
   12: lcov 无匹配 SF → NA → 最坏情况
+  13: lizard 缺失 → proposal_reply
+  14: _parse_lcov_da 解析(容错)
+  15: _line_coverage 行覆盖计算
+  16: C/C++ 路径端到端(最坏 + lcov 行覆盖;lizard 未装则 SKIP)
+  17: 两路径统一 schema 同构(lizard 未装则 SKIP)
 """
 
 from __future__ import annotations
@@ -234,3 +239,128 @@ def test_python_lcov_no_matching_sf(tmp_path: Path):
     # resolve_coverage 返回 NA → coverage=None → 最坏情况
     assert by_name["simple"]["coverage"] is None
     assert by_name["simple"]["crap"] == 6.0
+
+
+# ── C/C++ 路径(lizard)────────────────────────────────
+
+# add: lines 1-3, cc=1;clamped: lines 5-12, cc=3(if + else if)
+_CPP_SRC = (
+    "int add(int a, int b) {\n"
+    "    return a + b;\n"
+    "}\n"
+    "\n"
+    "int clamped(int x) {\n"
+    "    if (x > 100) {\n"
+    "        return 100;\n"
+    "    } else if (x < 0) {\n"
+    "        return 0;\n"
+    "    }\n"
+    "    return x;\n"
+    "}\n"
+)
+
+_CPP_LCOV = (
+    "SF:sample.cpp\n"
+    "DA:2,1\n"
+    "DA:6,1\n"
+    "DA:7,0\n"
+    "DA:8,1\n"
+    "DA:9,0\n"
+    "DA:11,1\n"
+    "end_of_record\n"
+)
+
+
+def _write_cpp(tmp_path: Path) -> Path:
+    f = tmp_path / "sample.cpp"
+    f.write_text(_CPP_SRC, encoding="utf-8")
+    return f
+
+
+def test_cpp_lizard_missing(tmp_path: Path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "lizard", None)
+    f = _write_cpp(tmp_path)
+    result = code_crap.check(str(f))
+    assert result["ok"] is False
+    assert "lizard 未安装" in result["error"]
+    assert "pip install lizard" in result["proposal"]
+
+
+def test_parse_lcov_da():
+    text = (
+        "SF:a.cpp\n"
+        "DA:1,1\n"
+        "DA:0,5\n"  # 行 0 无效,跳过
+        "DA:x,1\n"  # 非法整数,跳过
+        "DA:3\n"  # 字段不足,跳过
+        "DA:5,0\n"
+        "end_of_record\n"
+        "SF:b.cpp\n"
+        "DA:9,2\n"
+        "end_of_record\n"
+    )
+    da_map = code_crap._parse_lcov_da(text)
+    assert da_map == {"a.cpp": [(1, 1), (5, 0)], "b.cpp": [(9, 2)]}
+    assert code_crap._parse_lcov_da("") == {}
+
+
+def test_line_coverage():
+    da_map = {"s.cpp": [(10, 1), (12, 0), (14, 5), (16, 0), (99, 1)]}
+    # 范围 10-16:4 条 in-range,2 条 hit → 0.5;line 99 不在范围
+    assert code_crap._line_coverage(10, 16, da_map, "s.cpp") == 0.5
+    # 范围内无 DA 记录 → 1.0(对齐 crap4py 零记录=全覆盖语义)
+    assert code_crap._line_coverage(20, 30, da_map, "s.cpp") == 1.0
+    # SF 无匹配 → None(无覆盖率数据)
+    assert code_crap._line_coverage(10, 16, da_map, "ghost.cpp") is None
+
+
+def test_cpp_path_lcov_and_worst_case(tmp_path: Path):
+    pytest.importorskip("lizard", reason="lizard 未安装")
+    f = _write_cpp(tmp_path)
+
+    # 无覆盖:最坏情况。add cc=1 → 2.0;clamped cc=3 → 12.0
+    result = code_crap.check(str(f))
+    assert result["ok"] is True
+    assert result["language"] == "cpp"
+    assert result["engine"] == "lizard"
+    assert result["coverage_source"] == "none"
+    by_name = {}
+    for r in result["functions"]:
+        for key in ("add", "clamped"):
+            if key in r["name"]:
+                by_name[key] = r
+    assert by_name["add"]["cc"] == 1
+    assert by_name["add"]["crap"] == 2.0
+    assert by_name["add"]["line_start"] == 1
+    assert by_name["clamped"]["cc"] == 3
+    assert by_name["clamped"]["crap"] == 12.0
+    assert "最坏情况" in by_name["clamped"]["suggestion"]
+
+    # 有覆盖:行覆盖。add(1-3):DA line2 hit → 1.0 → crap 1.0
+    # clamped(5-12):DA 6(1),7(0),8(1),9(0),11(1) → 3/5=0.6
+    # crap = 9*(0.4)^3 + 3 = 3.576 → 3.6
+    lcov = tmp_path / "lcov.info"
+    lcov.write_text(_CPP_LCOV, encoding="utf-8")
+    result = code_crap.check(str(f), str(lcov))
+    assert result["coverage_source"] == "lcov"
+    by_name = {}
+    for r in result["functions"]:
+        for key in ("add", "clamped"):
+            if key in r["name"]:
+                by_name[key] = r
+    assert by_name["add"]["coverage"] == 1.0
+    assert by_name["add"]["crap"] == 1.0
+    assert by_name["clamped"]["coverage"] == pytest.approx(0.6, abs=1e-6)
+    assert by_name["clamped"]["crap"] == pytest.approx(3.6, abs=0.05)
+
+
+def test_cpp_schema_isomorphic_with_python(tmp_path: Path):
+    """统一 schema 断言:两路径顶层字段同构。"""
+    pytest.importorskip("lizard", reason="lizard 未安装")
+    py_f = _write_py(tmp_path)
+    cpp_f = _write_cpp(tmp_path)
+    py = code_crap.check(str(py_f))
+    cpp = code_crap.check(str(cpp_f))
+    assert set(py.keys()) - {"lcov_warning"} == set(cpp.keys()) - {"lcov_warning"}
+    assert set(py["functions"][0].keys()) == set(cpp["functions"][0].keys())
+    assert set(py["summary"].keys()) == set(cpp["summary"].keys())
