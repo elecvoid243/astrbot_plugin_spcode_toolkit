@@ -86,7 +86,6 @@ def _make_plugin() -> MagicMock:
         "file_remove_blacklist": None,
     }
     # agentsmd / codegraph 子系统 — 真实 ProjectManager 实例
-    from tools.agentsmd import AgentsmdSubsystem
     from tools.project import ProjectManager
 
     plugin.agentsmd = AgentsmdSubsystem(
