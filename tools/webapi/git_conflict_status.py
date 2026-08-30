@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ._helpers import (
-    ReasonCode,
     _detect_conflict_operation,
     _git_endpoint_preflight,
     _JSONResponseCompat,
