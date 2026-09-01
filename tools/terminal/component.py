@@ -468,6 +468,9 @@ class TerminalSessionManager:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     timeout=5,
+                    # CREATE_NO_WINDOW: spawning taskkill under a GUI
+                    # (pythonw) host would otherwise flash a console.
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )
             except Exception:
                 session.process.terminate()
