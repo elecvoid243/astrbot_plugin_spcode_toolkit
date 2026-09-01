@@ -251,6 +251,9 @@ def test_handle_get_project_status_returns_loaded(plugin):
     assert payload["data"]["loaded"] is True
     assert payload["data"]["directory"] == "/tmp/z"
     assert payload["data"]["umo"] == "webchat:webchat!u!c2"
+    # 2026-09-01: boot_id 必须存在且非空(供前端脏 tag 失效判断)
+    assert isinstance(payload["data"]["boot_id"], str)
+    assert payload["data"]["boot_id"]
 
 
 def test_handle_get_project_status_returns_unloaded(plugin):
@@ -263,6 +266,9 @@ def test_handle_get_project_status_returns_unloaded(plugin):
     assert payload["data"]["directory"] is None
     # 2026-07-25: 新字段在未加载分支应为空 list,而非 key 缺失或 null
     assert payload["data"]["skipped_substeps"] == []
+    # 2026-09-01: 未加载分支同样携带 boot_id
+    assert isinstance(payload["data"]["boot_id"], str)
+    assert payload["data"]["boot_id"]
 
 
 def test_handle_get_project_status_returns_skipped_substeps(plugin):

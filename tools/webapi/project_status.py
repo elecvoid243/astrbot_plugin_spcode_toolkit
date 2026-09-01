@@ -2,10 +2,20 @@
 """GET /spcode/project-status — 列出已加载项目状态。"""
 
 from __future__ import annotations
+
+import os
+import time as _time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from main import SPCodeToolkit
+
+# 进程级 boot 标识(2026-09-01, elecvoid243):
+# 插件模块每次加载(即 AstrBot 进程启动或插件热重载)时生成一次。
+# dashboard 用它来使"会话已加载"的前端脏 tag 失效 —— 后端重启后
+# ``tools.project.state`` 已清空,前端 tag 记录的 boot_id 与当前不一致,
+# 必须重新加载项目。
+_BOOT_ID = f"{os.getpid()}-{_time.time_ns()}"
 
 
 async def handle(
@@ -32,7 +42,8 @@ async def handle(
                     "loaded_at": float | None,
                     "umo": str | None,
                     "all_loaded_count": int,
-                    "skipped_substeps": list[str]  # (2026-07-25) 新增
+                    "skipped_substeps": list[str],  # (2026-07-25) 新增
+                    "boot_id": str  # (2026-09-01) 进程级 boot 标识
                 }
             }
 
@@ -42,6 +53,9 @@ async def handle(
           空 list 表示完整执行了所有子步骤。
           前端可据此在 dashboard 上显示「项目已加载,但跳过了 AGENTS.md/codegraph」
           之类的提示。
+        - ``boot_id``: 进程级标识(pid + 模块加载时间戳),插件每次加载
+          生成一次。dashboard 用它使"会话已加载"脏 tag 在后端重启后失效
+          (后端 ``tools.project.state`` 为进程内存,重启即清空)。
 
     PR-7 (2026-06-23): 数据源从 ``plugin._loaded_projects`` 迁移到
     ``tools.project.state`` 模块级单例(handler 调用
@@ -75,6 +89,7 @@ async def handle(
                     "umo": umo_param,
                     "all_loaded_count": all_count,
                     "skipped_substeps": [],
+                    "boot_id": _BOOT_ID,
                 },
             }
         return {
@@ -91,6 +106,7 @@ async def handle(
                 "skipped_substeps": sorted(
                     info.get("skipped_substeps", set())
                 ),
+                "boot_id": _BOOT_ID,
             },
         }
 
@@ -109,6 +125,7 @@ async def handle(
                 "umo": None,
                 "all_loaded_count": 0,
                 "skipped_substeps": [],
+                "boot_id": _BOOT_ID,
             },
         }
     # Pick the entry with the largest loaded_at (most recent).
@@ -127,5 +144,6 @@ async def handle(
             "skipped_substeps": sorted(
                 recent_info.get("skipped_substeps", set())
             ),
+            "boot_id": _BOOT_ID,
         },
     }
