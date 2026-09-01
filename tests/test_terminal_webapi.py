@@ -149,7 +149,29 @@ async def test_interrupt_live_session(mgr, tmp_cwd):
     res = await handle_interrupt(None, "umo:w", {"session_id": sid})
     assert res["status"] == "ok"
     assert res["data"]["session_id"] == sid
+    assert res["data"]["interrupted"] is False  # idle shell: nothing ran
     await mgr.terminate(owner_id="umo:w", session_id=sid)
+
+
+@pytest.mark.asyncio
+async def test_interrupt_kills_running_child(mgr, tmp_cwd):
+    """A running external command (child process) is terminated while the
+    shell host survives."""
+    started = await mgr.start(
+        owner_id="umo:v", shell="powershell", cwd=tmp_cwd,
+    )
+    sid = started["session_id"]
+    await asyncio.sleep(0.5)
+    # ping -n 60 spawns a child process and blocks for ~60s.
+    await mgr.write(owner_id="umo:v", session_id=sid, chars="ping -n 60 127.0.0.1\r\n")
+    await asyncio.sleep(2.0)
+    res = await mgr.interrupt(owner_id="umo:v", session_id=sid)
+    assert res["interrupted"] is True
+    assert res["status"] == "running"  # shell host still alive
+    await asyncio.sleep(1.0)
+    st = await mgr.poll(owner_id="umo:v", session_id=sid, yield_time_ms=0, advance=False)
+    assert st["status"] == "running"  # prompt will come back (pool test side-effect-free)
+    await mgr.terminate(owner_id="umo:v", session_id=sid)
 
 
 @pytest.mark.asyncio
