@@ -32,6 +32,13 @@ Dashboard / WebUI:
   * ``/spcode/git-worktree-unlock`` (POST)  # v2.14.0 (2026-06-26) — PR-D UNLOCK endpoint
   * ``/spcode/codegraph-status``    (GET)  # v2.14.x (2026-06-28)
 
+  * ``/spcode/terminal/start``    (POST)  # 2026-09-01 — 终端会话启动
+  * ``/spcode/terminal/stream``   (GET)   # 2026-09-01 — 终端输出 SSE 流
+  * ``/spcode/terminal/input``    (POST)  # 2026-09-01 — 终端输入
+  * ``/spcode/terminal/interrupt`` (POST)  # 2026-09-01 — 终端中断
+  * ``/spcode/terminal/stop``     (POST)  # 2026-09-01 — 终端终止
+  * ``/spcode/terminal/status``   (GET)   # 2026-09-01 — 终端状态快照
+
   * ``/spcode/git-file``         (GET)   # spec B (2026-07-11)
   * ``/spcode/docs``             (POST)  # spec B (2026-07-11) — create/upsert
   * ``/spcode/docs``             (PATCH) # spec B (2026-07-11) — rename
@@ -114,6 +121,7 @@ from . import (
     project_load,  # 2026-07-28 静默加载项目 (POST /spcode/project-load)
     project_status,
     project_unload,  # 2026-08-06 静默卸载项目 (POST /spcode/project-unload)
+    terminal,  # 2026-09-01: 终端子页面 (POST/GET /spcode/terminal/*)
     vivado_status,  # PR-4 2026-07-23
     worktree_activate,  # 2026-08-20 激活/取消激活 worktree (POST /spcode/worktree-activate)
 )
@@ -512,6 +520,42 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         code_format.handle,
         "对 repo 内单文件执行 code_format（默认写回，check=true 预览）",
     ),
+    (
+        "/spcode/terminal/start",
+        ["POST"],
+        terminal.handle_start,
+        "启动/替换当前会话的终端 shell 会话(供 dashboard 调用)",
+    ),
+    (
+        "/spcode/terminal/stream",
+        ["GET"],
+        terminal.handle_stream,
+        "终端输出 SSE 流(供 dashboard 调用)",
+    ),
+    (
+        "/spcode/terminal/input",
+        ["POST"],
+        terminal.handle_input,
+        "向终端写入输入(供 dashboard 调用)",
+    ),
+    (
+        "/spcode/terminal/interrupt",
+        ["POST"],
+        terminal.handle_interrupt,
+        "向终端发送中断信号 Ctrl+C(供 dashboard 调用)",
+    ),
+    (
+        "/spcode/terminal/stop",
+        ["POST"],
+        terminal.handle_stop,
+        "终止终端会话(供 dashboard 调用)",
+    ),
+    (
+        "/spcode/terminal/status",
+        ["GET"],
+        terminal.handle_status,
+        "终端会话状态与输出快照(供 dashboard 调用)",
+    ),
 ]
 
 # 旧方法名 -> 新模块级 handler (for back-compat / introspection)
@@ -576,6 +620,12 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_stash_drop": git_stash.handle_drop,  # 2026-08-21
     "handle_post_code_check": code_check.handle,  # 2026-08-12
     "handle_post_code_format": code_format.handle,  # 2026-08-12
+    "handle_post_terminal_start": terminal.handle_start,  # 2026-09-01
+    "handle_get_terminal_stream": terminal.handle_stream,  # 2026-09-01
+    "handle_post_terminal_input": terminal.handle_input,  # 2026-09-01
+    "handle_post_terminal_interrupt": terminal.handle_interrupt,  # 2026-09-01
+    "handle_post_terminal_stop": terminal.handle_stop,  # 2026-09-01
+    "handle_get_terminal_status": terminal.handle_status,  # 2026-09-01
 }
 
 
@@ -679,6 +729,8 @@ def register_webapi_routes(plugin: SPCodeToolkit) -> None:
     2026-08-20: 60 -> 61 (+worktree-activate POST /spcode/worktree-activate)
     2026-08-21: 61 -> 65 (+git-stash GET/POST +git-stash-pop POST
                 +git-stash-drop POST)
+    2026-09-01: 65 -> 71 (+spcode/terminal/* 6 端点: start/stream/input/
+                interrupt/stop/status)
     """
     for route, methods, handler, desc in ROUTES:
         try:
@@ -745,6 +797,7 @@ __all__ = [
     "plan_mode",
     "project_load",  # 2026-07-28 静默加载
     "project_status",
+    "terminal",  # 2026-09-01
     "vivado_status",  # PR-4 2026-07-23
     "worktree_activate",  # 2026-08-20
 ]
