@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import psutil
+
 from astrbot.core.utils.astrbot_path import get_astrbot_system_tmp_path
 
 from .decode import decode_bytes_with_fallback
@@ -329,47 +331,59 @@ class TerminalSessionManager:
         owner_id: str,
         session_id: str,
     ) -> dict[str, Any]:
-        """Send an interrupt (Ctrl+C semantics) to the process group.
+        """Interrupt the currently running command (Ctrl+C semantics).
 
-        Windows delivers ``CTRL_C_EVENT`` only to the child's own
-        process group (``CREATE_NEW_PROCESS_GROUP``). ``CTRL_BREAK_EVENT``
-        must NOT be used: PowerShell 5.1 treats it as host termination,
-        killing the whole session instead of interrupting the running
-        command (observed 2026-09-01).
+        PowerShell 5.1 with a piped stdin treats console ``CTRL_C_EVENT``
+        as host termination (observed 2026-09-01: the session dies instead
+        of the command being interrupted), so the reliable approach is to
+        terminate the shell's **direct child process** — the running
+        python/git/npm… command — while the shell host survives and keeps
+        the session alive. Inbuilt cmdlets (e.g. ``Start-Sleep``) cannot
+        be interrupted without killing the host.
 
         Args:
             owner_id: Unified message origin owning the session.
             session_id: Terminal session identifier.
 
         Returns:
-            ``{session_id, pid, status}``.
+            ``{session_id, pid, status, interrupted}`` where
+            ``interrupted`` is True when a child command was terminated.
         """
         session = await self._get_owned_session(owner_id, session_id)
+        killed = 0
         if session.process.returncode is None:
-            if os.name == "nt":
-                try:
-                    session.process.send_signal(
-                        getattr(signal, "CTRL_C_EVENT", signal.SIGTERM)
-                    )
-                except (OSError, ValueError) as exc:
-                    # No shared console (e.g. a service host): console
-                    # control events cannot be delivered. Log and keep
-                    # the endpoint responsive; the user can still stop.
-                    logger.warning(
-                        "[terminal] interrupt delivery failed for %s: %s",
-                        session_id,
-                        exc,
-                    )
-            else:
-                try:
-                    os.killpg(session.process.pid, signal.SIGINT)
-                except ProcessLookupError:
-                    pass
+            killed = self._kill_child_processes(session.process.pid)
         return {
             "session_id": session_id,
             "pid": session.process.pid,
             "status": self._status_of(session, session.process.returncode),
+            "interrupted": killed > 0,
         }
+
+    @staticmethod
+    def _kill_child_processes(parent_pid: int) -> int:
+        """Terminate the direct child processes of a shell (running command).
+
+        Args:
+            parent_pid: The shell process PID (usually its own process
+                group id).
+
+        Returns:
+            Number of child processes terminated.
+        """
+        try:
+            parent = psutil.Process(parent_pid)
+            children = parent.children(recursive=False)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return 0
+        killed = 0
+        for child in children:
+            try:
+                child.terminate()
+                killed += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        return killed
 
     async def terminate(
         self,
