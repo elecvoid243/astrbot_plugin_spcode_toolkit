@@ -309,6 +309,13 @@ class SPCodeToolkit(star.Star):
             cfg["default_cwd"] or "(auto)",
         )
 
+        # 构造 terminal 会话管理器并写入 tools.terminal.runtime 模块级单例
+        from .tools.terminal import runtime as _terminal_runtime
+        from .tools.terminal.component import TerminalSessionManager
+
+        _terminal_runtime.component = TerminalSessionManager()
+        logger.info("[terminal] manager initialized")
+
     @staticmethod
     def _flatten_config(config: dict) -> dict:
         """拍平嵌套分组: {"codegraph": {"install_dir": "..."}} → {"codegraph_install_dir": "..."}。"""
@@ -686,6 +693,18 @@ class SPCodeToolkit(star.Star):
             finally:
                 _inta_runtime.component = None
                 _inta_runtime.default_cwd = ""
+
+        # 停 terminal 管理器:终止所有残留终端进程
+        from .tools.terminal import runtime as _terminal_runtime
+
+        if _terminal_runtime.component is not None:
+            try:
+                logger.info("[terminal] terminating manager...")
+                await _terminal_runtime.component.shutdown_sessions()
+            except Exception as e:  # pragma: no cover — 防御性
+                logger.warning("[terminal] shutdown error: %s", e)
+            finally:
+                _terminal_runtime.component = None
 
         # vivado shutdown (PR-2 2026-07-23, before codegraph)
         await self._vivado.shutdown()
