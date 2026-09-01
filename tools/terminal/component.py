@@ -109,13 +109,17 @@ class TerminalSessionManager:
 
         process_kwargs: dict[str, Any] = {}
         if sys.platform == "win32":
-            # CREATE_NEW_PROCESS_GROUP keeps CTRL_BREAK_EVENT (interrupt)
-            # working by giving the child its own process group.
-            # CREATE_NO_WINDOW must NOT be used here — it drops the
-            # console entirely and breaks that interrupt path (same
-            # reasoning as AstrBot core local.py).
-            process_kwargs["creationflags"] = getattr(
-                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+            # The shell gets its OWN hidden console (CREATE_NEW_CONSOLE +
+            # SW_HIDE). PowerShell 5.1 detects a console and updates the
+            # console window title after each command; with a shared host
+            # console (often a ConPTY), that title update fails with 0xE9
+            # after a child command is interrupted and the host EXITS
+            # (observed 2026-09-02). A dedicated hidden console keeps the
+            # title update alive and PS 5.1 sessions working.
+            # CREATE_NEW_PROCESS_GROUP is kept alongside for sandboxing.
+            process_kwargs["creationflags"] = (
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                | getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
             )
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -379,6 +383,10 @@ class TerminalSessionManager:
         killed = 0
         for child in children:
             try:
+                # A dedicated hidden console spawns a conhost.exe child —
+                # never terminate it (the shell needs its console host).
+                if child.name().lower() in ("conhost.exe", "conhost"):
+                    continue
                 child.terminate()
                 killed += 1
             except (psutil.NoSuchProcess, psutil.AccessDenied):
