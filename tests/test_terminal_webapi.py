@@ -140,3 +140,20 @@ async def test_stream_error_when_session_missing(mgr):
 async def test_interrupt_unknown_session(mgr):
     res = await handle_interrupt(None, "umo:x", {"session_id": "term_nope"})
     assert res["data"]["error"] == "session_not_found"
+
+
+@pytest.mark.asyncio
+async def test_interrupt_live_session(mgr, tmp_cwd):
+    started = await handle_start(None, "umo:w", {"shell": "powershell", "cwd": tmp_cwd})
+    sid = started["data"]["session_id"]
+    res = await handle_interrupt(None, "umo:w", {"session_id": sid})
+    assert res["status"] == "ok"
+    assert res["data"]["session_id"] == sid
+    await mgr.terminate(owner_id="umo:w", session_id=sid)
+
+
+@pytest.mark.asyncio
+async def test_interrupt_manager_unavailable(monkeypatch):
+    monkeypatch.setattr(_runtime, "component", None)
+    res = await handle_interrupt(None, "umo:x", {"session_id": "term_x"})
+    assert res["data"]["error"] == "manager_unavailable"

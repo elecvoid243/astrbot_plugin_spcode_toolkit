@@ -94,6 +94,11 @@ async def handle_start(
             "status": "ok",
             "data": {"error": "start_failed", "reason": str(exc)},
         }
+    except RuntimeError as exc:
+        return {
+            "status": "ok",
+            "data": {"error": "manager_unavailable", "reason": str(exc)},
+        }
     return {"status": "ok", "data": data}
 
 
@@ -197,6 +202,11 @@ async def handle_input(
             "status": "ok",
             "data": {"error": "session_not_found", "reason": str(exc)},
         }
+    except RuntimeError as exc:
+        return {
+            "status": "ok",
+            "data": {"error": "manager_unavailable", "reason": str(exc)},
+        }
     return {"status": "ok", "data": data}
 
 
@@ -228,6 +238,11 @@ async def handle_interrupt(
             "status": "ok",
             "data": {"error": "session_not_found", "reason": str(exc)},
         }
+    except RuntimeError as exc:
+        return {
+            "status": "ok",
+            "data": {"error": "manager_unavailable", "reason": str(exc)},
+        }
     return {"status": "ok", "data": data}
 
 
@@ -258,6 +273,11 @@ async def handle_stop(
         return {
             "status": "ok",
             "data": {"error": "session_not_found", "reason": str(exc)},
+        }
+    except RuntimeError as exc:
+        return {
+            "status": "ok",
+            "data": {"error": "manager_unavailable", "reason": str(exc)},
         }
     return {"status": "ok", "data": data}
 

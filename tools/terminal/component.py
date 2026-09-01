@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import shutil
 import signal
@@ -27,6 +28,8 @@ from typing import Any
 from astrbot.core.utils.astrbot_path import get_astrbot_system_tmp_path
 
 from .decode import decode_bytes_with_fallback
+
+logger = logging.getLogger(__name__)
 
 SHELL_KINDS = ("powershell", "cmd")
 
@@ -328,6 +331,12 @@ class TerminalSessionManager:
     ) -> dict[str, Any]:
         """Send an interrupt (Ctrl+C semantics) to the process group.
 
+        Windows delivers ``CTRL_C_EVENT`` only to the child's own
+        process group (``CREATE_NEW_PROCESS_GROUP``). ``CTRL_BREAK_EVENT``
+        must NOT be used: PowerShell 5.1 treats it as host termination,
+        killing the whole session instead of interrupting the running
+        command (observed 2026-09-01).
+
         Args:
             owner_id: Unified message origin owning the session.
             session_id: Terminal session identifier.
@@ -338,9 +347,19 @@ class TerminalSessionManager:
         session = await self._get_owned_session(owner_id, session_id)
         if session.process.returncode is None:
             if os.name == "nt":
-                session.process.send_signal(
-                    getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM)
-                )
+                try:
+                    session.process.send_signal(
+                        getattr(signal, "CTRL_C_EVENT", signal.SIGTERM)
+                    )
+                except (OSError, ValueError) as exc:
+                    # No shared console (e.g. a service host): console
+                    # control events cannot be delivered. Log and keep
+                    # the endpoint responsive; the user can still stop.
+                    logger.warning(
+                        "[terminal] interrupt delivery failed for %s: %s",
+                        session_id,
+                        exc,
+                    )
             else:
                 try:
                     os.killpg(session.process.pid, signal.SIGINT)
