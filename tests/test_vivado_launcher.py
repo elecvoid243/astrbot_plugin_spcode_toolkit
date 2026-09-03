@@ -127,6 +127,7 @@ class TestEnsureStdioAllowlist:
         assert first == second
         items = {x.strip().lower() for x in first.split(",") if x.strip()}
         assert "python" in items
+        assert "pythonw" in items
         assert "vivado_mcp" in items
 
     def test_preserves_existing(self, vivado_mcp_module, monkeypatch):
@@ -137,4 +138,4 @@ class TestEnsureStdioAllowlist:
             for x in os.environ["ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS"].split(",")
             if x.strip()
         }
-        assert {"codegraph", "node", "python", "vivado_mcp"} <= items
+        assert {"codegraph", "node", "python", "pythonw", "vivado_mcp"} <= items

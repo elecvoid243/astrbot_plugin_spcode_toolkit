@@ -4,7 +4,7 @@
 - detect_vivado_launcher: 检测 vivado-mcp Python 包可用性
 - find_vivado_executable: 查找 Vivado 工具链可执行文件 (三层 fallback)
 - build_env: 构造透传给 MCP 子进程的环境变量 (VIVADO_PATH)
-- ensure_stdio_allowlist: 追加 stdio 白名单 (python + vivado_mcp)
+- ensure_stdio_allowlist: 追加 stdio 白名单 (python/pythonw + vivado_mcp)
 - normalize_path: Windows 反斜杠转正斜杠 (Tcl 兼容)
 """
 
@@ -93,11 +93,13 @@ def find_vivado_executable(*, configured: str = "") -> str:
 
 
 _STDIO_ALLOWLIST_ENV = "ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS"
-_REQUIRED_FOR_VIVADO = frozenset({"python", "vivado_mcp"})
+# WHY pythonw: 启动命令是 sys.executable,AstrBot 以后台模式(pythonw.exe)运行时
+# basename 是 pythonw,白名单只放行 python 会导致 vivado MCP 启动被拦截。
+_REQUIRED_FOR_VIVADO = frozenset({"python", "pythonw", "vivado_mcp"})
 
 
 def ensure_stdio_allowlist() -> None:
-    """把 python + vivado_mcp 追加到 stdio 白名单 (idempotent)。
+    """把 python/pythonw + vivado_mcp 追加到 stdio 白名单 (idempotent)。
 
     必须在 enable_mcp_server("vivado", ...) 之前调用。
     """
