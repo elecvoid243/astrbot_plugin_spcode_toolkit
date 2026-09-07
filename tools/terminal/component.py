@@ -12,6 +12,7 @@ Author: elecvoid243 · 2026-09-01
 from __future__ import annotations
 
 import asyncio
+import codecs
 import hashlib
 import logging
 import os
@@ -35,6 +36,20 @@ logger = logging.getLogger(__name__)
 
 SHELL_KINDS = ("powershell", "cmd")
 
+# PowerShell 5.1 writes redirected stdout with ``[Console]::OutputEncoding``,
+# which on a Chinese Windows defaults to the OEM code page (cp936/gbk):
+# "目录" is emitted as GBK bytes ``C4 BF C2 BC`` and the UTF-8-first
+# decoder mis-decodes that as "Ŀ¼" (the GBK sequence is valid UTF-8).
+# Force UTF-8 on both console encodings plus ``$OutputEncoding`` (native
+# command piping, e.g. ``git log`` output) via ``-NoExit -Command``;
+# ``-NoExit`` keeps the shell interactive after the init command runs.
+# The init is idempotent for pwsh (PowerShell 7, already UTF-8 by default).
+PS_UTF8_INIT = (
+    "[Console]::InputEncoding=[System.Text.Encoding]::UTF8;"
+    "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;"
+    "$OutputEncoding=[System.Text.Encoding]::UTF8"
+)
+
 
 @dataclass
 class _TerminalSession:
@@ -51,6 +66,8 @@ class _TerminalSession:
     wait_task: asyncio.Task[int]
     cursor: int = 0
     terminated: bool = False
+    # Stateful GB18030 decoder for cmd sessions (see _decode_cmd_output).
+    gbk_decoder: codecs.IncrementalDecoder | None = None
 
 
 class TerminalSessionManager:
@@ -104,8 +121,17 @@ class TerminalSessionManager:
         output_path.touch()
 
         run_env = os.environ.copy()
-        run_env["PYTHONIOENCODING"] = "utf-8"
-        run_env["PYTHONUTF8"] = "1"
+        if shell == "powershell":
+            # PowerShell sessions live in a forced UTF-8 world (see
+            # PS_UTF8_INIT): child interpreters (python.exe etc.) must
+            # emit UTF-8 to match.
+            run_env["PYTHONIOENCODING"] = "utf-8"
+            run_env["PYTHONUTF8"] = "1"
+        # cmd sessions stay in the OEM/ANSI byte world (cp936 on a
+        # Chinese Windows): builtins and children flush GBK bytes and
+        # write()/poll() convert accordingly. Injecting PYTHONUTF8 here
+        # would make python.exe children emit UTF-8 and corrupt the
+        # otherwise-consistent GBK stream.
 
         process_kwargs: dict[str, Any] = {}
         if sys.platform == "win32":
@@ -197,7 +223,7 @@ class TerminalSessionManager:
         exe = shutil.which("pwsh") or shutil.which("powershell")
         if exe is None:
             raise ValueError("PowerShell executable not found on PATH")
-        return [exe, "-NoLogo", "-NoProfile"]
+        return [exe, "-NoLogo", "-NoProfile", "-NoExit", "-Command", PS_UTF8_INIT]
 
     async def poll(
         self,
@@ -285,11 +311,15 @@ class TerminalSessionManager:
         # output file are removed unconditionally — this poll already
         # read up to max_output_chars of the remaining tail.
         session_closed = exit_code is not None
+        if session.shell_kind == "cmd":
+            stdout_text = self._decode_cmd_output(session, raw_output, advance)
+        else:
+            stdout_text = decode_bytes_with_fallback(raw_output)
         result = {
             "session_id": session_id,
             "pid": session.process.pid,
             "status": status,
-            "stdout": decode_bytes_with_fallback(raw_output),
+            "stdout": stdout_text,
             "exit_code": exit_code,
             "cursor": next_cursor,
             "has_more": has_more,
@@ -321,7 +351,14 @@ class TerminalSessionManager:
         session = await self._get_owned_session(owner_id, session_id)
         if session.process.returncode is not None or session.process.stdin is None:
             raise ValueError(f"Shell session {session_id} is not accepting input.")
-        session.process.stdin.write(chars.encode("utf-8"))
+        # cmd.exe parses piped stdin with the ANSI code page (cp936 on a
+        # Chinese Windows), so input must be transcoded to GBK for those
+        # sessions; PowerShell sessions (forced UTF-8) use UTF-8.
+        if session.shell_kind == "cmd":
+            data = chars.encode("gbk", errors="replace")
+        else:
+            data = chars.encode("utf-8")
+        session.process.stdin.write(data)
         await session.process.stdin.drain()
         return {
             "session_id": session_id,
@@ -468,6 +505,33 @@ class TerminalSessionManager:
         if session is None or session.owner_id != owner_id:
             raise ValueError(f"Shell session {session_id} was not found.")
         return session
+
+    @staticmethod
+    def _decode_cmd_output(
+        session: _TerminalSession, raw_output: bytes, advance: bool
+    ) -> str:
+        """Decode cmd session output with a stateful GB18030 decoder.
+
+        cmd.exe on a Chinese Windows emits GBK bytes; decoding each poll
+        chunk independently would garble a multi-byte sequence split at
+        a chunk boundary, so the decoder state lives on the session.
+
+        Args:
+            session: The owned terminal session.
+            raw_output: Raw bytes read from the output file.
+            advance: False = peek (status snapshot) — the snapshot reads
+                from byte 0 while the main decoder has already consumed
+                bytes up to the session cursor, so a fresh decoder is
+                used instead of the advanced state.
+
+        Returns:
+            Decoded text (GB18030, superset of GBK).
+        """
+        if not advance:
+            return codecs.getincrementaldecoder("gb18030")().decode(raw_output)
+        if session.gbk_decoder is None:
+            session.gbk_decoder = codecs.getincrementaldecoder("gb18030")()
+        return session.gbk_decoder.decode(raw_output)
 
     @staticmethod
     def _status_of(session: _TerminalSession, exit_code: int | None) -> str:
