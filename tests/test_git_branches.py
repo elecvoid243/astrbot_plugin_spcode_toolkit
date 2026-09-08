@@ -430,3 +430,32 @@ def test_parse_for_each_ref_handles_remote():
     assert result[0]["name"] == "origin/main"
     assert result[0]["remote"] is True
     assert result[0]["current"] is False
+
+
+# ── v2.26.0 (2026-09-08) tags 列表 ─────────────────────────
+
+
+def test_branches_response_includes_tags(existing_repo):
+    """tags 字段列出轻量 / 附注 tag,附注剥离到 commit sha。"""
+    subprocess.run(["git", "-C", str(existing_repo), "tag", "v1.0.0"], check=True)
+    subprocess.run(
+        ["git", "-C", str(existing_repo), "tag", "-a", "v1.1.0", "-m", "r"],
+        check=True,
+    )
+    sha = subprocess.run(
+        ["git", "-C", str(existing_repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    umo = "test:branches:tags"
+    _state.put(umo, {"directory": str(existing_repo), "loaded_at": 1.0})
+    try:
+        plugin = _make_plugin()
+        result = _run(git_branches.handle(plugin, umo=umo))
+    finally:
+        _state.pop(umo)
+
+    tags = {t["name"]: t for t in result["data"]["tags"]}
+    assert tags["v1.0.0"] == {"name": "v1.0.0", "sha": sha, "annotated": False}
+    assert tags["v1.1.0"] == {"name": "v1.1.0", "sha": sha, "annotated": True}

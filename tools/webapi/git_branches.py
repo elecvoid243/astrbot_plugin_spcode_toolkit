@@ -18,6 +18,7 @@ from ._helpers import (
     _JSONResponseCompat,
     _make_envelope,
     _parse_for_each_ref,
+    _parse_tag_refs,
     _run_git_async,
 )
 
@@ -103,6 +104,30 @@ async def handle(
         # git remote 失败不阻塞主流程: ETag 回退, remotes 返回空列表。
         pass
 
+    # v2.26.0 (2026-09-08, elecvoid243): tags 列表供 dashboard 的 Ref 选择器
+    # 分组展示。必须纳入 ETag —— 新建 / 删除 tag 不改 HEAD / porcelain /
+    # upstream_track,否则 30s 轮询会持续命中 304,新 tag 永不出现。
+    tags: list[dict] = []
+    try:
+        tags_result = await _run_git_async(
+            [
+                git_bin,
+                "-C",
+                str(repo_dir),
+                "for-each-ref",
+                "--format=%(refname:short)%00%(objectname)%00%(*objectname)",
+                "refs/tags/",
+            ],
+        )
+        if tags_result.get("ok", False):
+            tags_blob = (tags_result.get("stdout") or "").strip()
+            if tags_blob:
+                extra_etag_inputs += (tags_blob,)
+            tags = _parse_tag_refs(tags_blob)
+    except Exception:
+        # 标签失败不阻塞分支列表:返回空 tags + ETag 回退。
+        pass
+
     etag = await _compute_git_etag(git_bin, repo_dir, extra_inputs=extra_etag_inputs)
     if etag and if_none_match and etag == if_none_match:
         content = _make_envelope(
@@ -182,6 +207,7 @@ async def handle(
         current=current_name,
         detached=detached,
         remotes=remotes,
+        tags=tags,
         elapsed_ms=round((_time.monotonic() - t0) * 1000, 2),
     )
 

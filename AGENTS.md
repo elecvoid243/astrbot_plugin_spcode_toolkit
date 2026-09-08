@@ -537,11 +537,11 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/git-worktrees` | GET | 列出 worktree | `umo?` |
 | `/spcode/git-diff` | GET | 工作区 diff（ETag/304） | `umo?`, `worktree?` |
 | `/spcode/git-status` | GET | 工作区状态（branch/upstream/staged/unstaged/untracked，ETag/304） | `umo?`, `worktree?` |
-| `/spcode/git-log` | GET | git 历史（8 字段标准粒度，ETag/304） | `umo?`, `worktree?`, `n?`, `ref?`, `path?`, `author?`, `since?`, `until?` |
+| `/spcode/git-log` | GET | git 历史（8 字段标准粒度，ETag/304），commits[].tags / resolved_ref | `umo?`, `worktree?`, `n?`, `ref?`, `path?`, `author?`, `since?`, `until?`, `grep?` |
 | `/spcode/git-show` | GET | 某 ref 修改的文件列表（name-status+numstat），可选单文件 patch | `umo?`, `worktree?`, `ref`(默认 `HEAD`), `max_files?`(≤2000), `path?` |
 | `/spcode/git-stats` | GET | 仓库变更统计（按日聚合 + 热点文件 topN + totals + 范围），供 Dashboard stats 面板 | `umo?`, `worktree?`, `ref?`(默认 `HEAD`), `max_commits?`(≤2000), `top_files?`(≤100), `since?`, `until?` |
 | `/spcode/git-file` | GET | 给定 ref 下某文件的完整内容（blob，≤1MB，no-store） | `umo?`, `worktree?`, `ref`(默认 `HEAD`), `path` |
-| `/spcode/git-branches` | GET | 列出 branch（local+remote）+current+default（ETag/304） | `umo?`, `worktree?` |
+| `/spcode/git-branches` | GET | 列出 branch（local+remote）+current+default（ETag/304），响应含 tags | `umo?`, `worktree?` |
 | `/spcode/git-branch-create` | POST | 从 HEAD/指定 start_point 创建 branch | body: `{name, start_point?, force?}` |
 | `/spcode/git-branch-delete` | POST | 删除 branch（`-d` 仅 merged，`-D` 含 unmerged；硬禁 current/main） | body: `{name, force?=false}` |
 | `/spcode/git-branch-switch` | POST | git switch `<name>`（支持 create/detach/force 跨字段） | body: `{name, create?=false, start_point?, force?=false, detach?=false}` |
@@ -692,6 +692,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 - `docs/superpowers/specs/2026-07-11-document-manager-backend-design.md` - spec B docs/git-file
 - `docs/superpowers/specs/2026-07-15-git-init-branch-revert-design.md` - v2.17.0 git-init/branch/revert
 - `docs/superpowers/specs/2026-07-16-git-init-force-design.md` - v2.17.1 git-init force 标志
+- `docs/superpowers/specs/2026-09-08-git-log-tags-and-filters-design.md` - v2.26.0 git-log tags + 过滤器
 
 ## pytest 速查
 
