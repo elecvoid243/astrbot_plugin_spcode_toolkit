@@ -529,7 +529,8 @@ async def handle(
     if grep:
         # 子串匹配 + 忽略大小写:用户输入按字面处理,正则元字符不生效。
         # 注意:`-i` / `--fixed-strings` 是 git **全局**标志,会同时作用于
-        # 同命令中的 ``--author`` / ``--since`` / ``--until`` 模式。因此
+        # 同命令中的 ``--author`` / ``--committer`` 模式(两者都是 grep 型
+        # 模式;``--since`` / ``--until`` 是日期界限,不受影响)。因此
         # ``grep`` 与 ``author`` 叠加时,author 从"大小写敏感 BRE 正则"
         # 退化为"忽略大小写的字面子串"。这是计划锁定的文档化行为(见
         # tests/test_git_log.py::test_log_grep_author_flag_interaction),勿"修复"。
