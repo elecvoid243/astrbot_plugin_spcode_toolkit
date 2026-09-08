@@ -58,6 +58,15 @@ _SKIP_FILE_BROWSER = frozenset(
         "handle_get_git_show",  # v3.8 (2026-06-25)
         "handle_get_git_file",  # spec B (2026-07-11) — uses web.request.query inline
         "handle_post_btw",  # v2.20 (2026-07-17) — 需要 body 形参(_wrap 注入)
+        # 2026-09-08: terminal 系列 handler 的 umo 是必填位置参数
+        # (``handle_status(plugin, umo)``),无参 smoke 调用会 TypeError;
+        # 覆盖在 tests/test_terminal_webapi.py。
+        "handle_post_terminal_start",
+        "handle_post_terminal_input",
+        "handle_post_terminal_interrupt",
+        "handle_post_terminal_stop",
+        "handle_get_terminal_stream",
+        "handle_get_terminal_status",
     }
 )
 
@@ -189,6 +198,20 @@ def test_routes_table_has_forty_six_endpoints() -> None:
         "/spcode/project-unload",
         "/spcode/codegraph-set",
         "/spcode/operation-progress",
+        # ── 2026-08-20 / 2026-08-21 ──
+        "/spcode/worktree-activate",
+        "/spcode/git-stash",
+        "/spcode/git-stash-pop",
+        "/spcode/git-stash-drop",
+        # ── 2026-09-01 终端系列 ──
+        "/spcode/terminal/start",
+        "/spcode/terminal/stream",
+        "/spcode/terminal/input",
+        "/spcode/terminal/interrupt",
+        "/spcode/terminal/stop",
+        "/spcode/terminal/status",
+        # ── 2026-09-08 codegraph init/update ──
+        "/spcode/codegraph-init",
     }
     # Methods sanity:
     # 24 base: 10 GET + 12 POST + 1 PATCH + 1 DELETE = 24 entries
@@ -206,11 +229,14 @@ def test_routes_table_has_forty_six_endpoints() -> None:
     # 2026-08-06: +2 POST (project-unload / codegraph-set) +1 GET (operation-progress)
     # 50 entries total: 17 GET + 31 POST + 1 PATCH + 1 DELETE
     # 2026-08-16: +1 GET (git-remotes) +1 POST (git-remote-remove)
+    # 2026-09-01: +6 终端端点 (4 POST + 2 GET)
+    # 2026-09-08: +1 POST (codegraph-init)
+    # 68 unique paths total: 23 GET + 47 POST + 1 PATCH + 1 DELETE
     methods = [m for entry in ROUTES for m in entry[1]]
     assert (
-        methods.count("GET") == 20
-    )  # +operation-progress +home-directory +drives +git-remotes
-    assert methods.count("POST") == 38  # +git-commit-amend +git-remote-remove
+        methods.count("GET") == 23
+    )  # +operation-progress +home-directory +drives +git-remotes +terminal/stream+status
+    assert methods.count("POST") == 47  # +terminal 4 +codegraph-init
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
 
@@ -524,10 +550,12 @@ def test_register_webapi_routes_calls_context_fifty_three_times() -> None:
     2026-08-15: +1 GET (home-directory) → 57
     2026-08-15: +1 GET (drives) → 58
     2026-08-16: +1 GET (git-remotes) +1 POST (git-remote-remove) → 60
+    2026-09-01: +6 终端端点 → 71
+    2026-09-08: +1 POST (codegraph-init) → 72
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    assert plugin.context.register_web_api.call_count == 60
+    assert plugin.context.register_web_api.call_count == 72
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -544,12 +572,13 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 60 routes
+    # Should not raise; should attempt all 72 routes
     # (含 2026-08-12 新增的 git-pull / git-push / git-remote-set-url /
     # code-check / code-format;2026-08-13 git-commit-amend;2026-08-15
-    # home-directory / drives;2026-08-16 git-remotes / git-remote-remove)。
+    # home-directory / drives;2026-08-16 git-remotes / git-remote-remove;
+    # 2026-09-01 terminal 6 端点;2026-09-08 codegraph-init)。
     register_webapi_routes(plugin)
-    assert call_count == 60
+    assert call_count == 72
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

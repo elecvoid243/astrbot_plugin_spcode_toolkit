@@ -16,11 +16,13 @@ def _make_plugin(
     enabled: bool = True,
     mcp_running: bool = False,
     active_project: str = "",
+    config_project: str = "",
 ) -> MagicMock:
     """Create a minimal plugin mock with codegraph state."""
     plugin = MagicMock()
     plugin._config = {
         "codegraph_enabled": enabled,
+        "codegraph_project": config_project,
     }
 
     # Mock the LLM tool manager's mcp_server_runtime
@@ -120,6 +122,40 @@ async def test_enabled_with_project_mcp_off():
     assert d["enabled"] is True
     assert d["mcp_running"] is False
     assert d["active_project"] == r"C:\projects\myapp"
+
+
+# ── active_project 回退到配置(2026-09-08) ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_active_project_falls_back_to_config_project():
+    """运行时状态为空时回退到配置的 codegraph_project。
+
+    bootstrap 启动会用配置里的 codegraph_project 作为 --path,但只有
+    set_project 才会写运行时状态 —— 重启 AstrBot 后必须靠回退才能
+    让 dashboard 显示真实默认项目。
+    """
+    plugin = _make_plugin(
+        enabled=True,
+        mcp_running=True,
+        active_project="",
+        config_project=r"C:\configured\proj",
+    )
+    result = await handle(plugin)
+    assert result["data"]["active_project"] == r"C:\configured\proj"
+
+
+@pytest.mark.asyncio
+async def test_runtime_state_wins_over_config_project():
+    """set_project 写过的运行时状态优先于配置值。"""
+    plugin = _make_plugin(
+        enabled=True,
+        mcp_running=True,
+        active_project=r"C:\runtime\proj",
+        config_project=r"C:\configured\proj",
+    )
+    result = await handle(plugin)
+    assert result["data"]["active_project"] == r"C:\runtime\proj"
 
 
 # ── state.reset() clears active_project ────────────────────────

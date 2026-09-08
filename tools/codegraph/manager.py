@@ -190,6 +190,49 @@ class CodegraphManager:
             ),
         }
 
+    async def init_silent(self, event: AstrMessageEvent, directory: str) -> dict:
+        """``/codegraph init`` 的静默变体,供 webapi 端点调用(2026-09-08 引入)。
+
+        迭代 :meth:`init` 收集全部 yield,不回传聊天框。每条消息经
+        :class:`ProgressList` 镜像到进度存储(若端点已 begin),因此
+        dashboard 的 ``⏳ 正在 初始化 codegraph 项目 ...`` 会出现在
+        ``current_step`` 里。
+
+        reason 判定约定(与 init 的 yield 文案耦合):
+          - 出现"已有 codegraph 操作在跑" → ``busy``(per-dir lock 占用)
+          - 出现"找不到 codegraph CLI" → ``cli_missing``
+          - 首条消息以 ❌ 开头 → ``path_invalid``(路径校验先于 CLI 检测)
+          - 其他消息出现 ❌ → ``codegraph_error``
+          - 无 ❌ → 成功
+
+        Returns:
+            ``{ok, directory, substep_messages, reason, initialized}``
+        """
+        umo = event.unified_msg_origin
+        messages = ProgressList(umo)
+        async for msg in self.init(event, directory):
+            messages.append(str(msg))
+        joined = "\n".join(messages)
+        if "已有 codegraph 操作在跑" in joined:
+            reason: str | None = "busy"
+        elif "找不到 codegraph CLI" in joined:
+            reason = "cli_missing"
+        elif messages and messages[0].startswith("❌"):
+            reason = "path_invalid"
+        elif any(m.startswith("❌") for m in messages):
+            reason = "codegraph_error"
+        else:
+            reason = None
+        ok = reason is None
+        _progress_finish(umo, ok=ok, reason=reason)
+        return {
+            "ok": ok,
+            "directory": directory,
+            "substep_messages": list(messages),
+            "reason": reason,
+            "initialized": any(m.startswith("✅") for m in messages),
+        }
+
     async def _init_or_uninit(
         self,
         event: AstrMessageEvent,

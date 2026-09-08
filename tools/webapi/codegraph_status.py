@@ -38,10 +38,16 @@ async def handle(plugin: "SPCodeToolkit") -> dict:
     mgr = plugin.context.get_llm_tool_manager()
     mcp_running = "codegraph" in mgr.mcp_server_runtime
 
-    # 取运行时记录的项目路径(模块级 import 避免与当前文件名混淆)
+    # 取运行时记录的项目路径(模块级 import 避免与当前文件名混淆)。
+    # 2026-09-08: 回退到配置的 codegraph_project —— ``set_project`` 只在
+    # 重启 MCP 成功后写运行时状态,而 bootstrap 启动时也会用配置里的
+    # ``codegraph_project`` 作为 ``--path``。不回退的话,重启 AstrBot 后
+    # MCP 明明带着默认项目在跑,dashboard 却显示"未设置项目"。
     from ..codegraph import state as cg_state
 
-    active_project = cg_state.get_active_project_path()
+    active_project = cg_state.get_active_project_path() or str(
+        plugin._config.get("codegraph_project") or ""
+    ).strip()
 
     return {
         "status": "ok",

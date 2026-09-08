@@ -31,6 +31,8 @@ Dashboard / WebUI:
   * ``/spcode/git-worktree-lock``   (POST)  # v2.14.0 (2026-06-26) — PR-D LOCK endpoint
   * ``/spcode/git-worktree-unlock`` (POST)  # v2.14.0 (2026-06-26) — PR-D UNLOCK endpoint
   * ``/spcode/codegraph-status``    (GET)  # v2.14.x (2026-06-28)
+  * ``/spcode/codegraph-set``       (POST) # 2026-08-06 — 静默切换默认项目
+  * ``/spcode/codegraph-init``      (POST) # 2026-09-08 — 静默初始化/更新索引
 
   * ``/spcode/terminal/start``    (POST)  # 2026-09-01 — 终端会话启动
   * ``/spcode/terminal/stream``   (GET)   # 2026-09-01 — 终端输出 SSE 流
@@ -67,6 +69,7 @@ from . import (
     btw,  # v2.20 (2026-07-17) - 一次性独立 LLM 请求(顺便问问)
     code_check,  # 2026-08-12 — POST code-check
     code_format,  # 2026-08-12 — POST code-format
+    codegraph_init,  # 2026-09-08 静默初始化/更新 codegraph 索引 (POST /spcode/codegraph-init)
     codegraph_set,  # 2026-08-06 静默切换 codegraph 项目 (POST /spcode/codegraph-set)
     codegraph_status,  # v2.14.x (2026-06-28)
     docs_crud,  # spec B (2026-07-11): POST/PATCH/DELETE /spcode/docs
@@ -153,6 +156,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["POST"],
         codegraph_set.handle,
         "静默切换 codegraph 默认项目(供 dashboard 调用)",
+    ),
+    (
+        "/spcode/codegraph-init",  # 2026-09-08 静默初始化/更新 codegraph 索引
+        ["POST"],
+        codegraph_init.handle,
+        "静默初始化/更新 codegraph 索引(供 dashboard 调用)",
     ),
     (
         "/spcode/operation-progress",  # 2026-08-06 静默操作实时进度
@@ -731,6 +740,7 @@ def register_webapi_routes(plugin: SPCodeToolkit) -> None:
                 +git-stash-drop POST)
     2026-09-01: 65 -> 71 (+spcode/terminal/* 6 端点: start/stream/input/
                 interrupt/stop/status)
+    2026-09-08: 71 -> 72 (+codegraph-init POST /spcode/codegraph-init)
     """
     for route, methods, handler, desc in ROUTES:
         try:
@@ -752,6 +762,7 @@ __all__ = [
     "btw",  # v2.20 (2026-07-17)
     "code_check",  # 2026-08-12
     "code_format",  # 2026-08-12
+    "codegraph_init",  # 2026-09-08
     "codegraph_status",  # v2.14.x (2026-06-28)
     "docs_crud",  # spec B (2026-07-11)
     "drives",  # 2026-08-15
