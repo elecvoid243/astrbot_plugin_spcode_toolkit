@@ -448,6 +448,17 @@ async def handle(
                 worktree=worktree,
             )
 
+    # ref 是裸参数传给 git 的,以 ``-`` 开头会被当成选项(如 --all)。
+    if ref.startswith("-"):
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            loaded=False,
+            umo=umo,
+            worktree=worktree,
+        )
+
     # ISO date 校验
     iso_date_re = re.compile(
         r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}([+-]\d{2}:?\d{2}|Z)?)?$"
@@ -490,6 +501,43 @@ async def handle(
                 umo=effective_umo,
                 worktree=directory,
             )
+
+    # ── 3.5 ref 规范化(hash 查找,2026-09-08) ──
+    # 用户可直接输入完整 / 缩写 SHA。git 自身能解析,但歧义 / 不存在时
+    # stderr 文案不稳定;先用 rev-parse 归一化:既能给出精确 reason,
+    # 也让同一提交的不同写法命中同一个 ETag 桶。
+    resolved_ref: str | None = None
+    if re.fullmatch(r"[0-9a-fA-F]{4,40}", ref):
+        resolve_result = await _run_git_async(
+            [
+                plugin._git_binary(),
+                "-C",
+                directory,
+                "rev-parse",
+                "--verify",
+                f"{ref}^{{commit}}",
+            ],
+            timeout=5.0,
+        )
+        resolved_ref = (resolve_result.get("stdout") or "").strip() or None
+        if resolved_ref is None:
+            stderr = resolve_result.get("stderr", "")
+            reason = (
+                ReasonCode.REF_AMBIGUOUS
+                if "ambiguous" in stderr.lower()
+                else ReasonCode.REF_NOT_FOUND
+            )
+            return _make_envelope(
+                success=False,
+                reason=reason,
+                elapsed_ms=_elapsed(),
+                loaded=False,
+                directory=directory,
+                umo=effective_umo,
+                worktree=directory,
+                stderr=stderr,
+            )
+        ref = resolved_ref
 
     # ── 4. ETag 检查 (v3.10 修复: query fingerprint 纳入 ETag) ──
     # 把 query string 维度 (ref / n / path / author / since / until / grep)
@@ -549,8 +597,21 @@ async def handle(
     raw_result = await _run_git_async(log_args, encoding="utf-8")
     if not raw_result["ok"]:
         stderr = raw_result.get("stderr", "")
-        if "does not have any commits" in stderr or "ambiguous" in stderr.lower():
+        lowered = stderr.lower()
+        if "does not have any commits" in stderr:
             reason = ReasonCode.EMPTY_REPOSITORY
+        elif "ambiguous" in lowered:
+            reason = ReasonCode.REF_AMBIGUOUS
+        elif any(
+            token in lowered
+            for token in (
+                "unknown revision",
+                "bad revision",
+                "not a valid object name",
+                "does not point to a valid object",
+            )
+        ):
+            reason = ReasonCode.REF_NOT_FOUND
         else:
             reason = ReasonCode.GIT_ERROR
         return _make_envelope(
@@ -591,6 +652,7 @@ async def handle(
             umo=effective_umo,
             worktree=directory,
             ref=ref,
+            resolved_ref=resolved_ref,
             count=len(commits),
             has_more=has_more,
             commits=commits,

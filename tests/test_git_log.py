@@ -623,3 +623,37 @@ async def test_log_grep_author_flag_interaction(monkeypatch, plugin, tmp_path: P
         monkeypatch, plugin, author="t.", grep="commit 0:"
     )
     assert combined["data"]["count"] == 0
+
+
+# ──────────────────────────────────────────────────────────
+# Task A2 (2026-09-08): hash-like ref 规范化与错误映射
+# ──────────────────────────────────────────────────────────
+
+
+async def test_log_short_sha_ref_resolves(monkeypatch, plugin, tmp_path: Path):
+    """缩写 SHA 作为 ref → 以该提交为起点,并回显 resolved_ref。"""
+    shas = _init_git_repo(tmp_path, n_commits=3)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin, ref=shas[1][:8])
+    assert result["data"]["success"] is True
+    assert result["data"]["resolved_ref"] == shas[1]
+    assert result["data"]["commits"][0]["sha"] == shas[1]
+
+
+async def test_log_unknown_sha_ref_not_found(monkeypatch, plugin, tmp_path: Path):
+    _init_git_repo(tmp_path, n_commits=1)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin, ref="deadbeef")
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "ref_not_found"
+
+
+async def test_log_ref_dash_prefix_invalid_param(monkeypatch, plugin, tmp_path: Path):
+    _init_git_repo(tmp_path, n_commits=1)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin, ref="--all")
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "invalid_param"
