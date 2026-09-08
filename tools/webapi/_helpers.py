@@ -1014,6 +1014,37 @@ def _parse_for_each_ref(raw: str) -> list[dict[str, Any]]:
     return result
 
 
+def _parse_tag_refs(raw: str) -> list[dict]:
+    """解析 ``for-each-ref refs/tags/`` 的 NUL 分隔输出。
+
+    每行形如 ``<name>\x00<objectname>\x00<*objectname>``。附注 tag 的
+    ``objectname`` 是 tag 对象,``*objectname`` 是它指向的 commit;轻量 tag
+    的 ``*objectname`` 为空,回退 ``objectname``。
+
+    Args:
+        raw: ``git for-each-ref --format=%(refname:short)%00%(objectname)%00%(*objectname)``
+            的原始 stdout。
+
+    Returns:
+        ``[{"name": str, "sha": str, "annotated": bool}, ...]``;格式不合法的行跳过。
+    """
+    tags: list[dict] = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\x00")
+        if len(parts) < 2:
+            continue
+        name = parts[0].strip()
+        obj = parts[1].strip()
+        peeled = parts[2].strip() if len(parts) > 2 else ""
+        sha = peeled or obj
+        if not name or len(sha) != 40:
+            continue
+        tags.append({"name": name, "sha": sha, "annotated": bool(peeled and peeled != obj)})
+    return tags
+
+
 async def _read_post_mutation_branch_state(
     git_bin: str,
     directory: str,

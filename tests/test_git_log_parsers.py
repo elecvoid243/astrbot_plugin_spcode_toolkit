@@ -189,3 +189,32 @@ def test_parse_log_shortstat_deletions_only():
     raw = " 2 files changed, 5 deletions(-)"
     stats = _parse_log_shortstat(raw)
     assert stats == [{"files": 2, "additions": 0, "deletions": 5}]
+
+
+# ──────────────────────────────────────────────────────────
+# Task A3 (2026-09-08): refs/tags 解析
+# ──────────────────────────────────────────────────────────
+
+
+def test_parse_tag_refs_lightweight_and_annotated():
+    from tools.webapi._helpers import _parse_tag_refs
+
+    sha_a = "a" * 40
+    sha_b = "b" * 40
+    raw = (
+        f"v1.0.0\x00{sha_a}\x00\n"  # lightweight
+        f"v2.0.0\x00{'c' * 40}\x00{sha_b}\n"  # annotated: peeled -> sha_b
+    )
+    parsed = _parse_tag_refs(raw)
+    assert parsed == [
+        {"name": "v1.0.0", "sha": sha_a, "annotated": False},
+        {"name": "v2.0.0", "sha": sha_b, "annotated": True},
+    ]
+
+
+def test_parse_tag_refs_skips_malformed_lines():
+    from tools.webapi._helpers import _parse_tag_refs
+
+    assert _parse_tag_refs("") == []
+    assert _parse_tag_refs("only-name\x00") == []
+    assert _parse_tag_refs("\x00" + "a" * 40 + "\x00") == []

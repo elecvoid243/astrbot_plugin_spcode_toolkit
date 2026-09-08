@@ -5,6 +5,7 @@ PR-2 of git workflow endpoints design.
 """
 
 from __future__ import annotations
+import hashlib
 import logging
 import re
 import time as _time
@@ -21,6 +22,7 @@ from ._helpers import (
     _JSONResponseCompat,
     _git_endpoint_preflight,
     _make_envelope,
+    _parse_tag_refs,
     _run_git_async,
     _validate_repo_relative_file,
     ReasonCode,
@@ -52,6 +54,11 @@ MAX_LOG_BYTES = 1 * 1024 * 1024  # 1 MB 硬上限
 # 设计依据见 docs/superpowers/specs/2026-06-24-git-log-shortstat-
 # alignment-fix-design.md §3。
 LOG_FORMAT = "%H%x00%h%x00%an%x00%ae%x00%cn%x00%ce%x00%aI%x00%cI%x00%s%x00%b%x00%P%x00@@SPREC_END@@"
+
+# refs/tags for-each-ref NUL 分隔模板(2026-09-08,Task A3)。
+# %(refname:short) 输出短名;%(objectname) 是 tag 对象 SHA(轻量 tag 即 commit
+# SHA);%(*objectname) 是附注 tag 剥离后指向的 commit SHA(轻量 tag 为空)。
+_TAG_REF_FORMAT = "%(refname:short)%00%(objectname)%00%(*objectname)"
 
 # ── git-log ETag in-memory 缓存 ──
 # 复用 git-diff 模式:HEAD SHA + worktree mtime + .git/index mtime,1.5s TTL。
@@ -304,6 +311,7 @@ async def _compute_log_etag(
     directory: str,
     *,
     query_fingerprint: str = "",
+    extra_inputs: tuple[str, ...] = (),
 ) -> str:
     """为 git-log 端点计算弱 ETag。
 
@@ -327,10 +335,14 @@ async def _compute_log_etag(
         query_fingerprint: 稳定的 query 字符串指纹 (由 caller 在 n/ref/path/
             author/since/until 校验通过后构造),用 ``|`` 分隔保持可读。
             为空串时行为与 v3.9 等价(无 query 维度的请求)。
+        extra_inputs: 额外 ETag 因子(如 refs/tags 原始输出)。新建 / 删除
+            tag 不改 HEAD / index,不纳入会让 304 复用旧 tags(2026-09-08)。
     """
-    cache_key = (
-        f"{directory}\x00{query_fingerprint}" if query_fingerprint else directory
+    extra_blob = "\x00".join(extra_inputs)
+    extra_digest = (
+        hashlib.sha1(extra_blob.encode("utf-8")).hexdigest()[:12] if extra_blob else ""
     )
+    cache_key = f"{directory}\x00{query_fingerprint}\x00{extra_digest}"
     now = _time.monotonic()
     cached = _LOG_ETAG_CACHE.get(cache_key)
     if cached is not None and (now - cached[1]) < _LOG_ETAG_TTL:
@@ -361,10 +373,10 @@ async def _compute_log_etag(
     except OSError:
         pass
 
-    # 拼 ETag: query_fingerprint 拼在 wt_mtime 之后(避免 head_sha / wt_mtime
-    # 之间被截断的可读性下降)
-    if query_fingerprint:
-        etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}-{query_fingerprint}"'
+    # 拼 ETag: query_fingerprint / extra_digest 拼在 wt_mtime 之后(避免
+    # head_sha / wt_mtime 之间被截断的可读性下降)。二者皆空时保持旧字符串。
+    if query_fingerprint or extra_digest:
+        etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}-{query_fingerprint}-{extra_digest}"'
     else:
         etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}"'
 
@@ -539,6 +551,32 @@ async def handle(
             )
         ref = resolved_ref
 
+    # ── 3.6 tags 映射(2026-09-08) ──
+    # 一次 for-each-ref 同时解决两件事:给页面内 commit 附上 tag 徽章数据;
+    # 把原始输出作为 ETag 因子,让新建 / 删除 tag 立即失效缓存。
+    tag_map: dict[str, list[str]] = {}
+    tag_blob = ""
+    try:
+        tag_result = await _run_git_async(
+            [
+                plugin._git_binary(),
+                "-C",
+                directory,
+                "for-each-ref",
+                f"--format={_TAG_REF_FORMAT}",
+                "refs/tags/",
+            ],
+        )
+        if tag_result.get("ok", False):
+            tag_blob = (tag_result.get("stdout") or "").strip()
+            for tag in _parse_tag_refs(tag_blob):
+                tag_map.setdefault(tag["sha"], []).append(tag["name"])
+            for names in tag_map.values():
+                names.sort()
+    except Exception:
+        # 标签只是装饰性数据:失败不阻塞历史列表。
+        pass
+
     # ── 4. ETag 检查 (v3.10 修复: query fingerprint 纳入 ETag) ──
     # 把 query string 维度 (ref / n / path / author / since / until / grep)
     # 序列化为 ``|`` 分隔指纹, 拼进 ETag 字符串与 cache key。author / path
@@ -554,6 +592,7 @@ async def handle(
         plugin._git_binary(),
         directory,
         query_fingerprint=query_fingerprint,
+        extra_inputs=(tag_blob,) if tag_blob else (),
     )
     cache_headers = _common_cache_headers(etag)
     if _get_if_none_match() == etag:
@@ -639,6 +678,8 @@ async def handle(
             raw = raw[: last_sentinel_end + len(_SENTINEL_END)]
 
     commits = _parse_combined_log_output(raw)
+    for commit in commits:
+        commit["tags"] = tag_map.get(commit["sha"], [])
     has_more = len(commits) > n
     if has_more:
         commits = commits[:n]  # _parse_combined_log_output 已嵌入 shortstat

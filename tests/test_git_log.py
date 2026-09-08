@@ -657,3 +657,47 @@ async def test_log_ref_dash_prefix_invalid_param(monkeypatch, plugin, tmp_path: 
     result = await _call_with_query(monkeypatch, plugin, ref="--all")
     assert result["data"]["success"] is False
     assert result["data"]["reason"] == "invalid_param"
+
+
+# ──────────────────────────────────────────────────────────
+# Task A3 (2026-09-08): tags 映射注入 + ETag 纳入 refs/tags
+# ──────────────────────────────────────────────────────────
+
+
+async def test_log_commits_carry_tags(monkeypatch, plugin, tmp_path: Path):
+    """tag 指向的 commit 带 tags 字段;无 tag 的 commit 为 []。"""
+    shas = _init_git_repo(tmp_path, n_commits=2)
+    subprocess.run(["git", "tag", "v0.1.0", shas[0]], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "tag", "-a", "v0.2.0", "-m", "release", shas[1]],
+        cwd=tmp_path,
+        check=True,
+    )
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin)
+    by_sha = {c["sha"]: c["tags"] for c in result["data"]["commits"]}
+    assert by_sha[shas[0]] == ["v0.1.0"]
+    assert by_sha[shas[1]] == ["v0.2.0"]
+
+
+async def test_log_etag_changes_when_tag_added(monkeypatch, plugin, tmp_path: Path):
+    """新建 tag 不改 HEAD/index,但 ETag 必须变化(不能 304 复用旧 tags)。"""
+    shas = _init_git_repo(tmp_path, n_commits=1)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    first = await _call_with_query(monkeypatch, plugin)
+    etag1 = first.headers["ETag"]
+    assert first["data"]["commits"][0]["tags"] == []
+
+    subprocess.run(["git", "tag", "v9.9.9", shas[0]], cwd=tmp_path, check=True)
+
+    from astrbot.api import web
+
+    monkeypatch.setattr(
+        web,
+        "request",
+        make_web_request_mock(query={}, headers={"If-None-Match": etag1}),
+    )
+    second = await _gl.handle(plugin)
+    assert second["data"]["commits"][0]["tags"] == ["v9.9.9"]
