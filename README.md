@@ -457,7 +457,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/git-worktrees` | GET | 列出 worktree | `umo?` |
 | `/spcode/git-diff` | GET | 工作区 diff（ETag/304） | `umo?`, `worktree?` |
 | `/spcode/git-status` | GET | 工作区状态（branch/upstream/staged/unstaged/untracked，ETag/304） | `umo?`, `worktree?` |
-| `/spcode/git-log` | GET | git 历史（8 字段标准粒度，ETag/304） | `umo?`, `worktree?`, `n?`, `ref?`, `path?`, `author?`, `since?`, `until?` |
+| `/spcode/git-log` | GET | git 历史（8 字段标准粒度，ETag/304），commits[].tags / resolved_ref | `umo?`, `worktree?`, `n?`, `ref?`, `path?`, `author?`, `since?`, `until?`, `grep?` |
 | `/spcode/git-show` | GET | 某 ref 修改的文件列表（name-status+numstat），可选单文件 patch | `umo?`, `worktree?`, `ref`(默认 `HEAD`), `max_files?`(≤2000), `path?` |
 | `/spcode/git-stats` | GET | 仓库变更统计（按日聚合 + 热点文件 topN + totals + 范围），供 Dashboard stats 面板 | `umo?`, `worktree?`, `ref?`(默认 `HEAD`), `max_commits?`(≤2000), `top_files?`(≤100), `since?`, `until?` |
 | `/spcode/git-file` | GET | 给定 ref 下某文件的完整内容（blob，≤1MB，no-store） | `umo?`, `worktree?`, `ref`(默认 `HEAD`), `path` |

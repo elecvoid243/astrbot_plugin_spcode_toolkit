@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.25.0** · Author: elecvoid243 · 最后更新: 2026-08-30
+> **当前版本: v2.26.0** · Author: elecvoid243 · 最后更新: 2026-09-08
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -709,4 +709,4 @@ pytest tests/ --cov=tools                    # 覆盖率
 
 ---
 
-> Author: elecvoid243 · 本文档同步至 v2.25.0 (2026-08-30)
+> Author: elecvoid243 · 本文档同步至 v2.26.0 (2026-09-08)

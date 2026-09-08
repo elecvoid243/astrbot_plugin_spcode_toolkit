@@ -432,7 +432,7 @@ def test_parse_for_each_ref_handles_remote():
     assert result[0]["current"] is False
 
 
-# ── v2.26.0 (2026-09-08) tags 列表 ─────────────────────────
+# ── v2.26.0 (2026-09-08) tags 列表 + ETag ──────────────────
 
 
 def test_branches_response_includes_tags(existing_repo):
@@ -459,3 +459,59 @@ def test_branches_response_includes_tags(existing_repo):
     tags = {t["name"]: t for t in result["data"]["tags"]}
     assert tags["v1.0.0"] == {"name": "v1.0.0", "sha": sha, "annotated": False}
     assert tags["v1.1.0"] == {"name": "v1.1.0", "sha": sha, "annotated": True}
+
+
+def test_branches_etag_changes_after_tag_create(tmp_path):
+    """v2.26.0 修复: ``git tag`` 后 ETag 必须变 + tags 更新。"""
+    from tools.project import state as _state
+    from unittest.mock import patch
+
+    local_repo, _ = _setup_repo_with_remote(tmp_path)
+    umo = "test:branches:tagadd"
+    _state.put(umo, {"directory": str(local_repo), "loaded_at": _time.time()})
+    try:
+        plugin = _make_plugin()
+
+        # ── 第 1 次:无 tag,记录 ETag ──
+        r1 = _run(git_branches.handle(plugin, umo=umo))
+        etag_before = r1.headers.get("ETag")
+        assert etag_before, f"first response missing ETag: {dict(r1.headers)}"
+        assert r1["data"]["tags"] == []
+
+        # ── git tag:只写 .git/refs/tags/, 不动 HEAD/worktree/index ──
+        subprocess.run(
+            ["git", "-C", str(local_repo), "tag", "v9.9.9"],
+            check=True,
+        )
+
+        # ── 第 2 次:带旧 If-None-Match, ETag 必须变 → 200 (非 304) ──
+        from astrbot.api import web
+        from tests.conftest import make_web_request_mock
+
+        with patch.object(
+            web,
+            "request",
+            make_web_request_mock(
+                query={"umo": umo},
+                headers={"If-None-Match": etag_before},
+            ),
+        ):
+            r2 = _run(
+                git_branches.handle(plugin, umo=umo, if_none_match=etag_before)
+            )
+        assert r2.status_code == 200, (
+            f"v2.26.0 修复失效: tag 新增后命中 {r2.status_code} "
+            f"(etag={etag_before!r}); dashboard 持续 304 → "
+            f"Ref 选择器的新 tag 不刷新。"
+        )
+        etag_after = r2.headers.get("ETag")
+        assert etag_after, f"second response missing ETag: {dict(r2.headers)}"
+        assert etag_after != etag_before, (
+            f"v2.26.0 修复失效: tag 新增后 ETag 未变 "
+            f"(before={etag_before!r}, after={etag_after!r})"
+        )
+        assert {t["name"] for t in r2["data"]["tags"]} == {"v9.9.9"}, (
+            f"tags 字段应包含新 tag: {r2['data']['tags']!r}"
+        )
+    finally:
+        _state.pop(umo)
