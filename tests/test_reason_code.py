@@ -235,3 +235,7 @@ def test_git_commit_amend_reason_codes_defined():
     assert ReasonCode.CANNOT_AMEND_MERGE_COMMIT == "cannot_amend_merge_commit"
     assert ReasonCode.STAGED_CHANGES_PRESENT == "staged_changes_present"
     assert ReasonCode.AMEND_FAILED == "amend_failed"
+
+
+def test_git_log_ref_ambiguous_reason_code_defined():
+    assert ReasonCode.REF_AMBIGUOUS == "ref_ambiguous"

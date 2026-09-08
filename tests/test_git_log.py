@@ -565,3 +565,43 @@ async def test_log_since_until_bare_datetime_accepted(
     # Must NOT be invalid_param; repo has commits so a normal 200 flow
     # (possibly with 0 matching commits) is expected.
     assert result["data"]["reason"] != "invalid_param"
+
+
+# ──────────────────────────────────────────────────────────
+# Task A1 (2026-09-08): grep commit-message filter
+# ──────────────────────────────────────────────────────────
+
+
+async def test_log_grep_matches_subject_and_body(monkeypatch, plugin, tmp_path: Path):
+    """grep 匹配提交信息(子串,忽略大小写,含 body)。"""
+    _init_git_repo(tmp_path, n_commits=3)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    # subject 命中:"commit 1:"
+    result = await _call_with_query(monkeypatch, plugin, grep="COMMIT 1:")
+    assert result["data"]["count"] == 1
+    assert result["data"]["commits"][0]["subject"].startswith("commit 1:")
+
+    # body 命中:"Detailed body for commit 2"
+    result = await _call_with_query(monkeypatch, plugin, grep="detailed body for commit 2")
+    assert result["data"]["count"] == 1
+    assert result["data"]["commits"][0]["subject"].startswith("commit 2:")
+
+
+async def test_log_grep_no_match_returns_empty(monkeypatch, plugin, tmp_path: Path):
+    _init_git_repo(tmp_path, n_commits=2)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin, grep="no-such-text-xyz")
+    assert result["data"]["success"] is True
+    assert result["data"]["count"] == 0
+    assert result["data"]["commits"] == []
+
+
+async def test_log_grep_too_long_invalid_param(monkeypatch, plugin, tmp_path: Path):
+    _init_git_repo(tmp_path, n_commits=1)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin, grep="x" * 513)
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "invalid_param"

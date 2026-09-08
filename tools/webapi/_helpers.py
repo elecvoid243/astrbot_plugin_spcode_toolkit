@@ -321,6 +321,9 @@ class ReasonCode:
     REF_NOT_FOUND = (
         "ref_not_found"  # v3.8 (2026-06-25): git-show ref 不存在 / ambiguous
     )
+    REF_AMBIGUOUS = (
+        "ref_ambiguous"  # v2.26.0 (2026-09-08): 缩写 hash 匹配到多个对象
+    )
     COMMIT_TOO_LARGE = "commit_too_large"  # v3.8 (2026-06-25): --numstat 输出超 1 MB
 
     # ── file-search 专用(v2.15.0,2026-07-02) ──

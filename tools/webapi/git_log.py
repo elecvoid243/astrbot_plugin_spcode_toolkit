@@ -429,9 +429,15 @@ async def handle(
     author = _qget("author")
     since = _qget("since")
     until = _qget("until")
+    grep = _qget("grep")
 
     # 长度校验
-    for name, val in (("ref", ref), ("path", path), ("author", author)):
+    for name, val in (
+        ("ref", ref),
+        ("path", path),
+        ("author", author),
+        ("grep", grep),
+    ):
         if val and len(val) > MAX_PARAM_LENGTH:
             return _make_envelope(
                 success=False,
@@ -494,7 +500,7 @@ async def handle(
     # WHY ``str(…)`` 显式包: type-checker 友好 + 防 None 漏处理(None
     # 在 ``f"|{None}"`` 会变字符串 ``"None"``, 这里用 ``or ""`` 兜底)。
     query_fingerprint = (
-        f"{ref or 'HEAD'}|{n}|{path or ''}|{author or ''}|{since or ''}|{until or ''}"
+        f"{ref or 'HEAD'}|{n}|{path or ''}|{author or ''}|{since or ''}|{until or ''}|{grep or ''}"
     )
     etag = await _compute_log_etag(
         plugin._git_binary(),
@@ -520,6 +526,9 @@ async def handle(
         "--shortstat",
         f"-n{n + 1}",
     ]
+    if grep:
+        # 子串匹配 + 忽略大小写:用户输入按字面处理,正则元字符不生效。
+        log_args += [f"--grep={grep}", "-i", "--fixed-strings"]
     if author:
         log_args.append(f"--author={author}")
     if since:
