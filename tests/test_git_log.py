@@ -701,3 +701,71 @@ async def test_log_etag_changes_when_tag_added(monkeypatch, plugin, tmp_path: Pa
     )
     second = await _gl.handle(plugin)
     assert second["data"]["commits"][0]["tags"] == ["v9.9.9"]
+
+
+# ──────────────────────────────────────────────────────────
+# Final-fix (2026-09-08): 打错的 ref ≠ ref_ambiguous
+# ──────────────────────────────────────────────────────────
+# 背景:git 对**任何**无法解析的 revision 都打印
+# ``fatal: ambiguous argument '<x>': unknown revision or path not in the
+# working tree.``,旧实现用 ``"ambiguous" in stderr`` 判定,把所有打错的
+# 分支 / tag 名都误报成 ref_ambiguous。真正的短对象 id 歧义只会来自
+# ``short object ID <x> is ambiguous``(短 id 前缀匹配到多个对象)。
+
+
+async def test_log_nonexistent_branch_ref_not_found(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """不存在的分支名 → ref_not_found(而非 ref_ambiguous)。"""
+    _init_git_repo(tmp_path, n_commits=1)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin, ref="no-such-branch")
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "ref_not_found"
+
+
+# 以下两条 stderr 均为 git 2.43.0.windows.1 实测原文:
+#   1) ``git log no-such-branch`` —— 普通的 revision 解析失败;
+#   2) ``git log 4d44`` —— 两个 blob 共享 4 位前缀,git 先报短 id 歧义,
+#      再回退到 ambiguous argument。顺序不变量:短 id 歧义判定必须在前。
+_AMBIGUOUS_ARGUMENT_STDERR = (
+    "fatal: ambiguous argument 'no-such-branch': unknown revision or path "
+    "not in the working tree.\n"
+    "Use '--' to separate paths from revisions, like this:\n"
+    "'git <command> [<revision>...] -- [<file>...]'\n"
+)
+_SHORT_OBJECT_ID_AMBIGUOUS_STDERR = (
+    "error: short object ID 4d44 is ambiguous\n"
+    "hint: The candidates are:\n"
+    "hint:   4d44b82 blob\n"
+    "hint:   4d44f90 blob\n"
+    "fatal: ambiguous argument '4d44': unknown revision or path not in the "
+    "working tree.\n"
+    "Use '--' to separate paths from revisions, like this:\n"
+    "'git <command> [<revision>...] -- [<file>...]'\n"
+)
+
+
+async def test_classify_log_failure_unknown_revision_is_not_found():
+    """``ambiguous argument ... unknown revision`` → ref_not_found。"""
+    assert _gl._classify_log_failure(_AMBIGUOUS_ARGUMENT_STDERR) == "ref_not_found"
+
+
+async def test_classify_log_failure_short_object_id_is_ambiguous():
+    """只有 ``short object ID ... is ambiguous`` → ref_ambiguous。"""
+    assert (
+        _gl._classify_log_failure(_SHORT_OBJECT_ID_AMBIGUOUS_STDERR)
+        == "ref_ambiguous"
+    )
+
+
+async def test_classify_log_failure_empty_repository_wins():
+    """empty_repository 判定优先于其余 stderr 家族。"""
+    stderr = "fatal: your current branch 'main' does not have any commits yet"
+    assert _gl._classify_log_failure(stderr) == "empty_repository"
+
+
+async def test_classify_log_failure_fallback_git_error():
+    """无法归类 → git_error 兜底。"""
+    assert _gl._classify_log_failure("fatal: unrelated failure") == "git_error"

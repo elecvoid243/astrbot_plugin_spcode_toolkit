@@ -387,6 +387,46 @@ async def _compute_log_etag(
 
 
 # ──────────────────────────────────────────────────────────
+# stderr → reason 映射
+# ──────────────────────────────────────────────────────────
+
+
+def _classify_log_failure(stderr: str) -> str:
+    """把 ``git log`` 失败的 stderr 归类为 ReasonCode 字符串。
+
+    git 对**任何**无法解析的 revision 都打印 ``fatal: ambiguous
+    argument '<x>': unknown revision or path not in the working
+    tree.``,因此不能用 ``"ambiguous" in stderr`` 判定「短对象 id
+    歧义」—— 那会把所有打错的分支 / tag 名误报成 ref_ambiguous。
+    真正的歧义只会来自 ``short object ID <x> is ambiguous``(短 id
+    前缀匹配到多个对象)。注意该消息可能**先于** ambiguous argument
+    出现(实测 ``git log 4d44``),所以必须先判定它。
+
+    判定顺序即优先级:empty_repository > ref_ambiguous >
+    ref_not_found 家族 > git_error 兜底。
+    """
+    lowered = (stderr or "").lower()
+    if "does not have any commits" in stderr:
+        return ReasonCode.EMPTY_REPOSITORY
+    if "short object id" in lowered and "is ambiguous" in lowered:
+        return ReasonCode.REF_AMBIGUOUS
+    if any(
+        token in lowered
+        for token in (
+            # ``ambiguous argument`` 是 git 对「解析不了」的通用措辞,
+            # 不是歧义信号(上面已排除真正的短 id 歧义)。
+            "ambiguous argument",
+            "unknown revision",
+            "bad revision",
+            "not a valid object name",
+            "does not point to a valid object",
+        )
+    ):
+        return ReasonCode.REF_NOT_FOUND
+    return ReasonCode.GIT_ERROR
+
+
+# ──────────────────────────────────────────────────────────
 # Handler
 # ──────────────────────────────────────────────────────────
 
@@ -636,23 +676,7 @@ async def handle(
     raw_result = await _run_git_async(log_args, encoding="utf-8")
     if not raw_result["ok"]:
         stderr = raw_result.get("stderr", "")
-        lowered = stderr.lower()
-        if "does not have any commits" in stderr:
-            reason = ReasonCode.EMPTY_REPOSITORY
-        elif "ambiguous" in lowered:
-            reason = ReasonCode.REF_AMBIGUOUS
-        elif any(
-            token in lowered
-            for token in (
-                "unknown revision",
-                "bad revision",
-                "not a valid object name",
-                "does not point to a valid object",
-            )
-        ):
-            reason = ReasonCode.REF_NOT_FOUND
-        else:
-            reason = ReasonCode.GIT_ERROR
+        reason = _classify_log_failure(stderr)
         return _make_envelope(
             success=False,
             reason=reason,
