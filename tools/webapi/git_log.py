@@ -492,9 +492,9 @@ async def handle(
             )
 
     # ── 4. ETag 检查 (v3.10 修复: query fingerprint 纳入 ETag) ──
-    # 把 query string 维度 (ref / n / path / author / since / until) 序列化
-    # 为 ``|`` 分隔指纹, 拼进 ETag 字符串与 cache key。author / path / ref
-    # 等任意一个变化 → ETag 必变 → 重置 filter 时不会 304 空 body。
+    # 把 query string 维度 (ref / n / path / author / since / until / grep)
+    # 序列化为 ``|`` 分隔指纹, 拼进 ETag 字符串与 cache key。author / path
+    # / ref 等任意一个变化 → ETag 必变 → 重置 filter 时不会 304 空 body。
     # 用 ``|`` 而不是 ``&`` 是因为后者在 query 里是分隔符, 易混淆; ``|``
     # 是 git porcelain 风格的稳定选择。
     # WHY ``str(…)`` 显式包: type-checker 友好 + 防 None 漏处理(None
@@ -528,6 +528,11 @@ async def handle(
     ]
     if grep:
         # 子串匹配 + 忽略大小写:用户输入按字面处理,正则元字符不生效。
+        # 注意:`-i` / `--fixed-strings` 是 git **全局**标志,会同时作用于
+        # 同命令中的 ``--author`` / ``--since`` / ``--until`` 模式。因此
+        # ``grep`` 与 ``author`` 叠加时,author 从"大小写敏感 BRE 正则"
+        # 退化为"忽略大小写的字面子串"。这是计划锁定的文档化行为(见
+        # tests/test_git_log.py::test_log_grep_author_flag_interaction),勿"修复"。
         log_args += [f"--grep={grep}", "-i", "--fixed-strings"]
     if author:
         log_args.append(f"--author={author}")

@@ -605,3 +605,21 @@ async def test_log_grep_too_long_invalid_param(monkeypatch, plugin, tmp_path: Pa
     result = await _call_with_query(monkeypatch, plugin, grep="x" * 513)
     assert result["data"]["success"] is False
     assert result["data"]["reason"] == "invalid_param"
+
+
+async def test_log_grep_author_flag_interaction(monkeypatch, plugin, tmp_path: Path):
+    """文档化行为:grep 的 -i / --fixed-strings 是 git 全局标志,会作用于 --author。
+
+    单独传 author 时按 BRE 正则匹配(邮箱 t@t 命中 "t.");
+    叠加 grep 后 --fixed-strings 全局生效,author 退化为字面子串 → 不命中。
+    """
+    _init_git_repo(tmp_path, n_commits=1)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    regex_only = await _call_with_query(monkeypatch, plugin, author="t.")
+    assert regex_only["data"]["count"] == 1
+
+    combined = await _call_with_query(
+        monkeypatch, plugin, author="t.", grep="commit 0:"
+    )
+    assert combined["data"]["count"] == 0
