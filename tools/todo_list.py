@@ -222,29 +222,45 @@ def import_from_path(path: str) -> tuple[list[dict], str, str]:
     return items, data.get("title", ""), ""
 
 
-def build_filename(umo: str, when: datetime | None = None) -> str:
-    """Build a .md filename for the given umo at the given timestamp.
+def build_filename(
+    umo: str,
+    when: datetime | None = None,
+    *,
+    scope: TodoScope | None = None,
+) -> str:
+    """Build a .md filename for the given umo + scope at the given timestamp.
 
     v2.11: 输入从 sender_key (platform:sender_id) 切到 umo (unified_msg_origin)。
-    umo 形如 ``webchat:FriendMessage:astrbot`` 含多段 `:`,
-    Windows 文件名不能含 `:` → 把所有 `:` 替换为 `_` 后拼上时间戳。
+    v2.28.0: 新增 scope。main 保持 v2.27.0 命名(向后兼容老文件);
+    sub 前置 ``sub__{name}__`` 段,使 main 的 glob 前缀天然不命中。
 
     Format: {umo_清洗后}_{YYYYMMDDhhmm}.md (minute precision)
-    Fallback: sha256(umo)[:16]_{YYYYMMDDhhmm}.md
+    Sub:    sub__{name}__{umo_清洗后}_{YYYYMMDDhhmm}.md
+    Fallback: sha256(...)[:16]_{YYYYMMDDhhmm}.md (sub 形式同样带 sub__ 前缀)
     """
+    scope = scope or MAIN_SCOPE
     when = when or datetime.now()
     ts = when.strftime("%Y%m%d%H%M")
     # umo 含多个 `:`(如 webchat:FriendMessage:astrbot),把所有分隔符替换为 `_`
     safe = umo.replace(":", "_")
-    candidate = f"{safe}_{ts}.md"
+
+    if scope.kind == "sub":
+        candidate = f"{_SUB_FILE_PREFIX}{scope.name}__{safe}_{ts}.md"
+    else:
+        candidate = f"{safe}_{ts}.md"
 
     if len(candidate) <= MAX_FILENAME_LEN and not ILLEGAL_FILENAME_CHARS.search(
         candidate
     ):
         return candidate
 
-    h = hashlib.sha256(umo.encode("utf-8")).hexdigest()[:16]
-    return f"{h}_{ts}.md"
+    # 回退:main 保持 v2.27.0 的 sha256(umo) 以兼容老文件;
+    # sub 把 scope 纳入哈希输入,避免与 main / 其他 sub 撞名。
+    if scope.kind == "sub":
+        digest = hashlib.sha256(f"{scope.key}|{umo}".encode("utf-8")).hexdigest()[:16]
+        return f"{_SUB_FILE_PREFIX}{scope.name}__{digest}_{ts}.md"
+    digest = hashlib.sha256(umo.encode("utf-8")).hexdigest()[:16]
+    return f"{digest}_{ts}.md"
 
 
 # ── MD 序列化 ────────────────────────────────────────
@@ -280,6 +296,7 @@ def render_md(data: dict) -> str:
     # umo 已包含 platform/msg_type/sender_id/session_id 信息,无冗余。
     lines.append("---")
     lines.append(f"umo: {data['umo']}")
+    lines.append(f"agent_scope: {data.get('agent_scope', 'main')}")
     lines.append(f"title: {data['title']}")
     lines.append(f"created_at: {data['created_at']}")
     lines.append(f"updated_at: {data['updated_at']}")
@@ -452,6 +469,7 @@ def parse_md(text: str) -> dict:
         umo = f"legacy:{_old_umo}"
     return {
         "umo": umo,
+        "agent_scope": meta.get("agent_scope", "main"),
         "title": title,
         "created_at": meta.get("created_at", ""),
         "updated_at": meta.get("updated_at", ""),
@@ -564,12 +582,13 @@ def _normalize_items(value, *, context: str = "item") -> list[dict]:
 class TodoStore:
     """单个用户的 todo list 持久化存储。"""
 
-    def __init__(self, base_dir: str | Path):
+    def __init__(self, base_dir: str | Path, scope: TodoScope | None = None):
         self._dir = Path(base_dir)
+        self._scope = scope or MAIN_SCOPE
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def _path_for(self, umo: str, when: datetime | None = None) -> Path:
-        return self._dir / build_filename(umo, when)
+        return self._dir / build_filename(umo, when, scope=self._scope)
 
     def _atomic_write(self, path: Path, content: str) -> None:
         """先写 tmp 文件，再 os.replace 原子替换。
@@ -591,19 +610,26 @@ class TodoStore:
             raise
 
     def _existing_path(self, umo: str) -> Path | None:
-        """查找该 umo 的现有文件(日期不固定)。
+        """查找该 umo + 当前 scope 的现有文件(日期不固定)。
 
         v2.11: 输入从 sender_key 切到 umo(可能含多 `:`)。
-        文件名里 `:` 已被替换为 `_`,前缀匹配也按 umo 清洗后的字符串来。
+        v2.28.0: 按 scope 拼前缀。main 的前缀是 ``{umo_safe}_``,sub 文件恒以
+        ``sub__`` 开头 → 两者在文件系统层面互斥,主 agent 不可能命中 sub 的文件。
         """
         safe = umo.replace(":", "_")
-        prefix = f"{safe}_"
-        for p in sorted(self._dir.glob(f"{prefix}*.md"), reverse=True):
-            return p
-        # 哈希回退形式
-        h = hashlib.sha256(umo.encode("utf-8")).hexdigest()[:16]
-        for p in sorted(self._dir.glob(f"{h}_*.md"), reverse=True):
-            return p
+        if self._scope.kind == "sub":
+            digest = hashlib.sha256(
+                f"{self._scope.key}|{umo}".encode("utf-8")
+            ).hexdigest()[:16]
+            prefix = f"{_SUB_FILE_PREFIX}{self._scope.name}__{safe}_"
+            hash_prefix = f"{_SUB_FILE_PREFIX}{self._scope.name}__{digest}_"
+        else:
+            digest = hashlib.sha256(umo.encode("utf-8")).hexdigest()[:16]
+            prefix = f"{safe}_"
+            hash_prefix = f"{digest}_"
+        for pattern in (f"{prefix}*.md", f"{hash_prefix}*.md"):
+            for p in sorted(self._dir.glob(pattern), reverse=True):
+                return p
         return None
 
     def _load(self, umo: str) -> tuple[Path | None, dict]:
@@ -659,6 +685,7 @@ class TodoStore:
         now_iso = datetime.now().isoformat(timespec="seconds")
         data = {
             "umo": umo,
+            "agent_scope": self._scope.key,
             "title": title,
             "created_at": now_iso,
             "updated_at": now_iso,
