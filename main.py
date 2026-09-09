@@ -122,7 +122,7 @@ _PLUGINS_TOOLS = [cls() for cls in ALL_TOOL_CLASSES]
     "astrbot_plugin_spcode_toolkit",
     "elecvoid243",
     ("spcode 开发工具箱 — 提供实用开发工具, 部分实现基于Irmia DevKit插件。"),
-    "2.9.0",
+    "v2.28.0",
 )
 class SPCodeToolkit(star.Star):
     def __init__(self, context: star.Context, config: dict = None) -> None:
