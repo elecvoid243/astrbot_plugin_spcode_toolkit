@@ -4,6 +4,7 @@ import hashlib
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -120,6 +121,46 @@ def resolve_scope(context) -> TodoScope:
         # 解析失败绝不能影响工具调用
         logger.warning(f"[todo] resolve_scope 异常,降级 main scope: {e}")
     return MAIN_SCOPE
+
+
+# ── TTL 惰性清理(v2.28.0)──────────────────────────────
+#
+# subagent 每轮结束即被 AstrBot 销毁,但它的 .md 文件会留在磁盘上。
+# 采用「同名复用 + TTL 惰性清理」:每次构造 TodoStore 时最多每小时清理一次
+# 超过 ttl_days 的 sub__*.md。**只匹配 sub__ 前缀,主 agent 文件永不清理。**
+
+_TTL_CLEANUP_INTERVAL_SEC: float = 3600.0
+_last_cleanup_mono: float = 0.0
+
+
+def cleanup_stale_sub_files(
+    base_dir: str | Path, ttl_days: int, keep: Path | None = None
+) -> int:
+    """删除 base_dir 下 mtime 超过 ttl_days 的 ``sub__*.md``,返回删除数量。
+
+    Args:
+        base_dir: todos 目录。
+        ttl_days: 保留天数;``<= 0`` 表示不清理(直接返回 0)。
+        keep: 需要跳过的文件(通常是当前正在读写的那个)。
+
+    Returns:
+        实际删除的文件数。单个文件删除失败会被跳过,不影响其他文件。
+    """
+    if ttl_days <= 0:
+        return 0
+    directory = Path(base_dir)
+    cutoff = time.time() - ttl_days * 86400
+    removed = 0
+    for p in directory.glob(f"{_SUB_FILE_PREFIX}*.md"):
+        if keep is not None and p == keep:
+            continue
+        try:
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 # ── umo & filename ──────────────────────────────────
@@ -582,10 +623,34 @@ def _normalize_items(value, *, context: str = "item") -> list[dict]:
 class TodoStore:
     """单个用户的 todo list 持久化存储。"""
 
-    def __init__(self, base_dir: str | Path, scope: TodoScope | None = None):
+    def __init__(
+        self,
+        base_dir: str | Path,
+        scope: TodoScope | None = None,
+        ttl_days: int = 0,
+    ):
         self._dir = Path(base_dir)
         self._scope = scope or MAIN_SCOPE
         self._dir.mkdir(parents=True, exist_ok=True)
+        self._maybe_cleanup(ttl_days)
+
+    def _maybe_cleanup(self, ttl_days: int) -> None:
+        """惰性清理过期 subagent 文件(每小时最多一次,失败不影响主流程)。"""
+        global _last_cleanup_mono
+        if ttl_days <= 0:
+            return
+        now = time.monotonic()
+        if now - _last_cleanup_mono < _TTL_CLEANUP_INTERVAL_SEC:
+            return
+        _last_cleanup_mono = now
+        try:
+            removed = cleanup_stale_sub_files(self._dir, ttl_days)
+            if removed:
+                logger.info(
+                    f"[todo] TTL 清理:已删除 {removed} 个过期 subagent todo 文件"
+                )
+        except Exception as e:
+            logger.warning(f"[todo] TTL 清理失败(已忽略): {e}")
 
     def _path_for(self, umo: str, when: datetime | None = None) -> Path:
         return self._dir / build_filename(umo, when, scope=self._scope)
