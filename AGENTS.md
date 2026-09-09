@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.27.0** · Author: elecvoid243 · 最后更新: 2026-09-09
+> **当前版本: v2.28.0** · Author: elecvoid243 · 最后更新: 2026-09-09
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -238,7 +238,7 @@ astrbot_plugin_spcode_toolkit/
     │   ├── es_search.py
     │   ├── file_diff.py          #   astrbot_file_compare
     │   ├── file_remove.py
-    │   ├── todo_base.py          #   _TodoToolBase 共用基类
+    │   ├── todo_base.py          #   _TodoToolBase 共用基类 + scope 注入（v2.28.0）
     │   ├── todo_create.py
     │   ├── todo_query.py
     │   ├── todo_add.py           #   v2.12 拆分自 todo_modify
@@ -469,7 +469,7 @@ astrbot_plugin_spcode_toolkit/
 10. **路径安全**：任何涉及用户输入路径的代码，先调用 `_path_safety` 校验，**不要**自己实现路径判断
 11. **Web API 参数安全**：`?worktree=` 等用户控制的路径参数，必须经过 `_validate_worktree_param`（位于 `tools/_helpers.py`）的 6 步防御链：**关键不变量 - git-common-dir 不匹配 = 直接拒绝**
 12. **配置拍平**：`_conf_schema.json` 是分组结构，`main.py._flatten_config()` 会把嵌套分组拍平为顶层键（如 `codegraph.codegraph_enabled` -> `codegraph_enabled`）。新增配置项时保持此约定
-13. **版本号统一**：当前版本统一为 **v2.24.0**。发布时同步更新 `metadata.yaml` 的 `version` 字段
+13. **版本号统一**：当前版本统一为 **v2.28.0**。发布时同步更新 `metadata.yaml` 的 `version` 字段
 
 ## Project 加载 — 静默变体 (2026-07-28)
 
@@ -694,6 +694,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 - `docs/superpowers/specs/2026-07-16-git-init-force-design.md` - v2.17.1 git-init force 标志
 - `docs/superpowers/specs/2026-09-08-git-log-tags-and-filters-design.md` - v2.26.0 git-log tags + 过滤器
 - `docs/superpowers/specs/2026-09-09-git-reset-design.md` - v2.27.0 git-reset 重置当前分支
+- `docs/superpowers/specs/2026-09-09-todo-subagent-isolation-design.md` - v2.28.0 todo 工具 subagent 隔离（per-agent scope + TTL 清理）
 
 ## pytest 速查
 
@@ -710,4 +711,4 @@ pytest tests/ --cov=tools                    # 覆盖率
 
 ---
 
-> Author: elecvoid243 · 本文档同步至 v2.27.0 (2026-09-09)
+> Author: elecvoid243 · 本文档同步至 v2.28.0 (2026-09-09)
