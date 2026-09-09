@@ -147,6 +147,25 @@
       }
     }
   },
+  "todo": {
+    "description": "todo 工具",
+    "hint": "todo_* 工具的隔离与清理策略",
+    "type": "object",
+    "items": {
+      "todo_subagent_isolation": {
+        "description": "subagent 使用独立的 todo 列表",
+        "hint": "开启后每个 subagent 的 todo 与主 agent 完全隔离(独立 .md 文件),避免并发写冲突。关闭则回到 v2.27.0 的共享行为(并发下可能丢数据)。",
+        "type": "bool",
+        "default": true
+      },
+      "todo_subagent_ttl_days": {
+        "description": "subagent todo 文件保留天数",
+        "hint": "惰性清理:每次 todo 工具调用时最多每小时清理一次超过该天数的 sub__*.md。0 = 不清理。主 agent 的文件永不被清理。",
+        "type": "int",
+        "default": 30
+      }
+    }
+  },
   "vivado": {
     "description": "vivado-mcp — 提供21 个 mcp_vivado__*工具",
     "hint": "需提供vivado_executable文件。留空则自动检测。",

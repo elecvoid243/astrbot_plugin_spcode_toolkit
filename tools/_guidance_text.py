@@ -78,6 +78,7 @@ Use these tools VERY frequently:
 - Call `todo_create(items=[...])` **before** starting the first step of a multi-step task (3+ steps).
 - Call `todo_update(item_ids=[N], status="in_progress")` when you start a step.
 - Call `todo_update(item_ids=[N], status="done")` **as soon as** you complete a step.
+- Your todo list is per-agent: subagents keep their own separate list, and the main agent cannot see it (and vice versa). Never assume another agent's items are yours.
 
 If you do not use these tools when planning, you may forget important tasks — and that is unacceptable.
 """
