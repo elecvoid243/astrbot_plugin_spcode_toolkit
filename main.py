@@ -77,6 +77,7 @@ from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
     TodoQueryTool,
     TodoUpdateTool,
 )
+from .tools.function_tools.todo_base import _TodoToolBase
 from .tools.inta_shell.component import LocalInteractiveShellComponent
 from .tools.llm_inject import inject_guidance
 from .tools.operation_progress import begin as _progress_begin
@@ -207,6 +208,16 @@ class SPCodeToolkit(star.Star):
                     t.max_crap_threshold = float(_config.get("max_crap") or 30)
                 except (TypeError, ValueError):
                     t.max_crap_threshold = 30.0
+            elif isinstance(t, _TodoToolBase):
+                # v2.28.0: todo subagent 隔离 + TTL 清理配置注入(LLM 不可见,
+                # 走实例属性;缺失时用基类默认值 True / 30)。
+                iso = _config.get("todo_subagent_isolation")
+                t.subagent_isolation = True if iso is None else bool(iso)
+                raw_ttl = _config.get("todo_subagent_ttl_days")
+                try:
+                    t.subagent_ttl_days = 30 if raw_ttl is None else int(raw_ttl)
+                except (TypeError, ValueError):
+                    t.subagent_ttl_days = 30
 
         # 注册过滤后的工具
         self._tool_names = {t.name for t in tools_to_register}

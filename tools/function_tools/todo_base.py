@@ -22,6 +22,11 @@ from .. import todo_list as _todo_list_mod
 
 
 class _TodoToolBase(FunctionTool):
+    # v2.28.0:由 main.py 注册时注入(见 SPCodeToolkit.__init__ 的配置注入块)。
+    # 放在基类上而非 dataclass field,避免污染各子类的 tools schema。
+    subagent_isolation: bool = True
+    subagent_ttl_days: int = 30
+
     def _err(self, error: str, proposal: str = "") -> str:
         """Build a JSON error response string with optional proposal.
 
@@ -49,7 +54,16 @@ class _TodoToolBase(FunctionTool):
         # resolve star_map (which only registers the main entry module).
         data_dir = str(StarTools.get_data_dir("astrbot_plugin_spcode_toolkit"))
         todos_dir = os.path.join(data_dir, "todos")
-        store = _todo_list_mod.TodoStore(todos_dir)
+        # v2.28.0:subagent 与主 agent 各写各的 .md(见 spec §1/§2)。
+        # 隔离关闭时全部降级 main,回到 v2.27.0 的共享行为。
+        scope = (
+            _todo_list_mod.resolve_scope(context)
+            if self.subagent_isolation
+            else _todo_list_mod.MAIN_SCOPE
+        )
+        store = _todo_list_mod.TodoStore(
+            todos_dir, scope=scope, ttl_days=self.subagent_ttl_days
+        )
         return store, umo
 
     async def _dispatch(self, context, fn, *args, **kwargs) -> str:

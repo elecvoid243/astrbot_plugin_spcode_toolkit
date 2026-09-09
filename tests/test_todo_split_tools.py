@@ -410,3 +410,89 @@ def asyncio_run(coro):
     import asyncio
 
     return asyncio.run(coro)
+
+
+# ─────────────────────────────────────────────────────────
+# v2.28.0: subagent scope 注入
+# ─────────────────────────────────────────────────────────
+
+
+def _ctx_with_extra(extra):
+    ctx = MagicMock()
+    ctx.context.event = MagicMock()
+    ctx.context.extra = extra
+    return ctx
+
+
+def test_setup_injects_sub_scope_from_extra(tmp_data_dir):
+    from tools import todo_list
+    from tools.function_tools import TodoCreateTool
+
+    tool = TodoCreateTool()
+    with patch.object(todo_list, "extract_umo", _make_call_with_umo("u:1")):
+        store, _ = tool._setup(
+            _ctx_with_extra({"is_subagent": True, "subagent_name": "reviewer"})
+        )
+    assert store._scope == todo_list.TodoScope("sub", "reviewer")
+
+
+def test_setup_main_scope_for_main_agent(tmp_data_dir):
+    from tools import todo_list
+    from tools.function_tools import TodoCreateTool
+
+    tool = TodoCreateTool()
+    with patch.object(todo_list, "extract_umo", _make_call_with_umo("u:1")):
+        store, _ = tool._setup(_ctx_with_extra({}))
+    assert store._scope == todo_list.MAIN_SCOPE
+
+
+def test_setup_respects_isolation_off(tmp_data_dir):
+    from tools import todo_list
+    from tools.function_tools import TodoCreateTool
+
+    tool = TodoCreateTool()
+    tool.subagent_isolation = False
+    with patch.object(todo_list, "extract_umo", _make_call_with_umo("u:1")):
+        store, _ = tool._setup(
+            _ctx_with_extra({"is_subagent": True, "subagent_name": "reviewer"})
+        )
+    assert store._scope == todo_list.MAIN_SCOPE
+
+
+def test_setup_passes_ttl_days(tmp_data_dir, monkeypatch):
+    from tools import todo_list
+    from tools.function_tools import TodoCreateTool
+
+    captured = {}
+    real_store = todo_list.TodoStore
+
+    def _spy(base_dir, scope=None, ttl_days=0):
+        captured["ttl_days"] = ttl_days
+        return real_store(base_dir, scope=scope, ttl_days=0)
+
+    monkeypatch.setattr(todo_list, "TodoStore", _spy)
+
+    tool = TodoCreateTool()
+    tool.subagent_ttl_days = 7
+    with patch.object(todo_list, "extract_umo", _make_call_with_umo("u:1")):
+        tool._setup(_ctx_with_extra({}))
+
+    assert captured["ttl_days"] == 7
+
+
+def test_subagent_todo_isolated_end_to_end(tmp_data_dir):
+    """subagent 与主 agent 各写各的文件,互不可见。"""
+    from tools import todo_list
+
+    umo = "test:user-a:PrivateMessage:scope-e2e"
+    main_store = todo_list.TodoStore(tmp_data_dir)
+    main_store.create(umo, title="main", items=[{"title": "m"}])
+
+    sub_store = todo_list.TodoStore(
+        tmp_data_dir, scope=todo_list.TodoScope("sub", "reviewer")
+    )
+    sub_store.create(umo, title="sub", items=[{"title": "s"}])
+
+    assert main_store.query(umo)["list"]["title"] == "main"
+    assert sub_store.query(umo)["list"]["title"] == "sub"
+    assert len(list(tmp_data_dir.glob("*.md"))) == 2

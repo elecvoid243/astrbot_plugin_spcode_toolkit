@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
+import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 """
 todo_list — LLM Agent 自我管理的 todo list 工具。
@@ -13,6 +17,8 @@ todo_list — LLM Agent 自我管理的 todo list 工具。
 v2.11 起:隔离粒度从 sender_key (platform:sender_id) 切到 umo,以切断跨私聊/群聊的"会话接力"。
 详见 docs/superpowers/specs/2026-06-20-todo-per-umo-design.md
 """
+
+logger = logging.getLogger(__name__)
 
 
 # ── 常量 ────────────────────────────────────────────
@@ -41,6 +47,120 @@ MARK_STATUS = {v: k for k, v in STATUS_MARK.items()}
 # - ""   = 传了空串 → 清空 notes
 # - "x"  = 传了内容 → 覆盖 notes
 UNSET_NOTES: None = None
+
+
+# ── scope 隔离域(v2.28.0)──────────────────────────────
+#
+# 背景:AstrBot 的 subagent 复用主 agent 的 event,因而共享同一个 umo,
+# 导致主 agent 与所有 subagent 落到同一个 .md 文件,并发 read-modify-write
+# 产生 lost update / 重复 ID / 互相覆盖。
+# 方案:按 agent 身份隔离 —— subagent 文件名前置 `sub__{name}__` 段,
+# 使 main 的 glob 前缀 `{umo_safe}_` 在文件系统层面天然不命中。
+# 详见 docs/superpowers/specs/2026-09-09-todo-subagent-isolation-design.md
+
+_SUB_FILE_PREFIX = "sub__"
+_MAX_SCOPE_NAME_LEN = 24
+
+
+@dataclass(frozen=True)
+class TodoScope:
+    """todo 列表的隔离域。
+
+    - ``main``:主 agent,命名与 v2.27.0 完全一致(向后兼容老文件)
+    - ``sub`` :某个 subagent,按 ``name`` 隔离
+    """
+
+    kind: Literal["main", "sub"] = "main"
+    name: str = ""
+
+    @property
+    def key(self) -> str:
+        """用于哈希回退与 frontmatter 的稳定标识。"""
+        return "main" if self.kind == "main" else f"sub:{self.name}"
+
+
+MAIN_SCOPE = TodoScope()
+
+
+def sanitize_name(name) -> str:
+    """清洗 subagent 名,使其可安全进入文件名。
+
+    - 非法文件名字符 → ``_``
+    - 清洗后为空 → 返回 ``""``(调用方降级 main)
+    - 超长 → 前 24 字符 + sha256 前 8 位(避免截断后两名碰撞写进同一文件)
+    """
+    if name is None:
+        return ""
+    cleaned = ILLEGAL_FILENAME_CHARS.sub("_", str(name)).strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) > _MAX_SCOPE_NAME_LEN:
+        digest = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:8]
+        cleaned = f"{cleaned[:_MAX_SCOPE_NAME_LEN]}{digest}"
+    return cleaned
+
+
+def resolve_scope(context) -> TodoScope:
+    """从 AstrBot 工具 context 解析当前 todo 隔离域。
+
+    读取 ``run_context.context.extra`` 的 ``is_subagent`` / ``subagent_name``
+    (AstrBot ``astr_agent_tool_exec.py:205`` 使用同名字段)。
+    任何缺失/异常 → 降级 ``main``:宁可回共享,也不写错隔离域。
+    """
+    try:
+        agent_ctx = getattr(context, "context", None)
+        extra = getattr(agent_ctx, "extra", None)
+        if isinstance(extra, dict) and extra.get("is_subagent"):
+            name = sanitize_name(extra.get("subagent_name") or "")
+            if name:
+                return TodoScope("sub", name)
+            logger.warning(
+                "[todo] is_subagent=True 但 subagent_name 缺失/非法,降级 main scope"
+            )
+    except Exception as e:
+        # 解析失败绝不能影响工具调用
+        logger.warning(f"[todo] resolve_scope 异常,降级 main scope: {e}")
+    return MAIN_SCOPE
+
+
+# ── TTL 惰性清理(v2.28.0)──────────────────────────────
+#
+# subagent 每轮结束即被 AstrBot 销毁,但它的 .md 文件会留在磁盘上。
+# 采用「同名复用 + TTL 惰性清理」:每次构造 TodoStore 时最多每小时清理一次
+# 超过 ttl_days 的 sub__*.md。**只匹配 sub__ 前缀,主 agent 文件永不清理。**
+
+_TTL_CLEANUP_INTERVAL_SEC: float = 3600.0
+_last_cleanup_mono: float = 0.0
+
+
+def cleanup_stale_sub_files(
+    base_dir: str | Path, ttl_days: int, keep: Path | None = None
+) -> int:
+    """删除 base_dir 下 mtime 超过 ttl_days 的 ``sub__*.md``,返回删除数量。
+
+    Args:
+        base_dir: todos 目录。
+        ttl_days: 保留天数;``<= 0`` 表示不清理(直接返回 0)。
+        keep: 需要跳过的文件(通常是当前正在读写的那个)。
+
+    Returns:
+        实际删除的文件数。单个文件删除失败会被跳过,不影响其他文件。
+    """
+    if ttl_days <= 0:
+        return 0
+    directory = Path(base_dir)
+    cutoff = time.time() - ttl_days * 86400
+    removed = 0
+    for p in directory.glob(f"{_SUB_FILE_PREFIX}*.md"):
+        if keep is not None and p == keep:
+            continue
+        try:
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 # ── umo & filename ──────────────────────────────────
@@ -143,29 +263,45 @@ def import_from_path(path: str) -> tuple[list[dict], str, str]:
     return items, data.get("title", ""), ""
 
 
-def build_filename(umo: str, when: datetime | None = None) -> str:
-    """Build a .md filename for the given umo at the given timestamp.
+def build_filename(
+    umo: str,
+    when: datetime | None = None,
+    *,
+    scope: TodoScope | None = None,
+) -> str:
+    """Build a .md filename for the given umo + scope at the given timestamp.
 
     v2.11: 输入从 sender_key (platform:sender_id) 切到 umo (unified_msg_origin)。
-    umo 形如 ``webchat:FriendMessage:astrbot`` 含多段 `:`,
-    Windows 文件名不能含 `:` → 把所有 `:` 替换为 `_` 后拼上时间戳。
+    v2.28.0: 新增 scope。main 保持 v2.27.0 命名(向后兼容老文件);
+    sub 前置 ``sub__{name}__`` 段,使 main 的 glob 前缀天然不命中。
 
     Format: {umo_清洗后}_{YYYYMMDDhhmm}.md (minute precision)
-    Fallback: sha256(umo)[:16]_{YYYYMMDDhhmm}.md
+    Sub:    sub__{name}__{umo_清洗后}_{YYYYMMDDhhmm}.md
+    Fallback: sha256(...)[:16]_{YYYYMMDDhhmm}.md (sub 形式同样带 sub__ 前缀)
     """
+    scope = scope or MAIN_SCOPE
     when = when or datetime.now()
     ts = when.strftime("%Y%m%d%H%M")
     # umo 含多个 `:`(如 webchat:FriendMessage:astrbot),把所有分隔符替换为 `_`
     safe = umo.replace(":", "_")
-    candidate = f"{safe}_{ts}.md"
+
+    if scope.kind == "sub":
+        candidate = f"{_SUB_FILE_PREFIX}{scope.name}__{safe}_{ts}.md"
+    else:
+        candidate = f"{safe}_{ts}.md"
 
     if len(candidate) <= MAX_FILENAME_LEN and not ILLEGAL_FILENAME_CHARS.search(
         candidate
     ):
         return candidate
 
-    h = hashlib.sha256(umo.encode("utf-8")).hexdigest()[:16]
-    return f"{h}_{ts}.md"
+    # 回退:main 保持 v2.27.0 的 sha256(umo) 以兼容老文件;
+    # sub 把 scope 纳入哈希输入,避免与 main / 其他 sub 撞名。
+    if scope.kind == "sub":
+        digest = hashlib.sha256(f"{scope.key}|{umo}".encode("utf-8")).hexdigest()[:16]
+        return f"{_SUB_FILE_PREFIX}{scope.name}__{digest}_{ts}.md"
+    digest = hashlib.sha256(umo.encode("utf-8")).hexdigest()[:16]
+    return f"{digest}_{ts}.md"
 
 
 # ── MD 序列化 ────────────────────────────────────────
@@ -201,6 +337,7 @@ def render_md(data: dict) -> str:
     # umo 已包含 platform/msg_type/sender_id/session_id 信息,无冗余。
     lines.append("---")
     lines.append(f"umo: {data['umo']}")
+    lines.append(f"agent_scope: {data.get('agent_scope', 'main')}")
     lines.append(f"title: {data['title']}")
     lines.append(f"created_at: {data['created_at']}")
     lines.append(f"updated_at: {data['updated_at']}")
@@ -373,6 +510,7 @@ def parse_md(text: str) -> dict:
         umo = f"legacy:{_old_umo}"
     return {
         "umo": umo,
+        "agent_scope": meta.get("agent_scope", "main"),
         "title": title,
         "created_at": meta.get("created_at", ""),
         "updated_at": meta.get("updated_at", ""),
@@ -485,12 +623,37 @@ def _normalize_items(value, *, context: str = "item") -> list[dict]:
 class TodoStore:
     """单个用户的 todo list 持久化存储。"""
 
-    def __init__(self, base_dir: str | Path):
+    def __init__(
+        self,
+        base_dir: str | Path,
+        scope: TodoScope | None = None,
+        ttl_days: int = 0,
+    ):
         self._dir = Path(base_dir)
+        self._scope = scope or MAIN_SCOPE
         self._dir.mkdir(parents=True, exist_ok=True)
+        self._maybe_cleanup(ttl_days)
+
+    def _maybe_cleanup(self, ttl_days: int) -> None:
+        """惰性清理过期 subagent 文件(每小时最多一次,失败不影响主流程)。"""
+        global _last_cleanup_mono
+        if ttl_days <= 0:
+            return
+        now = time.monotonic()
+        if now - _last_cleanup_mono < _TTL_CLEANUP_INTERVAL_SEC:
+            return
+        _last_cleanup_mono = now
+        try:
+            removed = cleanup_stale_sub_files(self._dir, ttl_days)
+            if removed:
+                logger.info(
+                    f"[todo] TTL 清理:已删除 {removed} 个过期 subagent todo 文件"
+                )
+        except Exception as e:
+            logger.warning(f"[todo] TTL 清理失败(已忽略): {e}")
 
     def _path_for(self, umo: str, when: datetime | None = None) -> Path:
-        return self._dir / build_filename(umo, when)
+        return self._dir / build_filename(umo, when, scope=self._scope)
 
     def _atomic_write(self, path: Path, content: str) -> None:
         """先写 tmp 文件，再 os.replace 原子替换。
@@ -512,19 +675,26 @@ class TodoStore:
             raise
 
     def _existing_path(self, umo: str) -> Path | None:
-        """查找该 umo 的现有文件(日期不固定)。
+        """查找该 umo + 当前 scope 的现有文件(日期不固定)。
 
         v2.11: 输入从 sender_key 切到 umo(可能含多 `:`)。
-        文件名里 `:` 已被替换为 `_`,前缀匹配也按 umo 清洗后的字符串来。
+        v2.28.0: 按 scope 拼前缀。main 的前缀是 ``{umo_safe}_``,sub 文件恒以
+        ``sub__`` 开头 → 两者在文件系统层面互斥,主 agent 不可能命中 sub 的文件。
         """
         safe = umo.replace(":", "_")
-        prefix = f"{safe}_"
-        for p in sorted(self._dir.glob(f"{prefix}*.md"), reverse=True):
-            return p
-        # 哈希回退形式
-        h = hashlib.sha256(umo.encode("utf-8")).hexdigest()[:16]
-        for p in sorted(self._dir.glob(f"{h}_*.md"), reverse=True):
-            return p
+        if self._scope.kind == "sub":
+            digest = hashlib.sha256(
+                f"{self._scope.key}|{umo}".encode("utf-8")
+            ).hexdigest()[:16]
+            prefix = f"{_SUB_FILE_PREFIX}{self._scope.name}__{safe}_"
+            hash_prefix = f"{_SUB_FILE_PREFIX}{self._scope.name}__{digest}_"
+        else:
+            digest = hashlib.sha256(umo.encode("utf-8")).hexdigest()[:16]
+            prefix = f"{safe}_"
+            hash_prefix = f"{digest}_"
+        for pattern in (f"{prefix}*.md", f"{hash_prefix}*.md"):
+            for p in sorted(self._dir.glob(pattern), reverse=True):
+                return p
         return None
 
     def _load(self, umo: str) -> tuple[Path | None, dict]:
@@ -580,6 +750,7 @@ class TodoStore:
         now_iso = datetime.now().isoformat(timespec="seconds")
         data = {
             "umo": umo,
+            "agent_scope": self._scope.key,
             "title": title,
             "created_at": now_iso,
             "updated_at": now_iso,
