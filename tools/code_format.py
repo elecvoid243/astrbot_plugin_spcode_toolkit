@@ -106,7 +106,7 @@ VALID_CLANG_FORMAT_STYLES: frozenset[str] = frozenset(
 # legacy astyle --style= 值 → clang-format 预设/内联 style 串映射。
 # 向后兼容:_conf_schema.json 的 default_style 历史上是 astyle 风格名,
 # 既有用户配置里可能仍存着这些值(AGENTS.md 规则 9:不改字段名,迁移配置)。
-# 映射为 "{...}" 完整 style 串时,default_indent 不再叠加(串内已自带缩进语义)。
+# 映射为 "{...}" 串时叠加 default_indent,除非串内已自带 IndentWidth(linux)。
 LEGACY_ASTYLE_STYLE_MAP: dict[str, str] = {
     "allman": "{BasedOnStyle: llvm, BreakBeforeBraces: Allman}",
     "kr": "llvm",
@@ -447,8 +447,9 @@ def _resolve_clang_format_style(style: str, indent: int) -> str:
 
     - clang-format 预设(llvm/google/...)→ ``{BasedOnStyle: <预设>, IndentWidth: <N>}``
     - legacy astyle 风格名 → 查 LEGACY_ASTYLE_STYLE_MAP;
-      映射为完整 ``{...}`` 串时原样返回(串内已含缩进语义,indent 不再叠加);
-      映射为预设名时按预设路径叠加 IndentWidth。
+      映射为完整 ``{...}`` 串时叠加配置 indent,除非串内已自带 IndentWidth
+      (legacy linux 的 8 空格 tab,spec 例外);映射为预设名时按预设路径
+      叠加 IndentWidth。
 
     本函数同时被 tools/code_check.py 复用,保证 format 与 check 的
     style 参数链完全一致(format/check 同源)。
@@ -462,16 +463,26 @@ def _resolve_clang_format_style(style: str, indent: int) -> str:
     base = style
     if style in LEGACY_ASTYLE_STYLE_MAP:
         mapped = LEGACY_ASTYLE_STYLE_MAP[style]
+        if mapped.startswith("{"):
+            # WHY: 仅 linux 的映射串自带 IndentWidth(spec 例外);allman 等
+            # 串内无缩进语义,原样返回会回落到 BasedOnStyle 默认缩进(llvm=2),
+            # 配置的 default_indent 被静默丢弃,故追加
+            resolved = (
+                mapped
+                if "IndentWidth" in mapped
+                else f"{mapped[:-1]}, IndentWidth: {indent}}}"
+            )
+        else:
+            base = mapped
+            resolved = f"{{BasedOnStyle: {base}, IndentWidth: {indent}}}"
         logger.warning(
             "[code_format] default_style=%r 是 legacy astyle 风格名,"
             "已映射为 clang-format %r;建议在插件配置中改用 clang-format 预设"
             "(llvm/google/chromium/microsoft/webkit/gnu)",
             style,
-            mapped,
+            resolved,
         )
-        if mapped.startswith("{"):
-            return mapped
-        base = mapped
+        return resolved
     return f"{{BasedOnStyle: {base}, IndentWidth: {indent}}}"
 
 

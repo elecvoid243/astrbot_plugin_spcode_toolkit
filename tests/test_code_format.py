@@ -645,13 +645,15 @@ def test_resolve_style_presets():
 
 
 def test_resolve_style_legacy_allman():
-    """legacy allman → 完整 style 串(Allman braces),indent 不叠加。"""
+    """legacy allman → Allman braces + 叠加配置 indent(spec:仅 linux 自带 IndentWidth 免叠加)。"""
     resolved = code_format._resolve_clang_format_style("allman", 4)
-    assert resolved == "{BasedOnStyle: llvm, BreakBeforeBraces: Allman}"
+    assert resolved == (
+        "{BasedOnStyle: llvm, BreakBeforeBraces: Allman, IndentWidth: 4}"
+    )
 
 
 def test_resolve_style_legacy_linux():
-    """legacy linux → 完整 style 串(8 空格 tab),indent 不叠加。"""
+    """legacy linux → 串内自带 IndentWidth: 8,配置 indent 不叠加(spec 例外)。"""
     resolved = code_format._resolve_clang_format_style("linux", 4)
     assert resolved == "{BasedOnStyle: llvm, IndentWidth: 8, UseTab: Always}"
 
@@ -675,13 +677,14 @@ def test_format_rejects_unknown_style(unformatted_cpp: Path):
 
 
 def test_format_accepts_legacy_style(unformatted_cpp: Path, fake_clang_format_run):
-    """legacy astyle 风格名仍被接受(向后兼容既有配置)。"""
+    """legacy astyle 风格名仍被接受(向后兼容既有配置),且 indent 随行。"""
     fake_clang_format_run["state"]["formatted"] = b"int main()\n{\n}\n"
     r = code_format.format(str(unformatted_cpp), style="allman", indent=4)
     assert r["ok"] is True
     cmd = fake_clang_format_run["calls"][0]["cmd"]
     style_arg = next(a for a in cmd if a.startswith("--style="))
     assert "BreakBeforeBraces: Allman" in style_arg
+    assert "IndentWidth: 4" in style_arg
 
 
 # ── 24. _find_clang_format 定位顺序(解释器环境优先) ──
