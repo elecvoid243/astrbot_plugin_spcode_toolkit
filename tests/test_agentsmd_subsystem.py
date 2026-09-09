@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -24,6 +24,9 @@ if str(ROOT) not in sys.path:
 import pytest  # noqa: E402
 
 from tools.agentsmd import (  # noqa: E402
+    DEFAULT_AGENTS_MD,
+    DEFAULT_INIT_TEMPLATE,
+    DEFAULT_INIT_TEMPLATE_GENERAL,
     AgentsState,
     AgentsStateManager,
     AgentsmdHandlers,
@@ -388,24 +391,100 @@ async def test_init_dir_not_exists(tmp_path: Path):
     assert any("不存在" in m for m in msgs)
 
 
-async def test_init_no_code_files(tmp_path: Path):
+async def test_init_docs_only_dir_succeeds(tmp_path: Path):
+    """2026-09-09: 代码文件门控移除 — 纯文档目录也能 init。
+
+    provider=None 时 generate 走 DEFAULT_AGENTS_MD 兜底,init 仍应
+    写出文件并 yield 成功消息。
+    """
     fake_plugin = MagicMock()
     fake_plugin._config = {"file_remove_blacklist": []}
+    fake_plugin.context.get_using_provider = MagicMock(return_value=None)
     mgr = AgentsStateManager()
     h = AgentsmdHandlers(
         state=mgr,
         plugin_getter=lambda: fake_plugin,
         is_path_safe=lambda *args, **kwargs: (True, ""),
     )
-    # 创建空目录(无代码文件)
-    empty_dir = tmp_path / "empty_proj"
-    empty_dir.mkdir()
-    (empty_dir / "README.txt").write_text("just docs", encoding="utf-8")
+    # 纯文档目录(无任何代码文件)
+    docs_dir = tmp_path / "docs_proj"
+    docs_dir.mkdir()
+    (docs_dir / "README.md").write_text("# Docs", encoding="utf-8")
+    (docs_dir / "notes.txt").write_text("meeting notes", encoding="utf-8")
     ev = _make_event()
     msgs = []
-    async for msg in h.init(ev, str(empty_dir)):
+    async for msg in h.init(ev, str(docs_dir)):
         msgs.append(msg)
-    assert any("未找到代码文件" in m for m in msgs)
+    assert any("创建 AGENTS.md" in m for m in msgs)
+    written = (docs_dir / "AGENTS.md").read_text(encoding="utf-8")
+    assert written == DEFAULT_AGENTS_MD
+
+
+async def test_init_picks_template_by_dir_kind(tmp_path: Path):
+    """无自定义模板时,init 按目录类型选模板:文档目录走通用模板,
+    代码目录走代码项目模板。"""
+    cases = [
+        ("docs_proj", DEFAULT_INIT_TEMPLATE_GENERAL, DEFAULT_INIT_TEMPLATE),
+        ("code_proj", DEFAULT_INIT_TEMPLATE, DEFAULT_INIT_TEMPLATE_GENERAL),
+    ]
+    for dirname, expected_tpl, unexpected_tpl in cases:
+        proj = tmp_path / dirname
+        proj.mkdir()
+        if "code" in dirname:
+            (proj / "main.py").write_text("x=1", encoding="utf-8")
+        else:
+            (proj / "guide.md").write_text("# guide", encoding="utf-8")
+
+        provider = MagicMock()
+        llm_resp = MagicMock()
+        llm_resp.completion_text = "# generated"
+        provider.text_chat = AsyncMock(return_value=llm_resp)
+        fake_plugin = MagicMock()
+        fake_plugin._config = {"file_remove_blacklist": []}
+        fake_plugin.context.get_using_provider = MagicMock(return_value=provider)
+        mgr = AgentsStateManager()
+        h = AgentsmdHandlers(
+            state=mgr,
+            plugin_getter=lambda fake_plugin=fake_plugin: fake_plugin,
+            is_path_safe=lambda *args, **kwargs: (True, ""),
+        )
+        ev = _make_event()
+        msgs = []
+        async for msg in h.init(ev, str(proj)):
+            msgs.append(msg)
+        assert any("创建 AGENTS.md" in m for m in msgs), dirname
+        prompt = provider.text_chat.call_args.kwargs["prompt"]
+        assert expected_tpl in prompt, dirname
+        assert unexpected_tpl not in prompt, dirname
+
+
+async def test_init_custom_template_overrides_dir_kind(tmp_path: Path):
+    """配置了 init_template 时,文档目录也用自定义模板。"""
+    docs_dir = tmp_path / "docs_proj"
+    docs_dir.mkdir()
+    (docs_dir / "guide.md").write_text("# guide", encoding="utf-8")
+
+    provider = MagicMock()
+    llm_resp = MagicMock()
+    llm_resp.completion_text = "# generated"
+    provider.text_chat = AsyncMock(return_value=llm_resp)
+    fake_plugin = MagicMock()
+    fake_plugin._config = {"file_remove_blacklist": [], "init_template": "my tpl"}
+    fake_plugin.context.get_using_provider = MagicMock(return_value=provider)
+    mgr = AgentsStateManager()
+    h = AgentsmdHandlers(
+        state=mgr,
+        plugin_getter=lambda: fake_plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
+    ev = _make_event()
+    msgs = []
+    async for msg in h.init(ev, str(docs_dir)):
+        msgs.append(msg)
+    assert any("创建 AGENTS.md" in m for m in msgs)
+    prompt = provider.text_chat.call_args.kwargs["prompt"]
+    assert "my tpl" in prompt
+    assert DEFAULT_INIT_TEMPLATE_GENERAL not in prompt
 
 
 # ── AgentsmdHandlers.load 边界 ─────────────────────
@@ -453,6 +532,29 @@ async def test_load_no_agents_md(tmp_path: Path):
     async for msg in h.load(ev, str(proj)):
         msgs.append(msg)
     assert any("未找到 AGENTS.md" in m for m in msgs)
+
+
+async def test_load_docs_only_dir_succeeds(tmp_path: Path):
+    """2026-09-09: load 与 init 对齐 — 纯文档目录也可 load。"""
+    fake_plugin = MagicMock()
+    fake_plugin._config = {"file_remove_blacklist": []}
+    proj = tmp_path / "docs_proj"
+    proj.mkdir()
+    (proj / "README.md").write_text("# docs", encoding="utf-8")
+    (proj / "AGENTS.md").write_text("# docs agents", encoding="utf-8")
+    mgr = AgentsStateManager()
+    h = AgentsmdHandlers(
+        state=mgr,
+        plugin_getter=lambda: fake_plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
+    ev = _make_event("umo-1")
+    msgs = []
+    async for msg in h.load(ev, str(proj)):
+        msgs.append(msg)
+    assert any("已加载" in m for m in msgs)
+    assert "umo-1" in mgr
+    assert mgr.get("umo-1").last_content == "# docs agents"
 
 
 # ── AgentsmdHandlers.update 边界 ───────────────────
@@ -514,6 +616,7 @@ async def test_package_exposes_all_expected_symbols():
         "CODE_FILE_EXTENSIONS",
         "DEFAULT_AGENTS_MD",
         "DEFAULT_INIT_TEMPLATE",
+        "DEFAULT_INIT_TEMPLATE_GENERAL",
         "DEFAULT_INJECTION_HEADER",
         "INJECTION_MARKER",
         "KEY_PROJECT_FILES",
@@ -521,6 +624,7 @@ async def test_package_exposes_all_expected_symbols():
         "build_injection",
         "generate_agents_md_via_llm",
         "has_code_files",
+        "pick_init_template",
         "resolve_init_template",
         "scan_project_context",
         "strip_code_fence",

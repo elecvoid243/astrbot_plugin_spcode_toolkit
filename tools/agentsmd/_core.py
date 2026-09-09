@@ -1,12 +1,15 @@
 """agentsmd — AGENTS.md 项目指令文件管理(v2.4 合并自独立插件)。
 
 提供:
-- DEFAULT_INIT_TEMPLATE: 默认的 AGENTS.md 生成 prompt 模板
+- DEFAULT_INIT_TEMPLATE: 代码项目目录的 AGENTS.md 生成 prompt 模板
+- DEFAULT_INIT_TEMPLATE_GENERAL: 非代码目录(文档/资料库)的生成 prompt 模板
+- pick_init_template(config, dir_path) -> str
+  自适应模板选择:用户自定义 init_template 优先,否则按目录是否含代码文件选默认
 - DEFAULT_AGENTS_MD: 兜底内容(LLM 不可用时)
 - generate_agents_md_via_llm(provider, dir_path, *, umo, init_template) -> str
   通过 AstrBot Provider 调 LLM 生成 AGENTS.md 内容
 - scan_project_context(dir_path, *, max_depth=2) -> str
-  扫描项目目录,收集目录结构和关键文件内容作为 LLM 上下文
+  扫描项目目录,收集目录结构、文件类型统计和关键文件/文档摘录作为 LLM 上下文
 - strip_code_fence(text) -> str
   剥离 LLM 返回内容外层的 ```lang ... ``` 包裹
 - INJECTION_MARKER: 用于 on_llm_request 钩子检测是否已注入(防重复)
@@ -29,7 +32,7 @@ from .._code_detect import (  # noqa: F401  (re-exports)
     has_code_files,
 )
 
-# 默认的 AGENTS.md 生成 prompt 模板
+# 默认的 AGENTS.md 生成 prompt 模板(代码项目目录)
 DEFAULT_INIT_TEMPLATE = """请分析此代码库并创建一个 AGENTS.md 文件,包含:
 - 构建/lint/测试命令——特别是运行单个测试的命令。如果使用msbuild进行构建,只输出错误信息和警告信息
 - 代码风格指南,包括导入、格式化、类型、命名约定、错误处理等
@@ -37,16 +40,31 @@ DEFAULT_INIT_TEMPLATE = """请分析此代码库并创建一个 AGENTS.md 文件
 – 文件使用与用户相同的语言，默认中文
 """
 
-# AGENTS.md 默认内容(当目录为空或无法调用 LLM 时的兜底内容)
+# 非代码目录(文档库/资料库/笔记库等)的生成 prompt 模板。
+# WHY: init 不再要求目录含代码文件,纯文档目录走代码模板会让 LLM
+# 编造不存在的构建命令;改用面向内容组织的指令集。
+DEFAULT_INIT_TEMPLATE_GENERAL = """请分析此目录并创建一个 AGENTS.md 文件,包含:
+- 该目录的用途——存放什么内容、面向什么读者、解决什么问题
+- 内容组织方式——各子目录与关键文件分别承担什么职责、命名有何规律
+- 维护约定——文档的写作语言、格式规范、新增内容应放置的位置
+- 如果目录中存在任何脚本或自动化工具,说明其用途与用法
+- 请勿编造不存在的构建/测试命令
+- 该文件将被提供给在此目录中工作的编程代理
+- 文件使用与用户相同的语言,默认中文
+"""
+
+# AGENTS.md 默认内容(当目录为空或无法调用 LLM 时的兜底内容)。
+# 措辞保持目录类型中立(代码/文档目录都适用),条目按"若适用"理解。
 DEFAULT_AGENTS_MD = """# AGENTS.md
 
 ## 项目上下文
 
-本项目使用 AGENTS.md 来定义 AI 代理在项目中工作时应遵循的规范和上下文。
+本项目使用 AGENTS.md 来定义 AI 代理在这个目录中工作时应遵循的规范和上下文。
 
 ## 构建/测试命令
 
-- 请根据项目实际情况补充构建和测试命令
+- 若本项目包含可构建/可测试的代码,请根据实际情况补充命令
+- 纯文档/资料目录可跳过本节
 
 ## 代码风格指南
 
@@ -56,7 +74,7 @@ DEFAULT_AGENTS_MD = """# AGENTS.md
 
 ## 架构说明
 
-- 请根据项目实际情况补充架构说明
+- 请根据实际情况补充目录的组织结构与各部分职责
 
 ## 操作约定
 
@@ -135,6 +153,9 @@ def scan_project_context(dir_path: Path, *, max_depth: int = 2) -> str:
     - 项目根目录
     - 目录结构(最多 max_depth 层,每个父目录最多 10 个子目录)
     - 常见配置文件的内容(package.json, pyproject.toml, README.md 等)
+    - 文件类型统计(按扩展名计数,帮助 LLM 快速判断目录性质)
+    - 非代码目录:额外摘录文档文件(README 之外的 .md/.rst/.txt/.adoc)内容,
+      使纯文档目录也能生成有依据的 AGENTS.md
 
     这是纯函数,无副作用;供 generate_agents_md_via_llm 调用。
     """
@@ -142,6 +163,9 @@ def scan_project_context(dir_path: Path, *, max_depth: int = 2) -> str:
     lines.append(f"项目根目录: {dir_path}")
     lines.append("")
     lines.append("## 目录结构")
+
+    ext_counts: dict[str, int] = {}
+    listed_any = False
     try:
         for root, dirs, files in os.walk(dir_path):
             dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _SKIP_DIRS]
@@ -159,6 +183,13 @@ def scan_project_context(dir_path: Path, *, max_depth: int = 2) -> str:
             for f in sorted(files):
                 if not f.startswith("."):
                     lines.append(f"{sub_indent}{f}")
+                    listed_any = True
+                    # 文件类型统计(与目录树同深度口径)
+                    if "." in f:
+                        ext = f.rsplit(".", 1)[-1].lower()
+                    else:
+                        ext = "(无后缀)"
+                    ext_counts[ext] = ext_counts.get(ext, 0) + 1
 
             # 限制显示的子目录数量,避免 LLM 上下文爆炸
             if len(dirs) > 10:
@@ -168,14 +199,27 @@ def scan_project_context(dir_path: Path, *, max_depth: int = 2) -> str:
     except Exception as e:
         lines.append(f"(扫描目录结构失败: {e})")
 
+    if not listed_any:
+        lines.append("(目录为空或未发现可见文件)")
+    else:
+        lines.append("")
+        lines.append("## 文件类型统计")
+        for ext, count in sorted(ext_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:10]:
+            label = ext if ext == "(无后缀)" else f".{ext}"
+            lines.append(f"- {label}: {count} 个文件")
+        if len(ext_counts) > 10:
+            lines.append(f"- (其余 {len(ext_counts) - 10} 种扩展名从略)")
+
     lines.append("")
     lines.append("## 关键文件内容")
 
+    consumed_names: set[str] = set()
     found_any = False
     for filename in KEY_PROJECT_FILES:
         file_path = dir_path / filename
         if file_path.exists() and file_path.is_file():
             found_any = True
+            consumed_names.add(filename)
             lines.append(f"\n### {filename}")
             try:
                 text = file_path.read_text(encoding="utf-8", errors="ignore")
@@ -191,7 +235,69 @@ def scan_project_context(dir_path: Path, *, max_depth: int = 2) -> str:
     if not found_any:
         lines.append("(未找到常见的项目配置文件)")
 
+    # 非代码目录:代码项目上下文(配置文件)信息量不足,额外摘录文档内容,
+    # 让 LLM 依据真实材料描述目录用途与内容组织,而非凭空编造。
+    # 深度口径与目录树一致(max_depth),避免出现树里看不到的路径。
+    if not has_code_files(dir_path):
+        lines.extend(_doc_excerpts_section(dir_path, consumed_names, max_depth))
+
     return "\n".join(lines)
+
+
+# 文档摘录节常量:覆盖的文档后缀 / 最多摘录篇数 / 每篇行数上限
+_DOC_EXCERPT_EXTENSIONS: frozenset[str] = frozenset({".md", ".rst", ".txt", ".adoc"})
+_DOC_EXCERPT_MAX_FILES = 4
+_DOC_EXCERPT_MAX_LINES = 40
+
+
+def _doc_excerpts_section(
+    dir_path: Path, consumed_names: set[str], max_depth: int
+) -> list[str]:
+    """构造"## 文档文件摘录"小节(仅供非代码目录)。
+
+    从目录树(跳过隐藏目录与 _SKIP_DIRS,深度上限与目录树同口径)
+    收集 .md/.rst/.txt/.adoc 文件,排除 KEY_PROJECT_FILES 已读取过的
+    文件名(如 README.md),按路径名排序后取前 _DOC_EXCERPT_MAX_FILES 篇,
+    每篇截取前 _DOC_EXCERPT_MAX_LINES 行。
+    """
+    lines: list[str] = ["", "## 文档文件摘录"]
+    candidates: list[Path] = []
+    try:
+        for root, dirs, files in os.walk(dir_path):
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _SKIP_DIRS]
+            depth = root[len(str(dir_path)) :].count(os.sep)
+            if depth > max_depth:
+                del dirs[:]
+                continue
+            for f in sorted(files):
+                if f.startswith(".") or f in consumed_names:
+                    continue
+                p = Path(root) / f
+                if p.suffix.lower() in _DOC_EXCERPT_EXTENSIONS:
+                    candidates.append(p)
+    except OSError:
+        lines.append("(扫描文档文件失败)")
+        return lines
+
+    if not candidates:
+        lines.append(f"(未发现 {'/'.join(sorted(_DOC_EXCERPT_EXTENSIONS))} 文档)")
+        return lines
+
+    for p in sorted(candidates)[:_DOC_EXCERPT_MAX_FILES]:
+        rel = p.relative_to(dir_path)
+        lines.append(f"\n### {rel}")
+        try:
+            text = p.read_text(encoding="utf-8", errors="ignore")
+            text_lines = text.splitlines()
+            if len(text_lines) > _DOC_EXCERPT_MAX_LINES:
+                text = "\n".join(text_lines[:_DOC_EXCERPT_MAX_LINES])
+                text += f"\n... (共 {len(text_lines)} 行,已截断)"
+            lines.append(f"```\n{text}\n```")
+        except OSError as e:
+            lines.append(f"(读取失败: {e})")
+    if len(candidates) > _DOC_EXCERPT_MAX_FILES:
+        lines.append(f"\n(其余 {len(candidates) - _DOC_EXCERPT_MAX_FILES} 篇文档从略)")
+    return lines
 
 
 async def generate_agents_md_via_llm(
@@ -223,7 +329,7 @@ async def generate_agents_md_via_llm(
     project_context = scan_project_context(dir_path)
     prompt = (
         f"{template}\n\n"
-        f"以下是该项目的文件结构和关键文件内容摘要:\n\n"
+        f"以下是该目录的文件结构、文件类型统计和关键文件内容摘要:\n\n"
         f"{project_context}\n\n"
         f"请直接输出 AGENTS.md 的完整内容(Markdown 格式),不要添加任何额外说明,"
         f"也不要使用 ```markdown 等代码块包裹整个内容。"
@@ -268,11 +374,42 @@ def build_injection(content: str) -> str:
 
 
 def resolve_init_template(config: dict | None, default: str = "") -> str:
-    """从插件 config 中取出 init_template,空时回退到默认。"""
+    """从插件 config 中取出 init_template,空时回退到默认。
+
+    .. deprecated:: 非代码目录支持(2026-09-09)起,handler 侧应改用
+        :func:`pick_init_template`(能按目录类型选模板)。本函数保留
+        供向后兼容与需要"无条件用代码模板"的调用方使用。
+    """
     custom = (config or {}).get("init_template", "")
     if custom and custom.strip():
         return custom.strip()
     return default or DEFAULT_INIT_TEMPLATE
+
+
+def pick_init_template(config: dict | None, dir_path: Path) -> str:
+    """自适应 init 模板选择:用户自定义优先,否则按目录类型选默认。
+
+    选择顺序:
+    1. config 中的 ``init_template`` 非空 → 原样使用(用户明确覆盖,
+       对代码/非代码目录一视同仁,不做二次加工)
+    2. 目录含代码文件(递归判定,跳过垃圾/隐藏目录)→
+       :data:`DEFAULT_INIT_TEMPLATE`(代码项目模板)
+    3. 否则 → :data:`DEFAULT_INIT_TEMPLATE_GENERAL`(通用目录模板,
+       面向文档/资料库的内容组织说明)
+
+    Args:
+        config: 插件配置 dict(可为 None)。
+        dir_path: 目标目录(须已存在;不存在时按非代码目录处理)。
+
+    Returns:
+        strip 后的模板文本。
+    """
+    custom = (config or {}).get("init_template", "")
+    if custom and custom.strip():
+        return custom.strip()
+    if has_code_files(dir_path):
+        return DEFAULT_INIT_TEMPLATE
+    return DEFAULT_INIT_TEMPLATE_GENERAL
 
 
 # v2.9: CODE_FILE_EXTENSIONS 与 has_code_files 已抽到 tools/_code_detect。

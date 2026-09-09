@@ -753,6 +753,25 @@ def _classify_revert_stderr(stderr: str) -> str:
     return ReasonCode.GIT_ERROR
 
 
+def _classify_reset_stderr(stderr: str) -> str:
+    """将 ``git reset`` 失败 stderr 映射到 ReasonCode。
+
+    防御性兜底:主要失败路径(merge/revert/cherry-pick/rebase 进行中)已在
+    handler 里经 ``_detect_conflict_operation`` 前置拦截。注意 ``reset --hard``
+    不会因 untracked 文件拒绝——git 会直接删除挡路的 untracked 文件
+    (git-reset(1) --hard 语义),所以这里没有 untracked 相关分支。
+    """
+    s = stderr.lower()
+    if (
+        "middle of a merge" in s
+        or "middle of a cherry-pick" in s
+        or "middle of a revert" in s
+        or "you need to resolve your current index first" in s
+    ):
+        return ReasonCode.OPERATION_IN_PROGRESS
+    return ReasonCode.GIT_ERROR
+
+
 def _validate_repo_relative_file(
     file_path: str,
     repo_root: Path,

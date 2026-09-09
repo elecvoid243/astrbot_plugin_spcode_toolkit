@@ -1,7 +1,7 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: v2.26.0
+version: v2.27.0
 description: |
   ## 主要能力
 
@@ -58,6 +58,7 @@ description: |
 
   ## 版本历程（最近 8 个）
 
+  - **v2.27.0** (2026-09-09) `POST /spcode/git-reset`：SourceTree 式「重置当前分支到此提交」（`git reset --soft/--mixed/--hard`，三档模式、`ref` 显式必填防误伤 HEAD、merge/revert/cherry-pick/rebase 哨兵前置拦截）；Git 历史页行内「重置」按钮 + 三档确认对话框（统一要求输入目标 commit 前 7 位 SHA；HEAD 行不显示）
   - **v2.26.0** (2026-09-08) git 历史页 tag 展示与过滤：`/spcode/git-log` 新增 `grep` 提交名过滤（`--grep` + `-i` + `--fixed-strings`）与 hash-like `ref` 规范化（响应 `resolved_ref`；歧义 → `ref_ambiguous`），commit 附 `tags` 徽章；`/spcode/git-branches` 追加 `tags` 列表（轻量/附注 tag 统一剥离到 commit sha + `annotated` 标记）；两端点 ETag 均纳入 tags 变化
   - **v2.25.0** (2026-08-30) `code_crap` 工具：CRAP=CC²×(1−覆盖率)³+CC 按函数风险检测（Python→crap4py 分支覆盖;C/C++→lizard+LCOV 行覆盖;两路径统一 schema;无覆盖率时按最坏情况计算并标注;只读,plan 模式可用）
   - **v2.24.0** (2026-08-14) clang-format 统一 C/C++ format 与 check：**移除 astyle 与 cpplint**（cpplint 的 Google 风格硬编码与可配置的 astyle 互相打架）；code_format 改走 clang-format（二进制 stdin/stdout，字节级保真 GBK/BOM/CRLF；项目内 `.clang-format` 向上发现优先，配置 `default_style`/`default_indent` 作内联 `--style={BasedOnStyle, IndentWidth}` 兜底；legacy astyle 风格名自动映射）；code_check 的 C/C++ 格式检查改为 clang-format dry-run diff（与 format 同一参数链，格式化后必通过检查）；merge 输出块 `linters.cpplint` → `linters.clang_format`；`requirements.txt` 移除 cpplint/astyle、新增 clang-format

@@ -33,6 +33,7 @@ Dashboard / WebUI:
   * ``/spcode/codegraph-status``    (GET)  # v2.14.x (2026-06-28)
   * ``/spcode/codegraph-set``       (POST) # 2026-08-06 — 静默切换默认项目
   * ``/spcode/codegraph-init``      (POST) # 2026-09-08 — 静默初始化/更新索引
+  * ``/spcode/git-reset``           (POST) # v2.27.0 (2026-09-09) — 重置当前分支到指定 commit
 
   * ``/spcode/terminal/start``    (POST)  # 2026-09-01 — 终端会话启动
   * ``/spcode/terminal/stream``   (GET)   # 2026-09-01 — 终端输出 SSE 流
@@ -105,6 +106,7 @@ from . import (
     git_remote_set_url,  # 2026-08-12 — POST git-remote-set-url
     git_remotes,  # 2026-08-16 — GET git-remotes
     git_repo_check,  # v2.18.0 (2026-07-16) - GET git 仓库探测
+    git_reset,  # v2.27.0 (2026-09-09) — POST git-reset (SourceTree 式重置)
     git_revert,  # v2.17.0 (2026-07-16) - PR-G POST endpoint
     git_show,
     git_squash,  # 2026-08-03 - POST git-squash (HEAD 锚定连续压缩)
@@ -234,6 +236,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["POST"],
         git_revert.handle,
         "git revert <ref> --no-edit (自动生成回滚 commit)",
+    ),
+    (
+        "/spcode/git-reset",  # v2.27.0 (2026-09-09)
+        ["POST"],
+        git_reset.handle,
+        "git reset --soft/--mixed/--hard <ref>(重置当前分支到指定 commit)",
     ),
     (
         "/spcode/git-squash",  # 2026-08-03
@@ -581,6 +589,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_branch_delete": git_branch_delete.handle,  # v2.17.0 (2026-07-16)
     "handle_post_git_branch_switch": git_branch_switch.handle,  # v2.17.0 (2026-07-16)
     "handle_post_git_revert": git_revert.handle,  # v2.17.0 (2026-07-16)
+    "handle_post_git_reset": git_reset.handle,  # v2.27.0 (2026-09-09)
     "handle_post_git_squash": git_squash.handle,  # 2026-08-03
     "handle_get_git_repo_check": git_repo_check.handle,  # v2.18.0 (2026-07-16)
     "handle_get_git_log": git_log.handle,
@@ -741,6 +750,7 @@ def register_webapi_routes(plugin: SPCodeToolkit) -> None:
     2026-09-01: 65 -> 71 (+spcode/terminal/* 6 端点: start/stream/input/
                 interrupt/stop/status)
     2026-09-08: 71 -> 72 (+codegraph-init POST /spcode/codegraph-init)
+    2026-09-09: 72 -> 73 (+git-reset POST /spcode/git-reset)
     """
     for route, methods, handler, desc in ROUTES:
         try:
@@ -791,6 +801,7 @@ __all__ = [
     "git_remote_set_url",  # 2026-08-12
     "git_remotes",  # 2026-08-16
     "git_repo_check",  # v2.18.0
+    "git_reset",  # v2.27.0
     "git_revert",  # v2.17.0
     "git_show",
     "git_squash",  # 2026-08-03

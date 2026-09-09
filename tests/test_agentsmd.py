@@ -15,11 +15,13 @@ from tools.agentsmd import (  # noqa: E402
     CODE_FILE_EXTENSIONS,
     DEFAULT_AGENTS_MD,
     DEFAULT_INIT_TEMPLATE,
+    DEFAULT_INIT_TEMPLATE_GENERAL,
     DEFAULT_INJECTION_HEADER,
     INJECTION_MARKER,
     build_injection,
     generate_agents_md_via_llm,
     has_code_files,
+    pick_init_template,
     resolve_init_template,
     scan_project_context,
     strip_code_fence,
@@ -144,6 +146,68 @@ def test_scan_caps_subdirs_per_parent(tmp_path):
     ctx = scan_project_context(tmp_path)
     assert "还有" in ctx  # 显示截断提示
     assert "个子目录被忽略" in ctx
+
+
+# ── scan_project_context: 非代码目录支持(2026-09-09) ──
+
+
+def test_scan_includes_file_type_census(tmp_path):
+    """文件类型统计节:按扩展名计数。"""
+    (tmp_path / "a.py").write_text("x=1")
+    (tmp_path / "b.py").write_text("x=2")
+    (tmp_path / "README.md").write_text("# r")
+
+    ctx = scan_project_context(tmp_path)
+    assert "## 文件类型统计" in ctx
+    assert ".py: 2 个文件" in ctx
+    assert ".md: 1 个文件" in ctx
+
+
+def test_scan_empty_directory_hint(tmp_path):
+    """空目录时给出明确提示,LLM 不至于对着空树编造。"""
+    ctx = scan_project_context(tmp_path)
+    assert "目录为空" in ctx
+
+
+def test_scan_docs_dir_includes_doc_excerpts(tmp_path):
+    """非代码目录:摘录 .md/.txt 文档内容供 LLM 依据。"""
+    (tmp_path / "guide.md").write_text("# User Guide\n\nstep one")
+    (tmp_path / "notes.txt").write_text("meeting notes here")
+
+    ctx = scan_project_context(tmp_path)
+    assert "## 文档文件摘录" in ctx
+    assert "guide.md" in ctx
+    assert "step one" in ctx
+    assert "notes.txt" in ctx
+    assert "meeting notes here" in ctx
+
+
+def test_scan_docs_dir_no_readme_dup(tmp_path):
+    """README.md 已在关键文件节读取,摘录节不重复。"""
+    (tmp_path / "README.md").write_text("# read me content")
+    (tmp_path / "a.md").write_text("other doc")
+
+    ctx = scan_project_context(tmp_path)
+    assert ctx.count("# read me content") == 1
+
+
+def test_scan_docs_dir_caps_excerpt_files(tmp_path):
+    """摘录最多 4 篇,其余从略。"""
+    for i in range(6):
+        (tmp_path / f"d{i}.md").write_text(f"doc {i} body")
+
+    ctx = scan_project_context(tmp_path)
+    assert "从略" in ctx
+    assert "doc 5 body" not in ctx
+
+
+def test_scan_code_dir_has_no_doc_excerpt_section(tmp_path):
+    """代码目录不附加文档摘录节(关键文件已足够)。"""
+    (tmp_path / "a.py").write_text("x=1")
+    (tmp_path / "design.md").write_text("design notes")
+
+    ctx = scan_project_context(tmp_path)
+    assert "## 文档文件摘录" not in ctx
 
 
 # ── generate_agents_md_via_llm ───────────────────────
@@ -302,10 +366,54 @@ def test_resolve_init_template_strips_whitespace():
     assert resolve_init_template(cfg) == "custom template"
 
 
+# ── pick_init_template(2026-09-09 自适应模板选择) ──
+
+
+def test_pick_init_template_custom_overrides_kind(tmp_path):
+    """用户自定义 init_template 优先,无论目录类型。"""
+    assert pick_init_template({"init_template": "my custom"}, tmp_path) == "my custom"
+
+
+def test_pick_init_template_custom_whitespace_falls_back_to_kind(tmp_path):
+    """自定义模板为空白时,回退到按目录类型选择。"""
+    (tmp_path / "a.py").write_text("x=1")
+    assert (
+        pick_init_template({"init_template": "   "}, tmp_path) == DEFAULT_INIT_TEMPLATE
+    )
+
+
+def test_pick_init_template_code_dir(tmp_path):
+    """含代码文件的目录 → 代码项目模板。"""
+    (tmp_path / "a.py").write_text("x=1")
+    assert pick_init_template({}, tmp_path) == DEFAULT_INIT_TEMPLATE
+
+
+def test_pick_init_template_docs_dir(tmp_path):
+    """纯文档目录 → 通用目录模板。"""
+    (tmp_path / "guide.md").write_text("# g")
+    assert (
+        pick_init_template(None, tmp_path) == DEFAULT_INIT_TEMPLATE_GENERAL
+    )
+
+
+def test_pick_init_template_empty_dir(tmp_path):
+    """空目录按非代码目录处理。"""
+    assert pick_init_template({}, tmp_path) == DEFAULT_INIT_TEMPLATE_GENERAL
+
+
+def test_pick_init_template_code_in_nested_dir(tmp_path):
+    """代码文件在深层子目录也算代码目录(has_code_files 递归语义)。"""
+    nested = tmp_path / "src" / "pkg"
+    nested.mkdir(parents=True)
+    (nested / "mod.rs").write_text("fn main() {}")
+    assert pick_init_template({}, tmp_path) == DEFAULT_INIT_TEMPLATE
+
+
 # ── has_code_files / CODE_FILE_EXTENSIONS ─────────────────────
-# WHY: /agentsmd init|load 现在要求目标目录下至少存在一个代码文件
-# (.c / .cpp / .py / .v 之一),避免对空目录或纯文档目录误用。
-# has_code_files 必须扫描递归子目录,但跳过垃圾目录和隐藏目录。
+# WHY: 2026-09-09 起 /agentsmd init|load 不再要求目录含代码文件
+# (文档/资料目录同样支持),但 has_code_files 本身保留:
+# 1) codegraph init 的门控仍依赖它(tools/_codegraph_mcp.py)
+# 2) pick_init_template 用它区分代码/非代码目录以选模板。
 
 
 def test_code_file_extensions_contains_common_languages():

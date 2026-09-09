@@ -173,6 +173,7 @@ def test_routes_table_has_forty_six_endpoints() -> None:
         "/spcode/git-branch-delete",  # v2.17.0 PR-E
         "/spcode/git-branch-switch",  # v2.17.0 PR-F
         "/spcode/git-revert",  # v2.17.0 PR-G
+        "/spcode/git-reset",  # v2.27.0 (2026-09-09) 重置当前分支到指定 commit
         "/spcode/git-repo-check",  # v2.18.0 (2026-07-16)
         "/spcode/file-write",  # 2026-07-17 (workspace file editor)
         "/spcode/file-rename",  # 2026-07-18 (workspace file editor)
@@ -231,12 +232,13 @@ def test_routes_table_has_forty_six_endpoints() -> None:
     # 2026-08-16: +1 GET (git-remotes) +1 POST (git-remote-remove)
     # 2026-09-01: +6 终端端点 (4 POST + 2 GET)
     # 2026-09-08: +1 POST (codegraph-init)
-    # 68 unique paths total: 23 GET + 47 POST + 1 PATCH + 1 DELETE
+    # 2026-09-09: +1 POST (git-reset)
+    # 69 unique paths total: 23 GET + 48 POST + 1 PATCH + 1 DELETE
     methods = [m for entry in ROUTES for m in entry[1]]
     assert (
         methods.count("GET") == 23
     )  # +operation-progress +home-directory +drives +git-remotes +terminal/stream+status
-    assert methods.count("POST") == 47  # +terminal 4 +codegraph-init
+    assert methods.count("POST") == 48  # +terminal 4 +codegraph-init +git-reset
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
 
@@ -552,10 +554,11 @@ def test_register_webapi_routes_calls_context_fifty_three_times() -> None:
     2026-08-16: +1 GET (git-remotes) +1 POST (git-remote-remove) → 60
     2026-09-01: +6 终端端点 → 71
     2026-09-08: +1 POST (codegraph-init) → 72
+    2026-09-09: +1 POST (git-reset) → 73
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    assert plugin.context.register_web_api.call_count == 72
+    assert plugin.context.register_web_api.call_count == 73
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -572,13 +575,14 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 72 routes
+    # Should not raise; should attempt all 73 routes
     # (含 2026-08-12 新增的 git-pull / git-push / git-remote-set-url /
     # code-check / code-format;2026-08-13 git-commit-amend;2026-08-15
     # home-directory / drives;2026-08-16 git-remotes / git-remote-remove;
-    # 2026-09-01 terminal 6 端点;2026-09-08 codegraph-init)。
+    # 2026-09-01 terminal 6 端点;2026-09-08 codegraph-init;2026-09-09
+    # git-reset)。
     register_webapi_routes(plugin)
-    assert call_count == 72
+    assert call_count == 73
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

@@ -23,12 +23,10 @@ import logging
 from pathlib import Path
 
 from ._core import (
-    CODE_FILE_EXTENSIONS,
     INJECTION_MARKER,
     build_injection,
     generate_agents_md_via_llm,
-    has_code_files,
-    resolve_init_template,
+    pick_init_template,
     scan_project_context,
     strip_code_fence,
     strip_surrounding_quotes,
@@ -65,7 +63,8 @@ class AgentsmdHandlers:
 
         行为:
         1. 路径校验(黑名单 + resolve)
-        2. 必须存在且是目录,且含代码文件
+        2. 必须存在且是目录(不要求含代码文件,文档/资料目录同样支持;
+           模板按目录类型自适应,见 ``pick_init_template``)
         3. 不允许覆盖既有 AGENTS.md(用户须先删)
         4. 调用 LLM 生成内容,写入 <target>/AGENTS.md
         """
@@ -89,15 +88,6 @@ class AgentsmdHandlers:
             yield event.plain_result(f"❌ `{directory}` 不是一个有效的目录。")
             return
 
-        if not has_code_files(target):
-            supported = ", ".join(f".{ext}" for ext in sorted(CODE_FILE_EXTENSIONS))
-            yield event.plain_result(
-                f"❌ 目录 `{directory}` 下未找到代码文件。\n"
-                f"AGENTS.md 仅用于代码项目,支持的后缀: {supported}\n"
-                "请确认目录是否正确,或选择包含源代码的目录。"
-            )
-            return
-
         agents_md_path = target / "AGENTS.md"
         if agents_md_path.exists():
             yield event.plain_result(
@@ -110,7 +100,7 @@ class AgentsmdHandlers:
 
         umo = event.unified_msg_origin
         provider = plugin.context.get_using_provider(umo=umo)
-        init_template = resolve_init_template(plugin._config)
+        init_template = pick_init_template(plugin._config, target)
 
         content = await generate_agents_md_via_llm(
             provider, target, umo=umo, init_template=init_template
@@ -153,16 +143,8 @@ class AgentsmdHandlers:
             yield event.plain_result(f"❌ `{directory}` 不是一个目录。")
             return
 
-        # v2.9: 代码文件检测(与 init 对齐)
-        if not has_code_files(target):
-            supported = ", ".join(f".{ext}" for ext in sorted(CODE_FILE_EXTENSIONS))
-            yield event.plain_result(
-                f"❌ 目录 `{directory}` 下未找到代码文件。\n"
-                f"AGENTS.md 仅用于代码项目,支持的后缀: {supported}\n"
-                "请确认目录是否正确,或选择包含源代码的目录。"
-            )
-            return
-
+        # v2.9 引入的代码文件门控已移除(2026-09-09):与 init 对齐,
+        # 文档/资料目录同样可 load,不要求目录含代码文件。
         agents_md_path = target / "AGENTS.md"
         if not agents_md_path.exists():
             yield event.plain_result(
@@ -242,7 +224,9 @@ class AgentsmdHandlers:
             yield event.plain_result("当前会话未配置 LLM Provider,无法更新。")
             return
 
-        init_template = resolve_init_template(plugin._config)
+        # update 与 init 共用自适应模板选择:文档目录的已有内容 +
+        # 目录结构应按通用目录模板重新生成,而非套代码项目模板。
+        init_template = pick_init_template(plugin._config, dir_path)
         prompt = (
             f"{init_template}\n\n"
             "以下是该项目的文件结构和关键文件内容摘要:\n\n"

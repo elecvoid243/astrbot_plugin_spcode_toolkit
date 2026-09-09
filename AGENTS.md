@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.26.0** · Author: elecvoid243 · 最后更新: 2026-09-08
+> **当前版本: v2.27.0** · Author: elecvoid243 · 最后更新: 2026-09-09
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -693,6 +693,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 - `docs/superpowers/specs/2026-07-15-git-init-branch-revert-design.md` - v2.17.0 git-init/branch/revert
 - `docs/superpowers/specs/2026-07-16-git-init-force-design.md` - v2.17.1 git-init force 标志
 - `docs/superpowers/specs/2026-09-08-git-log-tags-and-filters-design.md` - v2.26.0 git-log tags + 过滤器
+- `docs/superpowers/specs/2026-09-09-git-reset-design.md` - v2.27.0 git-reset 重置当前分支
 
 ## pytest 速查
 
@@ -709,4 +710,4 @@ pytest tests/ --cov=tools                    # 覆盖率
 
 ---
 
-> Author: elecvoid243 · 本文档同步至 v2.26.0 (2026-09-08)
+> Author: elecvoid243 · 本文档同步至 v2.27.0 (2026-09-09)
