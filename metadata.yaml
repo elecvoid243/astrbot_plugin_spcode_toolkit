@@ -46,11 +46,11 @@ description: |
 
   ## 前置依赖
 
-| 能力 | 依赖 | 缺失时行为 |
-|------|------|-----------|
-| code_check / code_format | ruff / cppcheck / clang-format | 返回安装提示 |
-| code_crap (Python) | crap4py | 返回安装提示 |
-| code_crap (C/C++) | lizard | 返回安装提示 |
+  | 能力 | 依赖 | 缺失时行为 |
+  |------|------|-----------|
+  | code_check / code_format | ruff / cppcheck / clang-format | 返回安装提示 |
+  | code_crap (Python) | crap4py | 返回安装提示 |
+  | code_crap (C/C++) | lizard | 返回安装提示 |
   | es_search (Windows) | Everything CLI (es.exe) | 返回安装提示 |
   | es_search (Linux/macOS) | locate / fd / Python 兜底 | 自动降级到 `os.walk` |
   | codegraph_* | `@colbymchenry/codegraph` (npm) + 配置 `codegraph_install_dir` | 8 个工具均不出现 |
