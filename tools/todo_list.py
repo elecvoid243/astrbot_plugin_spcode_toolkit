@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 """
 todo_list — LLM Agent 自我管理的 todo list 工具。
@@ -13,6 +16,8 @@ todo_list — LLM Agent 自我管理的 todo list 工具。
 v2.11 起:隔离粒度从 sender_key (platform:sender_id) 切到 umo,以切断跨私聊/群聊的"会话接力"。
 详见 docs/superpowers/specs/2026-06-20-todo-per-umo-design.md
 """
+
+logger = logging.getLogger(__name__)
 
 
 # ── 常量 ────────────────────────────────────────────
@@ -41,6 +46,80 @@ MARK_STATUS = {v: k for k, v in STATUS_MARK.items()}
 # - ""   = 传了空串 → 清空 notes
 # - "x"  = 传了内容 → 覆盖 notes
 UNSET_NOTES: None = None
+
+
+# ── scope 隔离域(v2.28.0)──────────────────────────────
+#
+# 背景:AstrBot 的 subagent 复用主 agent 的 event,因而共享同一个 umo,
+# 导致主 agent 与所有 subagent 落到同一个 .md 文件,并发 read-modify-write
+# 产生 lost update / 重复 ID / 互相覆盖。
+# 方案:按 agent 身份隔离 —— subagent 文件名前置 `sub__{name}__` 段,
+# 使 main 的 glob 前缀 `{umo_safe}_` 在文件系统层面天然不命中。
+# 详见 docs/superpowers/specs/2026-09-09-todo-subagent-isolation-design.md
+
+_SUB_FILE_PREFIX = "sub__"
+_MAX_SCOPE_NAME_LEN = 24
+
+
+@dataclass(frozen=True)
+class TodoScope:
+    """todo 列表的隔离域。
+
+    - ``main``:主 agent,命名与 v2.27.0 完全一致(向后兼容老文件)
+    - ``sub`` :某个 subagent,按 ``name`` 隔离
+    """
+
+    kind: Literal["main", "sub"] = "main"
+    name: str = ""
+
+    @property
+    def key(self) -> str:
+        """用于哈希回退与 frontmatter 的稳定标识。"""
+        return "main" if self.kind == "main" else f"sub:{self.name}"
+
+
+MAIN_SCOPE = TodoScope()
+
+
+def sanitize_name(name) -> str:
+    """清洗 subagent 名,使其可安全进入文件名。
+
+    - 非法文件名字符 → ``_``
+    - 清洗后为空 → 返回 ``""``(调用方降级 main)
+    - 超长 → 前 24 字符 + sha256 前 8 位(避免截断后两名碰撞写进同一文件)
+    """
+    if name is None:
+        return ""
+    cleaned = ILLEGAL_FILENAME_CHARS.sub("_", str(name)).strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) > _MAX_SCOPE_NAME_LEN:
+        digest = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:8]
+        cleaned = f"{cleaned[:_MAX_SCOPE_NAME_LEN]}{digest}"
+    return cleaned
+
+
+def resolve_scope(context) -> TodoScope:
+    """从 AstrBot 工具 context 解析当前 todo 隔离域。
+
+    读取 ``run_context.context.extra`` 的 ``is_subagent`` / ``subagent_name``
+    (AstrBot ``astr_agent_tool_exec.py:205`` 使用同名字段)。
+    任何缺失/异常 → 降级 ``main``:宁可回共享,也不写错隔离域。
+    """
+    try:
+        agent_ctx = getattr(context, "context", None)
+        extra = getattr(agent_ctx, "extra", None)
+        if isinstance(extra, dict) and extra.get("is_subagent"):
+            name = sanitize_name(extra.get("subagent_name") or "")
+            if name:
+                return TodoScope("sub", name)
+            logger.warning(
+                "[todo] is_subagent=True 但 subagent_name 缺失/非法,降级 main scope"
+            )
+    except Exception as e:
+        # 解析失败绝不能影响工具调用
+        logger.warning(f"[todo] resolve_scope 异常,降级 main scope: {e}")
+    return MAIN_SCOPE
 
 
 # ── umo & filename ──────────────────────────────────
