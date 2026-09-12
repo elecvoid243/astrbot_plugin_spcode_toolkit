@@ -13,6 +13,7 @@ Spec: docs/superpowers/specs/2026-08-14-clang-format-unify-design.md
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -28,14 +29,16 @@ from tools import code_check  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def clear_clang_format_overrides():
-    """每个用例前后清理模块级 CLANG_FORMAT_STYLE / CLANG_FORMAT_INDENT 覆盖。"""
+    """每个用例前后清理模块级 CLANG_FORMAT_STYLE / CLANG_FORMAT_INDENT /
+    CLANG_FORMAT_OPTIONS 覆盖。"""
+    names = ("CLANG_FORMAT_STYLE", "CLANG_FORMAT_INDENT", "CLANG_FORMAT_OPTIONS")
     saved = {}
-    for name in ("CLANG_FORMAT_STYLE", "CLANG_FORMAT_INDENT"):
+    for name in names:
         if hasattr(code_check, name):
             saved[name] = getattr(code_check, name)
             delattr(code_check, name)
     yield
-    for name in ("CLANG_FORMAT_STYLE", "CLANG_FORMAT_INDENT"):
+    for name in names:
         if hasattr(code_check, name):
             delattr(code_check, name)
     for name, value in saved.items():
@@ -244,3 +247,77 @@ def test_clang_format_stdin_is_binary(cpp_file: Path, fake_clang_format):
     code_check.check(str(cpp_file), "clang-format")
     assert isinstance(fake_clang_format["calls"][0]["input"], bytes)
     assert fake_clang_format["calls"][0]["input"] == cpp_file.read_bytes()
+
+
+# ── clang-format 原生选项链(2026-09-12,CLANG_FORMAT_OPTIONS) ──
+
+
+def test_get_style_config_returns_overrides_from_env(monkeypatch):
+    """_get_clang_format_style_config 返回 (style, indent, overrides) 三元组。"""
+    monkeypatch.setenv("CLANG_FORMAT_STYLE", "gnu")
+    monkeypatch.setenv("CLANG_FORMAT_INDENT", "3")
+    monkeypatch.setenv("CLANG_FORMAT_OPTIONS", json.dumps({"tab_width": 4}))
+    style, indent, overrides = code_check._get_clang_format_style_config()
+    assert (style, indent) == ("gnu", 3)
+    assert overrides == {"TabWidth": "4"}
+
+
+def test_clang_format_options_env_json(cpp_file: Path, fake_clang_format, monkeypatch):
+    """环境变量 CLANG_FORMAT_OPTIONS(JSON)→ 内联 style 追加对应键。"""
+    monkeypatch.setenv(
+        "CLANG_FORMAT_OPTIONS",
+        json.dumps({"column_limit": 100, "use_tab": True}),
+    )
+    code_check.check(str(cpp_file), "clang-format")
+    cmd = fake_clang_format["calls"][0]["cmd"]
+    style_arg = next(a for a in cmd if a.startswith("--style="))
+    assert "ColumnLimit: 100" in style_arg
+    assert "UseTab: Always" in style_arg
+
+
+def test_clang_format_options_module_override_beats_env(
+    cpp_file: Path, fake_clang_format, monkeypatch
+):
+    """模块级 CLANG_FORMAT_OPTIONS 优先于环境变量(与 STYLE/INDENT 同链)。"""
+    monkeypatch.setenv("CLANG_FORMAT_OPTIONS", json.dumps({"column_limit": 1}))
+    code_check.CLANG_FORMAT_OPTIONS = {
+        "column_limit": 120,
+        "pointer_alignment": "left",
+    }
+    code_check.check(str(cpp_file), "clang-format")
+    style_arg = next(
+        a for a in fake_clang_format["calls"][0]["cmd"] if a.startswith("--style=")
+    )
+    assert "ColumnLimit: 120" in style_arg
+    assert "ColumnLimit: 1," not in style_arg  # 环境变量的 1 未生效(120 含前缀 1)
+    assert "PointerAlignment: Left" in style_arg
+
+
+def test_clang_format_options_invalid_env_ignored(
+    cpp_file: Path, fake_clang_format, monkeypatch
+):
+    """非法 CLANG_FORMAT_OPTIONS(坏 JSON / 非法值)→ 忽略选项,检查照常运行。"""
+    monkeypatch.setenv("CLANG_FORMAT_OPTIONS", "not-json{")
+    r = code_check.check(str(cpp_file), "clang-format")
+    assert r["ok"] is True
+    style_arg = next(
+        a for a in fake_clang_format["calls"][0]["cmd"] if a.startswith("--style=")
+    )
+    assert "ColumnLimit" not in style_arg
+
+    monkeypatch.setenv("CLANG_FORMAT_OPTIONS", json.dumps({"column_limit": -3}))
+    r = code_check.check(str(cpp_file), "clang-format")
+    assert r["ok"] is True
+    style_arg = next(
+        a for a in fake_clang_format["calls"][1]["cmd"] if a.startswith("--style=")
+    )
+    assert "ColumnLimit" not in style_arg
+
+
+def test_clang_format_options_absent_means_no_override(cpp_file: Path, fake_clang_format):
+    """未配置 CLANG_FORMAT_OPTIONS → 内联 style 不含选项键(向后兼容)。"""
+    code_check.check(str(cpp_file), "clang-format")
+    style_arg = next(
+        a for a in fake_clang_format["calls"][0]["cmd"] if a.startswith("--style=")
+    )
+    assert style_arg == "--style={BasedOnStyle: llvm, IndentWidth: 4}"

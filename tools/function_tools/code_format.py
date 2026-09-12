@@ -9,7 +9,10 @@ v2.14.1 (2026-06-25) 简化 LLM 暴露面:
   项目内 .clang-format 文件优先,配置作 fallback-style)。
 
 仿照 file_remove.custom_blacklist 模式:FunctionTool 实例属性
-``default_style`` / ``default_indent`` 由 main.py 在初始化时从 _config 注入。
+``default_style`` / ``default_indent`` / ``default_options`` 由 main.py
+在初始化时从 _config 注入(``default_options`` 为 clang-format 原生选项集:
+column_limit / tab_width / use_tab / break_before_braces / pointer_alignment,
+2026-09-12 引入,Spec: docs/superpowers/specs/2026-09-12-code-format-clang-native-config-design.md)。
 
 - Python: ruff format
 - C/C++/Java/JS/TS/C#: clang-format(通过 stdin/stdout 二进制管道调用)
@@ -73,6 +76,8 @@ class CodeFormatTool(FunctionTool):
 
     default_style: str = "llvm"
     default_indent: int = 4
+    # clang-format 原生选项集(插件配置键),main.py 从 code_format 配置组注入
+    default_options: dict = field(default_factory=dict)
 
     async def call(
         self,
@@ -90,7 +95,7 @@ class CodeFormatTool(FunctionTool):
                 await fs_access.assert_writable(filepath, context)
             except PermissionError as exc:
                 return f"Error: {exc}"
-        # LLM 不再传 formatter/style/indent,全部从实例属性读
+        # LLM 不再传 formatter/style/indent/options,全部从实例属性读
         return await record_and_run(
             self.name,
             code_format.format,
@@ -99,5 +104,6 @@ class CodeFormatTool(FunctionTool):
             check=check,
             style=self.default_style,
             indent=self.default_indent,
+            options=dict(self.default_options or {}),
             err_prefix="code_format",
         )

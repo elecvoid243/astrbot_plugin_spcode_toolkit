@@ -16,6 +16,7 @@ astrbot_plugin_spcode_toolkit — spcode 精简开发工具箱
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 
 from astrbot.api import logger, star
@@ -108,6 +109,13 @@ _DEFAULT_CONFIG = {
     # 注入到 CodeFormatTool 实例属性 default_style / default_indent)
     "default_style": "llvm",  # clang-format 默认风格(兼容 legacy astyle 风格名)
     "default_indent": 4,  # clang-format 默认缩进空格数
+    # 2026-09-12: clang-format 原生选项集(键见 tools/code_format.py
+    # CLANG_FORMAT_OPTION_SPEC;fallback 场景,项目内 .clang-format 文件优先)
+    "column_limit": 80,  # ColumnLimit:单行最大列数(0 = 不限制)
+    "tab_width": 8,  # TabWidth:Tab 字符等效空格数
+    "use_tab": False,  # UseTab:缩进用 Tab(false=Never,true=Always)
+    "break_before_braces": "attach",  # BreakBeforeBraces:花括号换行风格
+    "pointer_alignment": "right",  # PointerAlignment:指针/引用贴靠方向
     "max_crap": 30,  # code_crap CRAP 告警阈值(risk 分档与 proposal 用)
     # v2.9.x (2026-07-27): /plan /build 命令的模式切换提示文本开关。
     # True = 保持原行为(yield 提示到消息页面);False = 静默切换。
@@ -160,6 +168,18 @@ class SPCodeToolkit(star.Star):
         # 格式检查路径读取(code_format 走 FunctionTool 实例属性,见下方注入)
         os.environ["CLANG_FORMAT_STYLE"] = str(_config.get("default_style") or "llvm")
         os.environ["CLANG_FORMAT_INDENT"] = str(_config.get("default_indent") or 4)
+        self._clang_format_opts = {
+            "column_limit": _config.get("column_limit", 80),
+            "tab_width": _config.get("tab_width", 8),
+            "use_tab": bool(_config.get("use_tab", False)),
+            "break_before_braces": str(
+                _config.get("break_before_braces") or "attach"
+            ),
+            "pointer_alignment": str(
+                _config.get("pointer_alignment") or "right"
+            ),
+        }
+        os.environ["CLANG_FORMAT_OPTIONS"] = json.dumps(self._clang_format_opts)
 
         # 子系统管理器句柄 — 详见 tools/*/ 子包
         self.agentsmd = AgentsmdSubsystem(plugin=self, is_path_safe=_is_path_safe)
@@ -194,13 +214,15 @@ class SPCodeToolkit(star.Star):
             # 走实例属性。_conf_schema.json 的 code_format 分组已定义默认值;
             # _flatten_config 会把 code_format.{default_style, default_indent}
             # 拍平为顶层的 default_style / default_indent,与其他 flat key 风格一致。
-            # 缺失时用 dataclass 默认("llvm" / 4)。)
+            # 缺失时用 dataclass 默认("llvm" / 4)。2026-09-12 起同时注入
+            # clang-format 原生选项集 default_options。)
             elif isinstance(t, CodeFormatTool):
                 t.default_style = str(_config.get("default_style") or "llvm")
                 try:
                     t.default_indent = int(_config.get("default_indent") or 4)
                 except (TypeError, ValueError):
                     t.default_indent = 4
+                t.default_options = dict(self._clang_format_opts)
             elif isinstance(t, CodeCrapTool):
                 # code_crap 的 CRAP 告警阈值注入(LLM 不可见,走实例属性;
                 # 调用参数 max_crap 显式传值时可覆盖)

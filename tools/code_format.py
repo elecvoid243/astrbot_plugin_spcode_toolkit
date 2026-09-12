@@ -9,15 +9,18 @@
    - .py → ruff format
    - .c/.cpp/.cc/.cxx/.h/.hpp/.hxx/.hh/.java/.js/.jsx/.mjs/.cjs/.cs → clang-format
 
-2. **clang-format 调用(2026-08-14 替换 astyle)**
+2. **clang-format 调用(2026-08-14 替换 astyle;2026-09-12 选项集扩展)**
    Spec: docs/superpowers/specs/2026-08-14-clang-format-unify-design.md
+        docs/superpowers/specs/2026-09-12-code-format-clang-native-config-design.md
    - format 与 code_check 同源:同一参数链,保证"格式化后必通过格式检查"。
    - 永远 **stdin/stdout 二进制模式** 调用:
      - 读原文件字节 → stdin 喂给 clang-format(字节级保真,GBK/BOM 不被强转)
      - ``--assume-filename=<绝对路径>`` → 语言检测 + ``.clang-format`` 向上发现
      - 项目内 ``.clang-format`` 优先(自实现向上发现,找到 → ``--style=file``);
-       找不到时用插件配置 default_style/default_indent 拼内联
-       ``--style={BasedOnStyle: X, IndentWidth: N}`` 兜底
+       找不到时用插件配置(default_style/default_indent + clang-format 原生
+       选项集 column_limit/tab_width/use_tab/break_before_braces/
+       pointer_alignment,见 CLANG_FORMAT_OPTION_SPEC)拼内联
+       ``--style={BasedOnStyle: X, IndentWidth: N, ...}`` 兜底
        (clang-format 17 的 --fallback-style 只接受预设名,拒绝内联 YAML,
        故不用它)
      - 拿 stdout 字节与原文件比较
@@ -103,21 +106,55 @@ VALID_CLANG_FORMAT_STYLES: frozenset[str] = frozenset(
     }
 )
 
-# legacy astyle --style= 值 → clang-format 预设/内联 style 串映射。
+# legacy astyle --style= 值 → clang-format 内联 style 基底(YAML 键值对)。
 # 向后兼容:_conf_schema.json 的 default_style 历史上是 astyle 风格名,
 # 既有用户配置里可能仍存着这些值(AGENTS.md 规则 9:不改字段名,迁移配置)。
-# 映射为 "{...}" 串时叠加 default_indent,除非串内已自带 IndentWidth(linux)。
-LEGACY_ASTYLE_STYLE_MAP: dict[str, str] = {
-    "allman": "{BasedOnStyle: llvm, BreakBeforeBraces: Allman}",
-    "kr": "llvm",
-    "stroustrup": "llvm",
-    "linux": "{BasedOnStyle: llvm, IndentWidth: 8, UseTab: Always}",
-    "java": "llvm",
-    "whitesmith": "llvm",
-    "horstmann": "llvm",
-    "ratliff": "llvm",
-    "vtk": "llvm",
-    "none": "llvm",
+# 这是**完整风格包**:包内键(BreakBeforeBraces/IndentWidth/UseTab)是该风格
+# 的定义性语义,配置选项(见 CLANG_FORMAT_OPTION_SPEC)不可覆盖;
+# 包外键(column_limit 等)正常叠加。
+LEGACY_ASTYLE_STYLE_MAP: dict[str, dict[str, str]] = {
+    "allman": {"BasedOnStyle": "llvm", "BreakBeforeBraces": "Allman"},
+    "kr": {"BasedOnStyle": "llvm"},
+    "stroustrup": {"BasedOnStyle": "llvm"},
+    "linux": {"BasedOnStyle": "llvm", "IndentWidth": "8", "UseTab": "Always"},
+    "java": {"BasedOnStyle": "llvm"},
+    "whitesmith": {"BasedOnStyle": "llvm"},
+    "horstmann": {"BasedOnStyle": "llvm"},
+    "ratliff": {"BasedOnStyle": "llvm"},
+    "vtk": {"BasedOnStyle": "llvm"},
+    "none": {"BasedOnStyle": "llvm"},
+}
+
+# 插件配置键 → (clang-format YAML 键, 类型, 约束)。
+# 2026-09-12:让 clang-format 的常用原生参数可从插件配置直达(fallback 场景,
+# 项目内 .clang-format 文件仍优先)。约束语义:
+#   - "int":  (lo, hi) 闭区间;注意 bool 是 int 子类,显式拒绝
+#   - "bool": None(渲染为 UseTab: Always / Never)
+#   - "enum": {小写配置值: YAML 枚举值}(大小写不敏感)
+# 新增选项时:在此注册 + _conf_schema.json 同步 + main.py 注入链 + 测试。
+CLANG_FORMAT_OPTION_SPEC: dict[str, tuple[str, str, object]] = {
+    "column_limit": ("ColumnLimit", "int", (0, 1000)),  # 0 = 不限制
+    "tab_width": ("TabWidth", "int", (1, 16)),
+    "use_tab": ("UseTab", "bool", None),
+    "break_before_braces": (
+        "BreakBeforeBraces",
+        "enum",
+        {
+            "attach": "Attach",
+            "linux": "Linux",
+            "mozilla": "Mozilla",
+            "stroustrup": "Stroustrup",
+            "whitesmiths": "Whitesmiths",
+            "allman": "Allman",
+            "gnu": "GNU",
+            "webkit": "WebKit",
+        },
+    ),
+    "pointer_alignment": (
+        "PointerAlignment",
+        "enum",
+        {"left": "Left", "right": "Right", "middle": "Middle"},
+    ),
 }
 
 # 格式化文件大小上限(10 MB)。超过则拒绝,防止 LLM 误把巨型文件喂进来。
@@ -140,6 +177,7 @@ def format(
     check: bool = False,
     style: str = "llvm",
     indent: int = 4,
+    options: dict | None = None,
 ) -> dict:
     """对单个源文件运行代码格式化。
 
@@ -151,13 +189,17 @@ def format(
             兼容 legacy astyle 风格名(自动映射,见 LEGACY_ASTYLE_STYLE_MAP)。
             仅 clang-format 生效,且仅在项目内无 .clang-format 文件时作为
             fallback-style 生效。
-        indent: 缩进空格数(clang-format → fallback-style 的 IndentWidth;
-            ruff 不支持,作为 metadata)。
+        indent: 缩进空格数(clang-format → IndentWidth;ruff 不支持,作为 metadata)。
+        options: clang-format 原生选项(插件配置键,见 CLANG_FORMAT_OPTION_SPEC):
+            column_limit / tab_width / use_tab / break_before_braces /
+            pointer_alignment。仅 clang-format 生效,且仅在无 .clang-format
+            文件时随内联 style 生效;值非法整体拒绝(ok=False)。
 
     Returns:
         ok=True  → {
             "ok": True, "formatter": "...",
-            "formatter_options": {"style": "..", "indent": N},
+            "formatter_options": {"style": "..", "indent": N,
+                                  "options": {YAML键: 值}},
             "check": bool,
             "changed": bool,
             "file_size_before": int, "file_size_after": int,
@@ -166,7 +208,8 @@ def format(
         }
         ok=False → {
             "ok": False, "error": "...", "proposal": "..."(可能),
-            "options": [...], "supported_extensions": [...](可能)
+            "options": [...], "supported_extensions": [...](可能),
+            "supported_options": [...](options 非法时)
         }
     """
     p = Path(filepath)
@@ -209,18 +252,26 @@ def format(
         }
 
     # ── 3. 风格参数校验(clang-format) ──
-    formatter_options = {"style": style, "indent": indent}
-    if (
-        formatter == "clang-format"
-        and style not in VALID_CLANG_FORMAT_STYLES
-        and style not in LEGACY_ASTYLE_STYLE_MAP
-    ):
-        return {
-            "ok": False,
-            "error": f"不支持的 clang-format 风格: {style}",
-            "supported_styles": sorted(VALID_CLANG_FORMAT_STYLES),
-            "legacy_styles": sorted(LEGACY_ASTYLE_STYLE_MAP),
-        }
+    overrides: dict[str, str] = {}
+    if formatter == "clang-format":
+        if (
+            style not in VALID_CLANG_FORMAT_STYLES
+            and style not in LEGACY_ASTYLE_STYLE_MAP
+        ):
+            return {
+                "ok": False,
+                "error": f"不支持的 clang-format 风格: {style}",
+                "supported_styles": sorted(VALID_CLANG_FORMAT_STYLES),
+                "legacy_styles": sorted(LEGACY_ASTYLE_STYLE_MAP),
+            }
+        overrides, options_error = _normalize_clang_format_options(options)
+        if options_error:
+            return {
+                "ok": False,
+                "error": options_error,
+                "supported_options": sorted(CLANG_FORMAT_OPTION_SPEC),
+            }
+    formatter_options = {"style": style, "indent": indent, "options": overrides}
     if not isinstance(indent, int) or indent < 1 or indent > 16:
         return {
             "ok": False,
@@ -236,6 +287,7 @@ def format(
             check=check,
             style=style,
             indent=indent,
+            overrides=overrides,
         )
 
     # 统一附加 check / formatter_options 字段
@@ -442,14 +494,71 @@ def _find_clang_format() -> list[str]:
     return [which_hit] if which_hit else []
 
 
-def _resolve_clang_format_style(style: str, indent: int) -> str:
-    """把配置的 style(+indent) 解析为 clang-format 内联 ``--style={...}`` 字符串。
+def _normalize_clang_format_options(
+    options: dict | None,
+) -> tuple[dict[str, str], str | None]:
+    """把插件级 clang-format 选项 dict 规范化为 ``{YAML键: YAML值字符串}``。
 
-    - clang-format 预设(llvm/google/...)→ ``{BasedOnStyle: <预设>, IndentWidth: <N>}``
-    - legacy astyle 风格名 → 查 LEGACY_ASTYLE_STYLE_MAP;
-      映射为完整 ``{...}`` 串时叠加配置 indent,除非串内已自带 IndentWidth
-      (legacy linux 的 8 空格 tab,spec 例外);映射为预设名时按预设路径
-      叠加 IndentWidth。
+    键集合与约束见 CLANG_FORMAT_OPTION_SPEC。枚举值大小写不敏感
+    (``"Allman"`` == ``"allman"``);int 选项显式拒绝 bool(bool 是 int
+    子类,``column_limit=true`` 属于配置错误而非 1)。
+
+    Returns:
+        (normalized, error):error 非 None 表示存在非法键/值,此时
+        normalized 为 {}(整体拒绝,不做部分应用——避免半套参数静默生效)。
+    """
+    if options is None:
+        return {}, None
+    if not isinstance(options, dict):
+        return {}, f"clang-format 选项必须是对象/dict,收到: {type(options).__name__}"
+    unknown = sorted(set(options) - set(CLANG_FORMAT_OPTION_SPEC))
+    if unknown:
+        return {}, (
+            f"不支持的 clang-format 选项: {', '.join(unknown)};"
+            f"受支持的键: {', '.join(sorted(CLANG_FORMAT_OPTION_SPEC))}"
+        )
+    normalized: dict[str, str] = {}
+    for key, (yaml_key, kind, constraint) in CLANG_FORMAT_OPTION_SPEC.items():
+        if key not in options:
+            continue
+        raw = options[key]
+        if kind == "int":
+            lo, hi = constraint  # type: ignore[misc]
+            if isinstance(raw, bool) or not isinstance(raw, int):
+                return {}, f"clang-format 选项 {key} 必须是整数,收到: {raw!r}"
+            if not lo <= raw <= hi:
+                return {}, f"clang-format 选项 {key} 必须在 {lo}-{hi} 之间,收到: {raw}"
+            normalized[yaml_key] = str(raw)
+        elif kind == "bool":
+            if not isinstance(raw, bool):
+                return {}, f"clang-format 选项 {key} 必须是布尔值,收到: {raw!r}"
+            normalized[yaml_key] = "Always" if raw else "Never"
+        else:  # enum:constraint = {小写配置值: YAML 枚举值}
+            allowed: dict = constraint  # type: ignore[assignment]
+            if not isinstance(raw, str) or raw.lower() not in allowed:
+                return {}, (
+                    f"clang-format 选项 {key} 必须是 {'/'.join(allowed)} 之一,"
+                    f"收到: {raw!r}"
+                )
+            normalized[yaml_key] = allowed[raw.lower()]
+    return normalized, None
+
+
+def _resolve_clang_format_style(
+    style: str,
+    indent: int,
+    overrides: dict[str, str] | None = None,
+) -> str:
+    """把配置的 style(+indent+overrides) 解析为 clang-format 内联 ``--style={...}`` 串。
+
+    - clang-format 预设(llvm/google/...)→ 基底 ``{BasedOnStyle: <预设>}``
+    - legacy astyle 风格名 → 查 LEGACY_ASTYLE_STYLE_MAP(**完整风格包**,
+      包内键是该风格的定义性语义,overrides 不可覆盖;如 linux 的
+      ``IndentWidth: 8`` + ``UseTab: Always``)
+    - overrides:已由 _normalize_clang_format_options 规范化的 YAML 键值对,
+      依 CLANG_FORMAT_OPTION_SPEC 的注册顺序叠加在基底之上
+    - 基底未自带 IndentWidth 时补 ``IndentWidth: <indent>``,保证
+      default_indent 始终生效(linux 例外,包内自带 8)
 
     本函数同时被 tools/code_check.py 复用,保证 format 与 check 的
     style 参数链完全一致(format/check 同源)。
@@ -460,21 +569,27 @@ def _resolve_clang_format_style(style: str, indent: int) -> str:
     ``.clang-format`` 向上发现(见 _clang_format_flags):找到 → ``--style=file``;
     找不到 → ``--style=<本函数返回的内联串>``,语义与 fallback-style 等价。
     """
-    base = style
-    if style in LEGACY_ASTYLE_STYLE_MAP:
-        mapped = LEGACY_ASTYLE_STYLE_MAP[style]
-        if mapped.startswith("{"):
-            # WHY: 仅 linux 的映射串自带 IndentWidth(spec 例外);allman 等
-            # 串内无缩进语义,原样返回会回落到 BasedOnStyle 默认缩进(llvm=2),
-            # 配置的 default_indent 被静默丢弃,故追加
-            resolved = (
-                mapped
-                if "IndentWidth" in mapped
-                else f"{mapped[:-1]}, IndentWidth: {indent}}}"
+    pairs: dict[str, str] = {}
+    is_legacy = style in LEGACY_ASTYLE_STYLE_MAP
+    if is_legacy:
+        pairs.update(LEGACY_ASTYLE_STYLE_MAP[style])
+    else:
+        pairs["BasedOnStyle"] = style
+    for yaml_key, yaml_value in (overrides or {}).items():
+        if yaml_key in pairs:
+            # legacy 风格包的定义性键优先于配置选项(见 LEGACY_ASTYLE_STYLE_MAP 注释)
+            logger.debug(
+                "[code_format] 选项 %s=%s 与 legacy 风格 %r 的固定语义冲突,已忽略",
+                yaml_key,
+                yaml_value,
+                style,
             )
-        else:
-            base = mapped
-            resolved = f"{{BasedOnStyle: {base}, IndentWidth: {indent}}}"
+            continue
+        pairs[yaml_key] = yaml_value
+    if "IndentWidth" not in pairs:
+        pairs["IndentWidth"] = str(indent)
+    resolved = "{" + ", ".join(f"{k}: {v}" for k, v in pairs.items()) + "}"
+    if is_legacy:
         logger.warning(
             "[code_format] default_style=%r 是 legacy astyle 风格名,"
             "已映射为 clang-format %r;建议在插件配置中改用 clang-format 预设"
@@ -482,8 +597,7 @@ def _resolve_clang_format_style(style: str, indent: int) -> str:
             style,
             resolved,
         )
-        return resolved
-    return f"{{BasedOnStyle: {base}, IndentWidth: {indent}}}"
+    return resolved
 
 
 # clang-format 配置文件名(向上递归查找,与 clang-format 原生 --style=file 行为一致)
@@ -501,17 +615,24 @@ def _find_clang_format_config(p: Path) -> Path | None:
     return None
 
 
-def _clang_format_flags(p: Path, *, style: str, indent: int) -> list[str]:
+def _clang_format_flags(
+    p: Path,
+    *,
+    style: str,
+    indent: int,
+    overrides: dict[str, str] | None = None,
+) -> list[str]:
     """clang-format 旗标部分(不含可执行路径),供测试断言与 code_check 复用。
 
     - 项目内存在 .clang-format → ``--style=file``(clang-format 原生发现)
-    - 否则 → ``--style={BasedOnStyle: X, IndentWidth: N}`` 内联兜底
+    - 否则 → ``--style={BasedOnStyle: X, IndentWidth: N, ...}`` 内联兜底
+      (overrides 为已规范化的 YAML 键值对,见 CLANG_FORMAT_OPTION_SPEC)
     """
     flags = [f"--assume-filename={p}"]
     if _find_clang_format_config(p) is not None:
         flags.append("--style=file")
     else:
-        flags.append(f"--style={_resolve_clang_format_style(style, indent)}")
+        flags.append(f"--style={_resolve_clang_format_style(style, indent, overrides)}")
     return flags
 
 
@@ -521,6 +642,7 @@ def _format_with_clang_format(
     check: bool,
     style: str,
     indent: int,
+    overrides: dict[str, str] | None = None,
 ) -> dict:
     """C/C++/Java/JS/TS/C#: 调 clang-format (CLI,二进制 stdin/stdout)。
 
@@ -536,7 +658,8 @@ def _format_with_clang_format(
         p: 待格式化 C/C++/Java/JS/TS/C# 文件路径
         check: True = dry-run,不写回
         style: clang-format 预设或 legacy astyle 风格名
-        indent: 缩进空格数(fallback-style 的 IndentWidth)
+        indent: 缩进空格数(IndentWidth)
+        overrides: 已规范化的 clang-format 选项键值对(ColumnLimit 等)
 
     Returns:
         标准 format() 返回 dict
@@ -561,7 +684,7 @@ def _format_with_clang_format(
     # 解码仅供 changed 检测/diff 摘要(utf-8-sig BOM → utf-8 → cp936 → ...)
     before_text, _encoding = _decode_text_bytes(before_bytes)
 
-    args = cmd + _clang_format_flags(p, style=style, indent=indent)
+    args = cmd + _clang_format_flags(p, style=style, indent=indent, overrides=overrides)
     try:
         r = subprocess.run(
             args,
@@ -683,10 +806,12 @@ __all__ = [
     "CLANG_FORMAT_SUFFIXES",
     "VALID_CLANG_FORMAT_STYLES",
     "LEGACY_ASTYLE_STYLE_MAP",
+    "CLANG_FORMAT_OPTION_SPEC",
     "_detect_formatter",
     "_supported_extensions",
     "_current_env_executable_candidates",
     "_find_clang_format",
+    "_normalize_clang_format_options",
     "_resolve_clang_format_style",
     "_clang_format_flags",
     "_format_with_ruff",
@@ -713,4 +838,6 @@ if __name__ == "__main__":  # pragma: no cover
             kw["style"] = a.split("=", 1)[1]
         elif a.startswith("--indent="):
             kw["indent"] = int(a.split("=", 1)[1])
+        elif a.startswith("--options="):
+            kw["options"] = json.loads(a.split("=", 1)[1])
     print(json.dumps(format(fp, **kw), ensure_ascii=False, indent=2))

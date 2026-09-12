@@ -695,6 +695,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 - `docs/superpowers/specs/2026-09-08-git-log-tags-and-filters-design.md` - v2.26.0 git-log tags + 过滤器
 - `docs/superpowers/specs/2026-09-09-git-reset-design.md` - v2.27.0 git-reset 重置当前分支
 - `docs/superpowers/specs/2026-09-09-todo-subagent-isolation-design.md` - v2.28.0 todo 工具 subagent 隔离（per-agent scope + TTL 清理）
+- `docs/superpowers/specs/2026-09-12-code-format-clang-native-config-design.md` - code_format/code_check clang-format 原生配置集（column_limit/tab_width/use_tab/break_before_braces/pointer_alignment）
 
 ## pytest 速查
 

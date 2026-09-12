@@ -41,7 +41,11 @@ from ._helpers import (
     detect_console_encoding,
     proposal_reply,
 )
-from .code_format import _clang_format_flags, _find_clang_format
+from .code_format import (
+    _clang_format_flags,
+    _find_clang_format,
+    _normalize_clang_format_options,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -518,15 +522,23 @@ def _run_ruff_once(p: Path, ruff_cmd: list, *, fix: bool) -> dict:
 # 2026-08-14 迁移:cpplint → clang-format。
 # 格式检查 = 用与 code_format 完全相同的参数链跑 clang-format,
 # 对比输出与原文:一致 → 0 issues;不一致 → 按 diff hunk 生成 per-line issues。
-# style/indent 走配置链(模块级覆盖 > 环境变量 > DEFAULT_CONFIG > 默认),
-# 由 main.py 在 __init__ 时注入环境变量(CLANG_FORMAT_STYLE / CLANG_FORMAT_INDENT)。
+# style/indent/options 走配置链(模块级覆盖 > 环境变量 > DEFAULT_CONFIG > 默认),
+# 由 main.py 在 __init__ 时注入环境变量(CLANG_FORMAT_STYLE / CLANG_FORMAT_INDENT /
+# CLANG_FORMAT_OPTIONS)。
 
 
-def _get_clang_format_style_config() -> tuple[str, int]:
+def _get_clang_format_style_config() -> tuple[str, int, dict[str, str]]:
     """读取 clang-format 风格配置。优先级:模块级覆盖 > 环境变量 > DEFAULT_CONFIG > 默认。
 
     允许测试通过 ``code_check.CLANG_FORMAT_STYLE = "google"`` /
-    ``code_check.CLANG_FORMAT_INDENT = 2`` 临时覆盖。
+    ``code_check.CLANG_FORMAT_INDENT = 2`` /
+    ``code_check.CLANG_FORMAT_OPTIONS = {"column_limit": 100}`` 临时覆盖。
+
+    Returns:
+        (style, indent, overrides):overrides 为已规范化的 YAML 键值对
+        (如 ``{"ColumnLimit": "100"}``),来自 CLANG_FORMAT_OPTIONS
+        (模块级 dict 或环境变量 JSON,键为插件配置键)。选项非法时记录
+        ERROR 并忽略(检查仍以基底 style 运行,不让坏配置杀死 code_check)。
     """
     style: str | None = None
     indent: int | None = None
@@ -570,7 +582,31 @@ def _get_clang_format_style_config() -> tuple[str, int]:
         except Exception:
             style = style or "llvm"
             indent = indent or 4
-    return style, indent
+
+    # clang-format 原生选项(ColumnLimit 等):模块级覆盖 > 环境变量 JSON
+    raw_options: object = None
+    module_options = globals().get("CLANG_FORMAT_OPTIONS")
+    if isinstance(module_options, dict):
+        raw_options = module_options
+    else:
+        env_options = os.environ.get("CLANG_FORMAT_OPTIONS", "")
+        if env_options:
+            try:
+                raw_options = json.loads(env_options)
+            except json.JSONDecodeError as e:
+                logger.error(
+                    "[code_check] CLANG_FORMAT_OPTIONS 不是合法 JSON,已忽略: %s", e
+                )
+    overrides: dict[str, str] = {}
+    if isinstance(raw_options, dict) and raw_options:
+        overrides, options_error = _normalize_clang_format_options(raw_options)
+        if options_error:
+            logger.error(
+                "[code_check] CLANG_FORMAT_OPTIONS 含非法键/值,整体忽略: %s",
+                options_error,
+            )
+            overrides = {}
+    return style, indent, overrides
 
 
 def _clang_format_issues_from_diff(before_text: str, after_text: str) -> list[dict]:
@@ -617,8 +653,10 @@ def _run_clang_format_check(p: Path) -> dict:
             ],
         )
 
-    style, indent = _get_clang_format_style_config()
-    args = clang_format_cmd + _clang_format_flags(p, style=style, indent=indent)
+    style, indent, overrides = _get_clang_format_style_config()
+    args = clang_format_cmd + _clang_format_flags(
+        p, style=style, indent=indent, overrides=overrides
+    )
     before_bytes = p.read_bytes()
     before_text, _ = _decode_text_bytes(before_bytes)
     try:

@@ -73,21 +73,55 @@
     "type": "object",
     "items": {
       "default_style": {
-        "description": "clang-format 默认风格 (仅 C/C++/Java/JS/TS/C# 生效;项目内 .clang-format 文件优先于此配置)",
-        "hint": "clang-format 预设:llvm / google / chromium / microsoft / webkit / gnu。兼容 legacy astyle 风格名(allman/google/kr/linux/stroustrup 等,自动映射到 clang-format 预设)。",
+        "description": "BasedOnStyle — clang-format 预设风格 (仅 C/C++/Java/JS/TS/C# 生效;项目内 .clang-format 文件优先于此配置)",
+        "hint": "clang-format 预设:llvm / google / chromium / microsoft / webkit / gnu。legacy astyle 风格名(allman/kr/linux/stroustrup 等)已从选项移除,但既有配置中的旧值仍被自动映射(其自带的花括号/缩进/Tab 语义不可被下方选项覆盖)。",
         "type": "string",
-        "options": ["llvm", "google", "chromium", "microsoft", "webkit", "gnu",
-                    "allman", "kr", "linux", "stroustrup",
-                    "whitesmith", "horstmann", "ratliff", "vtk", "java", "none"],
+        "options": ["llvm", "google", "chromium", "microsoft", "webkit", "gnu"],
         "default": "llvm"
       },
       "default_indent": {
-        "description": "clang-format 默认缩进空格数 (1-16)",
-        "hint": "仅在无 .clang-format 文件时作为 fallback-style 的 IndentWidth 生效;ruff 用自身默认配置。",
+        "description": "IndentWidth — 缩进空格数 (1-16)",
+        "hint": "叠加在 BasedOnStyle 之上的显式覆盖,仅在无 .clang-format 文件时生效;legacy linux 风格固定 8 空格 Tab 除外。ruff (Python) 用自身默认配置。",
         "type": "int",
         "default": 4,
         "min": 1,
         "max": 16
+      },
+      "column_limit": {
+        "description": "ColumnLimit — 单行最大列数 (0 = 不限制)",
+        "hint": "显式覆盖,超过该列数的语句按 clang-format 规则折行。选 microsoft(120)/gnu(79) 等预设时注意同步调整。仅无 .clang-format 文件时生效。",
+        "type": "int",
+        "default": 80,
+        "min": 0,
+        "max": 1000
+      },
+      "tab_width": {
+        "description": "TabWidth — Tab 字符的等效空格数 (1-16)",
+        "hint": "clang-format 原生默认 8。主要在 use_tab 开启或源文件含 Tab 时影响列计算与对齐。",
+        "type": "int",
+        "default": 8,
+        "min": 1,
+        "max": 16
+      },
+      "use_tab": {
+        "description": "UseTab — 缩进与对齐使用 Tab 字符",
+        "hint": "false = Never(全部空格,llvm/google 默认);true = Always(缩进与对齐均用 Tab)。legacy linux 风格强制 Tab,不受此开关影响。",
+        "type": "bool",
+        "default": false
+      },
+      "break_before_braces": {
+        "description": "BreakBeforeBraces — 花括号换行风格",
+        "hint": "attach = 跟随行尾(llvm/google/chromium 默认);allman = 独占一行(微软式);另有 linux/mozilla/stroustrup/whitesmiths/gnu/webkit。legacy 风格名自带的花括号语义优先于此配置。",
+        "type": "string",
+        "options": ["attach", "linux", "mozilla", "stroustrup", "whitesmiths", "allman", "gnu", "webkit"],
+        "default": "attach"
+      },
+      "pointer_alignment": {
+        "description": "PointerAlignment — 指针/引用符号贴靠方向",
+        "hint": "right = int *p(llvm 默认);left = int* p(Chromium 式);middle = int * p。",
+        "type": "string",
+        "options": ["left", "right", "middle"],
+        "default": "right"
       }
     }
   },

@@ -24,6 +24,9 @@ Spec: docs/superpowers/specs/2026-08-14-clang-format-unify-design.md
   22:   GBK / UTF-8 BOM 编码字节级保真
   23:   _resolve_clang_format_style legacy 映射
   24:   (集成,需真实 clang-format)fallback-style / .clang-format 发现 / idempotent
+  25:   _clang_format_flags:.clang-format 发现 vs 内联兜底
+  26:   clang-format 原生选项集(column_limit/tab_width/use_tab/braces/pointer)
+  27:   (2026-09-12)CodeFormatTool.default_options 注入透传
 
 测试策略:
   - ruff 真实可用 → 大部分用例走真实 subprocess
@@ -224,7 +227,7 @@ def test_format_cpp_clang_format_writes(unformatted_cpp: Path, fake_clang_format
     r = code_format.format(str(unformatted_cpp), style="llvm", indent=4)
     assert r["ok"] is True
     assert r["formatter"] == "clang-format"
-    assert r["formatter_options"] == {"style": "llvm", "indent": 4}
+    assert r["formatter_options"] == {"style": "llvm", "indent": 4, "options": {}}
     assert r["changed"] is True
     # 字节级写回:clang-format 输出什么就写什么
     assert unformatted_cpp.read_bytes() == formatted
@@ -457,7 +460,7 @@ def test_function_tool_uses_injected_defaults(tmp_path: Path, fake_clang_format_
     style_arg = next(a for a in cmd if a.startswith("--style="))
     assert "BasedOnStyle: google" in style_arg, f"应该用 google 预设,实际: {cmd}"
     assert "IndentWidth: 2" in style_arg, f"应该用 2 空格,实际: {cmd}"
-    assert payload["formatter_options"] == {"style": "google", "indent": 2}
+    assert payload["formatter_options"] == {"style": "google", "indent": 2, "options": {}}
 
 
 # ── 17. 未注入时默认值 llvm + 4 ──
@@ -487,7 +490,7 @@ def test_function_tool_default_values_when_not_injected(
     style_arg = next(a for a in cmd if a.startswith("--style="))
     assert "BasedOnStyle: llvm" in style_arg
     assert "IndentWidth: 4" in style_arg
-    assert payload["formatter_options"] == {"style": "llvm", "indent": 4}
+    assert payload["formatter_options"] == {"style": "llvm", "indent": 4, "options": {}}
 
 
 # ── 18. clang-format subprocess 参数链 ──
@@ -852,3 +855,180 @@ def test_clang_format_flags_style_file_when_config_exists(tmp_path: Path):
     flags = code_format._clang_format_flags(f, style="llvm", indent=4)
     assert "--style=file" in flags
     assert not any(a.startswith("--style={") for a in flags)
+
+
+# ── 26. clang-format 原生选项集(2026-09-12) ──
+
+
+def test_normalize_options_full_set():
+    """全部 5 个选项合法值 → 规范化为 YAML 键值对(枚举大小写不敏感)。"""
+    raw = {
+        "column_limit": 100,
+        "tab_width": 8,
+        "use_tab": True,
+        "break_before_braces": "Allman",
+        "pointer_alignment": "left",
+    }
+    pairs, err = code_format._normalize_clang_format_options(raw)
+    assert err is None
+    assert pairs == {
+        "ColumnLimit": "100",
+        "TabWidth": "8",
+        "UseTab": "Always",
+        "BreakBeforeBraces": "Allman",
+        "PointerAlignment": "Left",
+    }
+
+
+def test_normalize_options_none_and_empty():
+    """None / 空 dict → 无覆盖且无错误。"""
+    assert code_format._normalize_clang_format_options(None) == ({}, None)
+    assert code_format._normalize_clang_format_options({}) == ({}, None)
+
+
+def test_normalize_options_rejects_unknown_key():
+    """未知键 → 整体拒绝 + 错误信息列出受支持的键。"""
+    pairs, err = code_format._normalize_clang_format_options({"bogus": 1})
+    assert pairs == {}
+    assert err is not None
+    assert "bogus" in err
+    assert "column_limit" in err  # 错误信息提示受支持的键
+
+
+def test_normalize_options_rejects_non_dict():
+    """options 非 dict → 拒绝。"""
+    pairs, err = code_format._normalize_clang_format_options(["column_limit"])  # type: ignore[arg-type]
+    assert pairs == {}
+    assert err is not None
+
+
+@pytest.mark.parametrize(
+    "key, value",
+    [
+        ("column_limit", True),  # bool 是 int 子类,显式拒绝
+        ("column_limit", "80"),  # 字符串不行
+        ("column_limit", -1),  # 低于下限(0=不限制是合法值)
+        ("column_limit", 1001),  # 超上限
+        ("tab_width", 0),  # TabWidth 下限 1
+        ("tab_width", 17),
+        ("use_tab", 1),  # int 不是 bool
+        ("use_tab", "yes"),
+        ("break_before_braces", "allman_style"),  # 非法枚举值
+        ("break_before_braces", 2),
+        ("pointer_alignment", "center"),
+    ],
+)
+def test_normalize_options_rejects_bad_values(key: str, value: object):
+    """类型/范围/枚举非法 → 整体拒绝,错误信息含选项名。"""
+    pairs, err = code_format._normalize_clang_format_options({key: value})
+    assert pairs == {}
+    assert err is not None
+    assert key in err
+
+
+def test_format_rejects_invalid_options(unformatted_cpp: Path):
+    """format(options 非法) → ok=False + supported_options,文件不被改写。"""
+    original = unformatted_cpp.read_bytes()
+    r = code_format.format(str(unformatted_cpp), options={"column_limit": -5})
+    assert r["ok"] is False
+    assert "column_limit" in r["error"]
+    assert "column_limit" in r["supported_options"]
+    assert unformatted_cpp.read_bytes() == original
+
+
+def test_format_applies_options_to_style_flag(
+    unformatted_cpp: Path, fake_clang_format_run
+):
+    """合法 options → 内联 style 追加对应 YAML 键(依 spec 注册顺序,稳定)。"""
+    fake_clang_format_run["state"]["formatted"] = b"formatted"
+    r = code_format.format(
+        str(unformatted_cpp),
+        style="llvm",
+        indent=4,
+        options={"column_limit": 100, "use_tab": True},
+    )
+    assert r["ok"] is True
+    cmd = fake_clang_format_run["calls"][0]["cmd"]
+    style_arg = next(a for a in cmd if a.startswith("--style="))
+    assert style_arg == (
+        "--style={BasedOnStyle: llvm, ColumnLimit: 100, UseTab: Always, IndentWidth: 4}"
+    )
+    assert r["formatter_options"]["options"] == {
+        "ColumnLimit": "100",
+        "UseTab": "Always",
+    }
+
+
+def test_resolve_style_with_column_limit_override():
+    """预设 + overrides → ColumnLimit 等键叠加在 BasedOnStyle 之上。"""
+    resolved = code_format._resolve_clang_format_style(
+        "llvm", 4, {"ColumnLimit": "120", "PointerAlignment": "Left"}
+    )
+    assert resolved == (
+        "{BasedOnStyle: llvm, ColumnLimit: 120, PointerAlignment: Left, IndentWidth: 4}"
+    )
+
+
+def test_resolve_style_legacy_linux_defer_to_map():
+    """legacy linux 的 IndentWidth/UseTab 是定义性语义,overrides 不可覆盖;
+    包外键(ColumnLimit)正常叠加。"""
+    resolved = code_format._resolve_clang_format_style(
+        "linux", 4, {"UseTab": "Never", "ColumnLimit": "100"}
+    )
+    assert resolved == (
+        "{BasedOnStyle: llvm, IndentWidth: 8, UseTab: Always, ColumnLimit: 100}"
+    )
+
+
+def test_resolve_style_legacy_allman_with_options():
+    """legacy allman + overrides:包内 BreakBeforeBraces 保留,包外键叠加。"""
+    resolved = code_format._resolve_clang_format_style(
+        "allman", 4, {"ColumnLimit": "100"}
+    )
+    assert resolved == (
+        "{BasedOnStyle: llvm, BreakBeforeBraces: Allman, ColumnLimit: 100,"
+        " IndentWidth: 4}"
+    )
+
+
+def test_options_ignored_when_project_config_exists(tmp_path: Path):
+    """项目内 .clang-format 存在 → --style=file,选项(与 style/indent 一样)被忽略。"""
+    (tmp_path / ".clang-format").write_text("BasedOnStyle: LLVM\n", encoding="utf-8")
+    f = tmp_path / "x.cpp"
+    f.write_text("int main(){return 0;}\n", encoding="utf-8")
+    flags = code_format._clang_format_flags(
+        f, style="llvm", indent=4, overrides={"ColumnLimit": "100"}
+    )
+    assert "--style=file" in flags
+    assert not any("ColumnLimit" in a for a in flags)
+
+
+def test_function_tool_default_options_passthrough(
+    tmp_path: Path, fake_clang_format_run
+):
+    """CodeFormatTool.default_options(main.py 注入)透传到内联 style 与回显。"""
+    from tools.function_tools.code_format import CodeFormatTool
+
+    tool = CodeFormatTool()
+    tool.default_options = {"column_limit": 120, "break_before_braces": "allman"}
+
+    f = tmp_path / "test.cpp"
+    f.write_text("int main(){return 0;}", encoding="utf-8")
+    fake_clang_format_run["state"]["formatted"] = b"int main() {\n    return 0;\n}\n"
+
+    import asyncio
+    import json as _json
+
+    ctx = MagicMock()
+    result_str = asyncio.run(tool.call(ctx, filepath=str(f)))
+    payload = _json.loads(result_str)
+
+    assert payload["ok"] is True
+    cmd = fake_clang_format_run["calls"][-1]["cmd"]
+    style_arg = next(a for a in cmd if a.startswith("--style="))
+    assert "ColumnLimit: 120" in style_arg, f"ColumnLimit 应随行,实际: {cmd}"
+    assert "BreakBeforeBraces: Allman" in style_arg, f"Allman 应随行,实际: {cmd}"
+    assert payload["formatter_options"]["options"] == {
+        "ColumnLimit": "120",
+        "BreakBeforeBraces": "Allman",
+    }

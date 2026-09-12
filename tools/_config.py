@@ -35,6 +35,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "cppcheck_enable": [],  # cppcheck 启用的额外检查类目(空=只报 error):warning/style/performance/portability
     "default_style": "llvm",  # clang-format 默认风格(兼容 legacy astyle 风格名)
     "default_indent": 4,  # clang-format 默认缩进空格数(fallback-style IndentWidth)
+    # 2026-09-12:clang-format 原生选项集(fallback 场景,项目内 .clang-format 优先)
+    "column_limit": 80,  # ColumnLimit:单行最大列数(0 = 不限制)
+    "tab_width": 8,  # TabWidth:Tab 字符等效空格数
+    "use_tab": False,  # UseTab:缩进用 Tab(false=Never,true=Always)
+    "break_before_braces": "attach",  # BreakBeforeBraces:花括号换行风格
+    "pointer_alignment": "right",  # PointerAlignment:指针/引用贴靠方向
     "codegraph_enabled": True,  # 是否启用 codegraph MCP 集成
     "codegraph_install_dir": "",  # codegraph 安装目录(含 node.exe);留空则不启动 MCP
     "codegraph_project": "",  # codegraph daemon 默认操作的工程根目录

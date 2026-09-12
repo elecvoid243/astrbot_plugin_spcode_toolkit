@@ -120,12 +120,19 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | `cppcheck_path` | 字符串 | `""` | cppcheck.exe 路径（C/C++ 正确性检查）。留空时按 `CPPCHECK_PATH` 环境变量 → `shutil.which("cppcheck")` → 常见安装路径的顺序查找 |
 | `cppcheck_shortcircuit` | 单选 | `"error"` | cppcheck 短路策略：`error`=有 error 时跳过 clang-format 格式检查（默认）/ `warning`=有 error 或 warning 时跳过 / `never`=两个工具都跑 |
 
-### code_format 配置（v2.14+）
+### code_format 配置（v2.14+；2026-09-12 起为 clang-format 原生参数集）
 
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `default_style` | 单选 | `"llvm"` | clang-format 默认风格（仅 C/C++/Java/JS/TS/C# 生效；项目内 `.clang-format` 文件优先）：llvm / google / chromium / microsoft / webkit / gnu；兼容 legacy astyle 风格名（allman 等，自动映射） |
-| `default_indent` | 整数 | `4` | clang-format 默认缩进空格数（1-16，无 `.clang-format` 时作为 IndentWidth 生效）。ruff 用自身默认配置 |
+| `default_style` | 单选 | `"llvm"` | clang-format `BasedOnStyle` 预设（仅 C/C++/Java/JS/TS/C# 生效；项目内 `.clang-format` 文件优先）：llvm / google / chromium / microsoft / webkit / gnu。legacy astyle 风格名已从选项移除，既有配置中的旧值仍被自动映射 |
+| `default_indent` | 整数 | `4` | clang-format `IndentWidth` 缩进空格数（1-16）。ruff 用自身默认配置 |
+| `column_limit` | 整数 | `80` | clang-format `ColumnLimit` 单行最大列数（0 = 不限制）。选 microsoft(120)/gnu(79) 预设时注意同步调整 |
+| `tab_width` | 整数 | `8` | clang-format `TabWidth`，Tab 字符等效空格数（1-16） |
+| `use_tab` | 布尔 | `false` | clang-format `UseTab`：false=空格缩进(Never)，true=Tab 缩进(Always)。legacy linux 风格强制 Tab |
+| `break_before_braces` | 单选 | `"attach"` | clang-format `BreakBeforeBraces` 花括号换行风格：attach / linux / mozilla / stroustrup / whitesmiths / allman / gnu / webkit |
+| `pointer_alignment` | 单选 | `"right"` | clang-format `PointerAlignment` 指针/引用贴靠方向：left(`int* p`) / right(`int *p`) / middle(`int * p`) |
+
+> 以上风格/缩进/选项参数均为**显式覆盖**，叠加在 `BasedOnStyle` 之上，且仅在项目内无 `.clang-format` 文件时随内联 style 生效（与 `code_check` 的格式检查同源共享）。
 
 > `code_format` 是**写入工具**（可能修改文件），plan 模式下默认被过滤。默认不在 `enabled_tools` 中勾选，需显式启用。
 
@@ -233,6 +240,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 与 `code_check` 的关系：`code_check` 是**只读**检查，`code_format` 是**写**工具（可能修改文件）。LLM 在 plan 模式下不应调用本工具。
 
 - **formatter = "auto" 路由**：`.py` → ruff format；`.c/.cpp/.cc/.cxx/.h/.hpp/.hxx/.hh/.java/.js/.jsx/.mjs/.cjs/.cs` → clang-format
+- **clang-format 原生参数可配置**（2026-09-12）：`column_limit` / `tab_width` / `use_tab` / `break_before_braces` / `pointer_alignment` 随 `default_style`/`default_indent` 一起作为内联 style 兜底（项目内 `.clang-format` 文件优先），详见上文配置表与 `docs/superpowers/specs/2026-09-12-code-format-clang-native-config-design.md`
 - **clang-format 调用策略**：永远二进制 stdin/stdout 调用（字节级保真，GBK/BOM/CRLF 不被破坏），`--assume-filename` 做语言检测与 `.clang-format` 向上发现；用 stdlib `difflib` 比对判断是否 changed，只有 changed 才写回
 - **ruff 调用**：`check=False` → `ruff format <file>`（直接写回）；`check=True` → `ruff format --check --diff <file>`（不写，只报告）
 - **幂等语义**：第二次格式化同一文件 → `changed=False`
@@ -664,7 +672,7 @@ astrbot_plugin_spcode_toolkit/
 
 ## 开发
 
-本项目为 Python AstrBot 插件，**不使用 msbuild**，无需独立构建步骤。打包/加载由 AstrBot 宿主在启动时读取 `main.py` 完成。
+本项目为 Python AstrBot 插件，无需独立构建步骤。打包/加载由 AstrBot 宿主在启动时读取 `main.py` 完成。
 
 ```bash
 # Lint
