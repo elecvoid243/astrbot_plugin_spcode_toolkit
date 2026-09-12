@@ -34,6 +34,7 @@ Dashboard / WebUI:
   * ``/spcode/codegraph-set``       (POST) # 2026-08-06 — 静默切换默认项目
   * ``/spcode/codegraph-init``      (POST) # 2026-09-08 — 静默初始化/更新索引
   * ``/spcode/git-reset``           (POST) # v2.27.0 (2026-09-09) — 重置当前分支到指定 commit
+  * ``/spcode/git-tag-create``      (POST) # 2026-09-12 — 创建轻量 tag(提交对话框打 tag)
 
   * ``/spcode/terminal/start``    (POST)  # 2026-09-01 — 终端会话启动
   * ``/spcode/terminal/stream``   (GET)   # 2026-09-01 — 终端输出 SSE 流
@@ -114,6 +115,7 @@ from . import (
     git_stash,  # 2026-08-21 — GET/POST git-stash (stash 列表 + stash push -u)
     git_stats,
     git_status,
+    git_tag_create,  # 2026-09-12 — POST git-tag-create(提交对话框打 tag)
     git_unstage,
     git_worktree_add,  # v2.14.0 (2026-06-26)
     git_worktree_lock,  # v2.14.0 (2026-06-26)
@@ -296,6 +298,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["POST"],
         git_commit_amend.handle,
         "修改当前 HEAD 提交信息（拒绝 staged / merge commit / 冲突中）",
+    ),
+    (
+        "/spcode/git-tag-create",  # 2026-09-12
+        ["POST"],
+        git_tag_create.handle,
+        "创建轻量 tag（提交对话框顺带打 tag,rev 默认 HEAD）",
     ),
     (
         "/spcode/file-browser",
@@ -605,6 +613,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_git_unstage": git_unstage.handle,
     "handle_post_git_commit": git_commit.handle,
     "handle_post_git_commit_amend": git_commit_amend.handle,  # 2026-08-13
+    "handle_post_git_tag_create": git_tag_create.handle,  # 2026-09-12
     "handle_post_git_init": git_init.handle,  # v2.17.0 (2026-07-15)
     "handle_post_git_worktree_add": git_worktree_add.handle,  # v2.14.0 (2026-06-26)
     "handle_post_git_worktree_lock": git_worktree_lock.handle,  # v2.14.0 (2026-06-26)
@@ -809,6 +818,7 @@ __all__ = [
     "git_stash",  # 2026-08-21
     "git_stats",
     "git_status",
+    "git_tag_create",  # 2026-09-12
     "git_unstage",
     "git_worktree_add",  # v2.14.0
     "git_worktree_lock",  # v2.14.0

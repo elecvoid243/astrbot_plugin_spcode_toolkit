@@ -467,6 +467,9 @@ class ReasonCode:
     STASH_CONFLICT = "stash_conflict"  # pop: 应用时冲突(条目保留,未 drop)
     STASH_DROP_FAILED = "stash_drop_failed"  # drop: git stash drop 自身失败
 
+    # ── git tag create(2026-09-12) ──
+    TAG_ALREADY_EXISTS = "tag_already_exists"  # create: 同名 tag 已存在
+
 
 # ── git status --porcelain X/Y 列判定(共享常量)────────────────────
 # 从 tools/webapi/file_restore.py 提取(2026-07-06)。两个端点共用:
