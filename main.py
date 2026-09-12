@@ -969,7 +969,7 @@ class SPCodeToolkit(star.Star):
 
     @filter.command("plan")
     async def plan(self, event):
-        """/plan — 进入 plan 模式(过滤写工具,提示 LLM 调研而非动手)。
+        """/plan — 进入 plan 模式(禁用写工具的执行,提示 LLM 调研而非动手)。
 
         v2.9.x (2026-07-27): 常规切换提示受 plan_mode_command_feedback
         配置门控(False = 静默切换,不 yield 任何消息)。配置异常警告
@@ -982,10 +982,10 @@ class SPCodeToolkit(star.Star):
         show_feedback = bool(self._config.get("plan_mode_command_feedback", True))
         if not blocked:
             # 配置异常警告:即使关闭了常规反馈也要提示,否则用户无从
-            # 得知 plan 模式实际没有过滤任何工具。
+            # 得知 plan 模式实际没有禁用任何工具。
             yield event.plain_result(
                 "⚠️ plan 模式已激活,但 plan_mode_blocked_tools 为空。\n"
-                "将不会过滤任何工具。请在插件配置中填写要过滤的工具名。\n"
+                "将不会禁用任何工具。请在插件配置中填写要禁用的工具名。\n"
                 "使用 /build 退出 plan 模式。"
             )
             return

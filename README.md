@@ -17,7 +17,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | 任务管理 | `todo_*` 6 工具，LLM 自我管理跨会话持久化任务清单 |
 | 交互式 Shell | `astrbot_inta_shell_*` 5 工具，多轮双向 Shell 会话管理 |
 | 项目加载 | `/project load|unload|status` 一键组合 agentsmd + codegraph |
-| Plan/Build 模式 | `/plan` 过滤写工具进入只读调研；`/build` 还原 |
+| Plan/Build 模式 | `/plan` 禁用写工具进入只读调研；`/build` 还原 |
 | Web API | 31 条 `/spcode/*` 路由，供 Dashboard 实时拉取项目状态/文件树/git 信息 |
 
 > **L1 鉴权**: spcode 工具箱是**管理员工具集**。非管理员用户看不到上述任何工具；管理员可见全部。codegraph MCP 工具同样受此鉴权约束。
@@ -91,7 +91,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 | 命令 | 描述 |
 |------|------|
-| `/plan` | 进入 plan 模式：按 `plan_mode_blocked_tools` 配置从 LLM 工具列表过滤写工具，并在首轮 LLM 调用时注入 plan 模式 reminder |
+| `/plan` | 进入 plan 模式：按 `plan_mode_blocked_tools` 配置禁用写工具的执行调用（schema 保持可见，prefix-cache 友好），并在首轮 LLM 调用时注入 plan 模式 reminder |
 | `/build` | 退出 plan 模式，恢复全部工具可用（默认状态） |
 
 > `/project`、`/agentsmd`、`/codegraph` 命令均受 L1 鉴权约束，非管理员调用会被拦截。
@@ -134,7 +134,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 > 以上风格/缩进/选项参数均为**显式覆盖**，叠加在 `BasedOnStyle` 之上，且仅在项目内无 `.clang-format` 文件时随内联 style 生效（与 `code_check` 的格式检查同源共享）。
 
-> `code_format` 是**写入工具**（可能修改文件），plan 模式下默认被过滤。默认不在 `enabled_tools` 中勾选，需显式启用。
+> `code_format` 是**写入工具**（可能修改文件），plan 模式下默认被禁用。默认不在 `enabled_tools` 中勾选，需显式启用。
 
 ### file_remove 配置
 
@@ -171,7 +171,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `plan_mode_blocked_tools` | 字符串列表 | 见下 | `/plan` 激活时从 LLM 工具列表中过滤的工具名。默认走 strict 模式，过滤所有 spcode 写工具 + AstrBot 内建文件写编辑工具 |
+| `plan_mode_blocked_tools` | 字符串列表 | 见下 | `/plan` 激活时禁用执行的工具名（schema 仍对 LLM 可见，调用返回 Permission denied）。默认走 strict 模式，禁用所有 spcode 写工具 + AstrBot 内建文件写编辑工具 |
 | `plan_mode_reminder` | 文本 | 内置英文模板 | 切换到 plan 模式时给 LLM 的提醒文本，作为 `<system-reminder>` 注入。支持 `{blocked}` 占位符替换为实际黑名单列表。留空则不注入 |
 
 默认 `plan_mode_blocked_tools`：
@@ -371,7 +371,7 @@ todo_clear()
 
 借鉴 opencode 的 plan/build 模式：
 
-- `/plan` 激活后，`plan_mode_blocked_tools` 列出的工具从 LLM 工具列表中过滤掉，LLM 只能使用只读工具调研；并在第一轮 LLM 调用时向 user message 注入 plan 模式 reminder（prefix cache 友好）
+- `/plan` 激活后，`plan_mode_blocked_tools` 列出的工具的执行被禁用（schema 仍可见，调用返回 Permission denied 错误），LLM 只能使用只读工具调研；并在第一轮 LLM 调用时向 user message 注入 plan 模式 reminder。工具 schema 在 /plan 与 /build 之间保持字节不变，prefix cache 不会因模式切换失效
 - `/build` 退出 plan 模式，恢复全部工具可用。默认状态下完全不修改 LLM 请求，与 AstrBot 默认行为一致
 - plan 模式状态严格 per-session（按 umo 隔离），不回退
 
@@ -581,7 +581,7 @@ astrbot_plugin_spcode_toolkit/
     ├── security/                 # 鉴权 + plan/build 模式
     │   ├── __init__.py           #   check_is_admin / PlanModeController
     │   ├── admin.py              #   L1 管理员鉴权
-    │   └── plan_mode.py          #   plan/build 模式控制器（过滤工具 + reminder 注入）
+    │   └── plan_mode.py          #   plan/build 模式控制器（禁用工具执行 + reminder 注入）
     │
     ├── function_tools/           # 16 个 LLM FunctionTool 类（一文件一工具）
     │   ├── __init__.py           #   ALL_TOOL_CLASSES 集中注册表

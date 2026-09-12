@@ -1,4 +1,4 @@
-"""tools.security.plan_mode 测试 — PlanModeController 状态 + 过滤 + reminder 注入。"""
+"""tools.security.plan_mode 测试 — PlanModeController 状态 + 工具禁用 + reminder 注入。"""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ def _make_req(blocked_tools: list[str] | None = None):
     """构造最小 ProviderRequest 模拟对象。"""
     req = MagicMock()
     req.func_tool = None  # 默认空
+    req.denied_tools = set()
     req.contexts = []
     return req
 
@@ -144,12 +145,13 @@ def test_filter_request_build_mode_is_noop():
     req.func_tool = MagicMock()
     req.func_tool.tools = [MagicMock(name="astrbot_file_remove")]
     c.filter_request(event, req)
-    # tool list 未被修改(仍是原 list)
+    # tool list 未被修改(仍是原 list),禁用集合也为空
     assert len(req.func_tool.tools) == 1
+    assert req.denied_tools == set()
 
 
 def test_filter_request_is_noop_after_leaving_plan_mode():
-    """plan → build: 离开 readonly 后,filter_request 不再触碰 req.func_tool。
+    """plan → build: 离开 readonly 后,filter_request 不再写入 denied_tools。
 
     v3.x: 状态由核心 fs_access 持有,main agent 每次请求重建 ToolSet,
     插件无需(也不再)快照/还原原始 ToolSet。
@@ -163,15 +165,18 @@ def test_filter_request_is_noop_after_leaving_plan_mode():
 
     c.activate("umo-restore")
     c.filter_request(event, req)
-    assert [tool.name for tool in req.func_tool.tools] == ["todo_query"]
-    assert req.func_tool is not original
+    # schema 保持可见(同一 ToolSet),执行被禁
+    assert req.func_tool is original
+    assert req.denied_tools == {"todo_create"}
 
     c.deactivate("umo-restore")
-    # 下一次请求带来 main agent 重建的完整 ToolSet(此处以 original 模拟),
-    # 钩子必须原样放行。
+    # 下一次请求带来 main agent 重建的完整 ToolSet(此处以 original 模拟,
+    # denied_tools 也随新请求重置),钩子必须原样放行。
     req.func_tool = original
+    req.denied_tools = set()
     c.filter_request(event, req)
     assert req.func_tool is original
+    assert req.denied_tools == set()
     assert [tool.name for tool in req.func_tool.tools] == [
         "todo_create",
         "todo_query",
@@ -179,7 +184,7 @@ def test_filter_request_is_noop_after_leaving_plan_mode():
 
 
 def test_filter_isolation_per_umo():
-    """仅核心模式为 readonly 的会话被过滤,其他会话的 ToolSet 原样保留。"""
+    """仅核心模式为 readonly 的会话被禁用工具,其他会话的请求不受影响。"""
     cfg = {"plan_mode_blocked_tools": ["todo_create"]}
     c = PlanModeController(get_config=lambda: cfg, get_core_config=lambda umo: {})
     event_a = _make_event("umo-a")
@@ -195,15 +200,12 @@ def test_filter_isolation_per_umo():
     c.filter_request(event_a, req_a)
     c.filter_request(event_b, req_b)
 
-    # umo-a 处于 readonly:写工具被过滤,替换为新 ToolSet
-    assert [tool.name for tool in req_a.func_tool.tools] == ["todo_query"]
-    assert req_a.func_tool is not original_a
-    # umo-b 非 readonly:func_tool 原封不动
+    # umo-a 处于 readonly:schema 保留,执行被禁
+    assert req_a.func_tool is original_a
+    assert req_a.denied_tools == {"todo_create"}
+    # umo-b 非 readonly:func_tool 与 denied_tools 均原封不动
     assert req_b.func_tool is original_b
-    assert [tool.name for tool in req_b.func_tool.tools] == [
-        "todo_create",
-        "todo_query",
-    ]
+    assert req_b.denied_tools == set()
 
     c.deactivate("umo-a")
 
@@ -212,7 +214,7 @@ def test_filter_isolation_per_umo():
 
 
 def test_filter_request_plan_mode_filters_tools():
-    """plan 模式:从 req.func_tool 过滤 blocked_tools 集合。"""
+    """plan 模式:blocked_tools 写入 req.denied_tools,schema 保持可见。"""
     cfg = {"plan_mode_blocked_tools": ["astrbot_file_remove"]}
     c = PlanModeController(get_config=lambda: cfg, get_core_config=lambda umo: {})
     c.activate("umo-1")
@@ -230,11 +232,10 @@ def test_filter_request_plan_mode_filters_tools():
     req.func_tool = ts
 
     c.filter_request(event, req)
-    # 被过滤后,只保留 es_search + code_check
+    # 所有 schema 仍然可见(前缀缓存友好),执行被禁
     remaining_names = [t.name for t in req.func_tool.tools]
-    assert "astrbot_file_remove" not in remaining_names
-    assert "es_search" in remaining_names
-    assert "code_check" in remaining_names
+    assert remaining_names == ["astrbot_file_remove", "es_search", "code_check"]
+    assert req.denied_tools == {"astrbot_file_remove"}
 
 
 def test_filter_request_plan_mode_no_config_logs_warning(caplog):

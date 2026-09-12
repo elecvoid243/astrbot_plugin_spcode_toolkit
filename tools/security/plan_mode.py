@@ -1,10 +1,11 @@
-"""plan_mode 控制器 — 只读(readonly)文件访问模式的插件侧过滤层。
+"""plan_mode 控制器 — 只读(readonly)文件访问模式的插件侧禁用层。
 
 v3.x (2026-08-20): 状态由 AstrBot 核心 ``astrbot.core.tools.fs_access``
 持有(per-umo)。本控制器只做两件事:
 1. 派生:plan active := 核心模式 == READONLY
-2. 过滤:active 时按 plan_mode_blocked_tools 从 req.func_tool 移除写工具
-   + 首轮注入 reminder(prefix-cache 友好)
+2. 禁用:active 时把 plan_mode_blocked_tools 写入 req.denied_tools(工具
+   schema 保持可见,执行被核心 agent runner 拒绝并返回可感知错误,
+   prefix-cache 友好) + 首轮注入 reminder
 
 /plan /build 命令与 /spcode/plan-mode webapi 都委托本控制器,再写核心状态。
 """
@@ -37,7 +38,7 @@ def _load_fs_access():
 
 
 class PlanModeController:
-    """plan(readonly) 模式的过滤钩子 + reminder 注入,状态在核心。"""
+    """plan(readonly) 模式的工具禁用钩子 + reminder 注入,状态在核心。"""
 
     def __init__(
         self,
@@ -96,7 +97,7 @@ class PlanModeController:
     # ── 钩子主入口(由 _plan_filter_tools 装饰方法调用) ──────────
 
     def filter_request(self, event, req: "ProviderRequest") -> None:
-        """readonly 时过滤写工具 + 注入 reminder;否则 no-op。"""
+        """readonly 时禁用写工具的执行 + 注入 reminder;否则 no-op。"""
         umo = event.unified_msg_origin
         if not self.is_active(umo):
             # 离开 readonly 时重置 reminder,下次进入重新注入。
@@ -107,15 +108,17 @@ class PlanModeController:
 
         blocked_tools = self._get_config().get("plan_mode_blocked_tools") or []
         if blocked_tools:
-            removed_count = self._filter_func_tool(req, set(blocked_tools))
-            if removed_count > 0:
-                logger.debug(
-                    f"[plan] 会话 {umo}: 从工具列表过滤 {removed_count} 个写工具"
-                )
+            # 执行期拒绝而非移除 schema:工具段在 /plan <-> /build 切换前后
+            # 保持字节不变,provider 侧前缀缓存不受模式切换影响;被拒调用会
+            # 收到 Permission denied 的工具结果,模型能感知并改走只读路径。
+            req.denied_tools = set(req.denied_tools or ()) | set(blocked_tools)
+            logger.debug(
+                f"[plan] 会话 {umo}: 已禁止 {len(blocked_tools)} 个写工具的执行调用"
+            )
         else:
             logger.warning(
                 f"[plan] 会话 {umo}: 处于 plan 模式但 plan_mode_blocked_tools 为空,"
-                f"将不会过滤任何工具。请在 _conf_schema.json 配置。"
+                f"将不会禁用任何工具。请在 _conf_schema.json 配置。"
             )
 
         if self._plan_reminded.get(umo, False):
@@ -143,28 +146,3 @@ class PlanModeController:
 
         self._plan_reminded[umo] = True
         logger.debug(f"[plan] 会话 {umo}: 已注入 plan 模式 reminder 到 user message")
-
-    @staticmethod
-    def _filter_func_tool(req: "ProviderRequest", blocked: set[str]) -> int:
-        """从 req.func_tool 中过滤掉 blocked 集合里的工具名,返回被过滤的数量。
-
-        新建 ToolSet 替换原引用,避免 in-place 修改污染共享 list;
-        被过滤工具的 schema 不序列化 — LLM 看不到也调不到。
-        """
-        if not req.func_tool or not blocked:
-            return 0
-        kept = [t for t in req.func_tool.tools if t.name not in blocked]
-        actual_removed = len(req.func_tool.tools) - len(kept)
-        if actual_removed == 0:
-            return 0
-        try:
-            from astrbot.core.agent.tool import ToolSet
-
-            new_set: "ToolSet" = ToolSet()
-            for t in kept:
-                new_set.add_tool(t)
-            req.func_tool = new_set
-            return actual_removed
-        except Exception as exc:
-            logger.warning(f"spcode_toolkit 工具过滤失败: {exc}")
-            return 0

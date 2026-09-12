@@ -12,7 +12,7 @@
       "file_compare",
       "todo_list"
     ],
-    "hint": "默认全部禁用。todo_list 勾选后自动启用六个相关工具。codegraph 和 agentsmd 由下方独立开关控制。code_format 是写入工具(会修改文件),plan 模式下默认被过滤。"
+    "hint": "默认全部禁用。todo_list 勾选后自动启用六个相关工具。codegraph 和 agentsmd 由下方独立开关控制。code_format 是写入工具(会修改文件),plan 模式下默认被禁用。"
   },
   "allowed_ids": {
     "description": "额外允许使用本插件的用户 ID",
@@ -227,12 +227,12 @@
   },
   "plan_mode": {
     "description": "plan / build模式配置",
-    "hint": "在 /plan 激活时，plan工具黑名单列出的工具会从 LLM 工具列表中过滤掉,防止 LLM 在调研阶段意外执行写操作。/build 还原为全部工具可见(默认)。",
+    "hint": "在 /plan 激活时，plan工具黑名单列出的工具的执行被禁用(schema 仍对 LLM 可见,调用返回 Permission denied),防止 LLM 在调研阶段意外执行写操作。/build 还原为全部工具可调(默认)。",
     "type": "object",
     "items": {
       "plan_mode_blocked_tools": {
-        "description": "plan模式下的工具黑名单 — /plan 激活时从 LLM 工具列表中过滤的工具名",
-        "hint": "移除写工具，让LLM 在 plan 模式下只能只读探索。默认走 strict 模式，过滤所有 spcode 写工具 + AstrBot 内建文件写编辑工具。",
+        "description": "plan模式下的工具黑名单 — /plan 激活时禁用执行的工具名",
+        "hint": "禁用写工具的执行，让LLM 在 plan 模式下只能只读探索。默认走 strict 模式，禁用所有 spcode 写工具 + AstrBot 内建文件写编辑工具。",
         "type": "list",
         "item": {
           "type": "string",

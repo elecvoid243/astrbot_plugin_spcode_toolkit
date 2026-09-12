@@ -118,7 +118,7 @@ async def test_plan_mode_post_route_registered():
 
 
 async def test_filter_request_filters_when_core_mode_is_readonly(monkeypatch):
-    """核心模式为 readonly 时,plan 过滤从 req.func_tool 移除写工具。"""
+    """核心模式为 readonly 时,plan 把写工具写入 req.denied_tools,schema 不动。"""
     from astrbot.core.tools import fs_access
     from tools.security.plan_mode import PlanModeController
 
@@ -137,9 +137,18 @@ async def test_filter_request_filters_when_core_mode_is_readonly(monkeypatch):
             def __init__(self, items):
                 self.tools = list(items)
 
-        req = SimpleNamespace(func_tool=_FuncTool([tool_a, tool_b]), contexts=[])
+        req = SimpleNamespace(
+            func_tool=_FuncTool([tool_a, tool_b]),
+            contexts=[],
+            denied_tools=set(),
+        )
         event = SimpleNamespace(unified_msg_origin=umo)
         controller.filter_request(event, req)
-        assert [t.name for t in req.func_tool.tools] == ["es_search"]
+        # 工具 schema 保留（前缀缓存友好），执行被禁
+        assert [t.name for t in req.func_tool.tools] == [
+            "astrbot_file_write_tool",
+            "es_search",
+        ]
+        assert req.denied_tools == {"astrbot_file_write_tool"}
     finally:
         fs_access.reset()
