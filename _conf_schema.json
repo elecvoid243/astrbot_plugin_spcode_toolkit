@@ -280,6 +280,12 @@
       }
     }
   },
+  "branch_state_inherit_enabled": {
+    "description": "分支会话自动继承会话状态",
+    "hint": "ChatUI 分支会话首次触发 LLM 请求时,自动从源会话深拷贝已加载项目 / AGENTS.md / worktree 激活状态,使 system 注入与源会话一致(provider 前缀缓存命中)。关闭后分支会话需重新 /project load 与 /agentsmd load。",
+    "type": "bool",
+    "default": true
+  },
   "agentsmd": {
     "description": "AGENTS.md — 项目级 LLM 指令文件管理(/agentsmd 命令组)",
     "hint": "动态注入 AGENTS.md 到 LLM 系统提示词,支持自动生成/加载/卸载/更新。",

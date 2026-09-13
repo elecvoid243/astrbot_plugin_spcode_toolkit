@@ -22,6 +22,7 @@ import asyncio
 import logging
 from pathlib import Path
 
+from .._branch_inherit import inherit_state
 from ._core import (
     INJECTION_MARKER,
     build_injection,
@@ -276,6 +277,7 @@ class AgentsmdHandlers:
         """每次 LLM 请求前,若当前会话已加载 AGENTS.md,注入到 system_prompt 末尾。
 
         行为:
+        - 分支会话(本 umo 无 state)沿分支关系惰性克隆源会话的 state
         - 若当前 umo 未加载 AGENTS.md → return
         - 检测文件 mtime 变化,如有变化则刷新 last_content
         - 通过 INJECTION_MARKER 防重复注入
@@ -284,6 +286,13 @@ class AgentsmdHandlers:
         if not plugin._config.get("agentsmd_enabled", True):
             return
         umo = event.unified_msg_origin
+        await inherit_state(
+            umo,
+            subsystem="agentsmd",
+            get_state=self._state.get,
+            set_state=self._state.set,
+            enabled=plugin._config.get("branch_state_inherit_enabled", True),
+        )
         state = self._state.get(umo)
         if state is None:
             return

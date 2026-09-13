@@ -81,15 +81,19 @@ from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
 from .tools.function_tools.todo_base import _TodoToolBase
 from .tools.inta_shell.component import LocalInteractiveShellComponent
 from .tools.llm_inject import inject_guidance
+from .tools._branch_inherit import inherit_state
 from .tools.operation_progress import begin as _progress_begin
 from .tools.operation_progress import finish as _progress_finish
 from .tools.project import ProjectManager
+from .tools.project import state as _project_state
 from .tools.project.inject import inject_project_path
 from .tools.security import PlanModeController, check_is_admin
 from .tools.vivado import VivadoSubsystem, check_vivado_available
 from .tools.webapi import register_webapi_routes
 from .tools.webapi.git_diff import _GIT_DIFF_ENCODING
+from .tools.worktree_activation import get as _get_active_worktree_raw
 from .tools.worktree_activation import get_for_directory as _get_active_worktree
+from .tools.worktree_activation import put as _worktree_activation_put
 from .tools.worktree_activation import reset as _reset_worktree_activation
 
 _DEFAULT_CONFIG = {
@@ -670,6 +674,15 @@ class SPCodeToolkit(star.Star):
 
         Author: elecvoid243, 2026-07-27
         """
+        umo = event.unified_msg_origin
+        config = getattr(self, "_config", None) or {}
+        await inherit_state(
+            umo,
+            subsystem="project",
+            get_state=_project_state.get,
+            set_state=_project_state.put,
+            enabled=config.get("branch_state_inherit_enabled", True),
+        )
         inject_project_path(event, req)
 
     @filter.on_llm_request()
@@ -766,6 +779,14 @@ class SPCodeToolkit(star.Star):
         if not self._config.get("codegraph_enabled", True):
             return
         umo = event.unified_msg_origin
+        config = getattr(self, "_config", None) or {}
+        await inherit_state(
+            umo,
+            subsystem="project",
+            get_state=_project_state.get,
+            set_state=_project_state.put,
+            enabled=config.get("branch_state_inherit_enabled", True),
+        )
         loaded = self.get_loaded_project(umo)
         if loaded is None:
             return
@@ -803,6 +824,25 @@ class SPCodeToolkit(star.Star):
         from astrbot.core.tools import fs_access
 
         umo = event.unified_msg_origin
+        inherit_enabled = (getattr(self, "_config", None) or {}).get(
+            "branch_state_inherit_enabled", True
+        )
+        # 分支会话状态继承:先补齐项目 / worktree 状态,再走常规读取,
+        # 保证注入与 fs 动态写根和源会话一致(否则从注入点全量 miss)。
+        await inherit_state(
+            umo,
+            subsystem="project",
+            get_state=_project_state.get,
+            set_state=_project_state.put,
+            enabled=inherit_enabled,
+        )
+        await inherit_state(
+            umo,
+            subsystem="worktree",
+            get_state=_get_active_worktree_raw,
+            set_state=lambda u, s: _worktree_activation_put(u, **s),
+            enabled=inherit_enabled,
+        )
         loaded = self.get_loaded_project(umo)
         project_dir = ""
         if loaded is not None:
