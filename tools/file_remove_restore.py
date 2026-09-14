@@ -39,12 +39,19 @@ def _normalize(p: str) -> str:
 def _parse_i_file(meta: Path) -> tuple[str, int] | None:
     """解析 ``$I`` 元数据文件,返回 (原始路径, 原始字节数)。
 
-    格式(UTF-16LE):
-      - 字节 0..7   版本号(2 = Vista~8.1;4 = Win10+)
-      - 字节 8..15  原始文件大小
-      - 字节 16..23 删除时间(FILETIME,本函数不使用)
-      - 版本 2:字节 24 起为 null 结尾的原始路径
-      - 版本 4:字节 24..27 为名称字节数,其后为原始路径
+    实际存在的两种布局(UTF-16LE,均以 ``28 + 名称长度*2 == 文件总长``
+    判别长度前缀式):
+
+      A. 长度前缀式(Win10/11 与 send2trash 实际写出的格式——即使版本
+         字段为 2 也带长度字段):
+           - 字节 0..7   版本号(2 或 4)
+           - 字节 8..15  原始文件大小
+           - 字节 16..23 删除时间(FILETIME,本函数不使用)
+           - 字节 24..27 名称长度(UTF-16 码元数,含结尾 null)
+           - 字节 28 起  原始路径
+      B. 经典 null 结尾式(Vista~8.1):
+           - 字节 0..7   版本号 2
+           - 字节 24 起  null 结尾的原始路径(无长度字段)
 
     解析失败返回 None(损坏/未知版本条目直接跳过,不中断扫描)。
     """
@@ -56,22 +63,25 @@ def _parse_i_file(meta: Path) -> tuple[str, int] | None:
         return None
     version = int.from_bytes(data[0:8], "little")
     size = int.from_bytes(data[8:16], "little")
-    if version == 2:
-        name = data[24:].decode("utf-16-le", errors="replace").split("\x00")[0]
-    elif version == 4:
-        if len(data) < 28:
-            return None
+    if version not in (2, 4):
+        return None
+
+    candidates: list[str] = []
+    if len(data) >= 28:
         name_len = int.from_bytes(data[24:28], "little")
-        name = (
-            data[28 : 28 + name_len]
-            .decode("utf-16-le", errors="replace")
-            .rstrip("\x00")
-        )
-    else:
-        return None
-    if not name:
-        return None
-    return name, size
+        # 长度字段为码元数;仅当长度与文件总长精确吻合时才采信长度
+        # 前缀式布局(经典式文件的该偏移是路径首字符,几乎必然不吻合)。
+        if 0 < name_len and 28 + name_len * 2 == len(data):
+            candidates.append(
+                data[28:].decode("utf-16-le", errors="replace").rstrip("\x00")
+            )
+    # 经典式兜底:null 结尾名称。
+    candidates.append(data[24:].decode("utf-16-le", errors="replace").split("\x00")[0])
+    for name in candidates:
+        # 单字符乱码候选(布局误判时)不含路径分隔符,直接淘汰。
+        if name and ("\\" in name or "/" in name):
+            return name, size
+    return None
 
 
 def _windows_drive_roots() -> list[Path]:

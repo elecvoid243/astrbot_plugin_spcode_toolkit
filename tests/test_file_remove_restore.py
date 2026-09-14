@@ -33,12 +33,24 @@ def _make_i_bytes_v2(original: str, size: int = 5) -> bytes:
 
 
 def _make_i_bytes_v4(original: str, size: int = 5) -> bytes:
-    """版本 4 元数据(Win10+):4 字节名称长度前缀。"""
+    """版本 4 元数据:4 字节名称长度前缀(码元数,含结尾 null)。"""
     name = original.encode("utf-16-le") + b"\x00\x00"
     data = (4).to_bytes(8, "little")
     data += size.to_bytes(8, "little")
     data += (0).to_bytes(8, "little")
-    data += len(name).to_bytes(4, "little")
+    data += (len(name) // 2).to_bytes(4, "little")
+    data += name
+    return data
+
+
+def _make_i_bytes_v2_lengthprefixed(original: str, size: int = 5) -> bytes:
+    """真实机器观察到的布局:版本字段为 2 但带 4 字节名称长度前缀
+    (码元数,含结尾 null)——Win10/11 与 send2trash 的实际产物。"""
+    name = original.encode("utf-16-le") + b"\x00\x00"
+    data = (2).to_bytes(8, "little")
+    data += size.to_bytes(8, "little")
+    data += (0).to_bytes(8, "little")
+    data += (len(name) // 2).to_bytes(4, "little")
     data += name
     return data
 
@@ -57,7 +69,10 @@ def _seed_windows_bin(
 # ── Windows 分支 ──────────────────────────────────────
 
 
-@pytest.mark.parametrize("make_i", [_make_i_bytes_v2, _make_i_bytes_v4])
+@pytest.mark.parametrize(
+    "make_i",
+    [_make_i_bytes_v2, _make_i_bytes_v4, _make_i_bytes_v2_lengthprefixed],
+)
 def test_restore_windows_v2_v4(tmp_path: Path, monkeypatch, make_i):
     monkeypatch.setattr(sys, "platform", "win32")
     original = tmp_path / "workspace" / "报告.md"
