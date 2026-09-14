@@ -81,6 +81,7 @@ from . import (
     file_discard_hunk,  # v2.16.0 (2026-07-06)
     file_name_search,  # v2.15.0 (2026-07-02)
     file_remove,  # 2026-07-18: POST /spcode/file-remove(删除文件)
+    file_remove_restore,  # 2026-09-14: POST /spcode/file-remove/restore(回收站恢复)
     file_rename,  # 2026-07-18: POST /spcode/file-rename(同目录重命名)
     file_restore,
     file_search,  # v2.15.0 (2026-07-02)
@@ -346,6 +347,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["POST"],
         file_restore.handle,
         "恢复工作区中某一文件相对 index 的改动",
+    ),
+    (
+        "/spcode/file-remove/restore",  # 2026-09-14
+        ["POST"],
+        file_remove_restore.handle,
+        "从系统回收站恢复被 astrbot_file_remove 删除的文件",
     ),
     (
         "/spcode/file-discard-hunk",  # v2.16.0 (2026-07-06)
@@ -760,6 +767,7 @@ def register_webapi_routes(plugin: SPCodeToolkit) -> None:
                 interrupt/stop/status)
     2026-09-08: 71 -> 72 (+codegraph-init POST /spcode/codegraph-init)
     2026-09-09: 72 -> 73 (+git-reset POST /spcode/git-reset)
+    2026-09-14: 73 -> 74 (+file-remove-restore POST /spcode/file-remove/restore)
     """
     for route, methods, handler, desc in ROUTES:
         try:

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from astrbot.api import FunctionTool
 from astrbot.core.agent.run_context import ContextWrapper
@@ -88,6 +90,39 @@ class FileRemoveTool(FunctionTool):
                 max_items,
                 list(self.custom_blacklist),
             )
+            _record_turn_removal(context, path, result)
             return unwrap(result)
         except Exception as e:
             return err_json(f"file_remove 失败: {e}")
+
+
+def _record_turn_removal(
+    context: ContextWrapper[AstrAgentContext],
+    raw_path: str,
+    result: object,
+) -> None:
+    """删除成功后向 agent 上下文记录 changed_files 条目(kind=remove)。
+
+    主仓库的 agent runner 会把 ``AstrAgentContext.extra["changed_files"]``
+    聚合为 ChatUI 回合文件变更总结卡片;卡片的"撤销删除"按钮再经
+    ``POST /spcode/file-remove/restore`` 把文件从回收站搬回原位。
+    防御式 getattr——轻量测试上下文没有 extra 字段,直接跳过。
+    """
+    if not (isinstance(result, dict) and result.get("ok")):
+        return
+    extra = getattr(context.context, "extra", None)
+    if not isinstance(extra, dict):
+        return
+    try:
+        resolved = str(Path(raw_path).resolve())
+    except OSError:
+        resolved = str(raw_path).strip()
+    extra.setdefault("changed_files", []).append(
+        {
+            "path": resolved,
+            "kind": "remove",
+            "runtime": "local",
+            "backup_id": "",
+            "ts": time.time(),
+        }
+    )
