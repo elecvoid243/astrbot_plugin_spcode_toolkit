@@ -28,42 +28,15 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 
-# ── 直接 import 真实 CommandFilter(不走 conftest.py 的 stub)───
-import importlib  # noqa: E402
-import importlib.util  # noqa: E402
-
-
-def _import_real_command_filter_module():
-    """直接 import ``astrbot.core.star.filter.command``,绕开 conftest.py 的 stub。
-
-    conftest.py 用 sys.modules hook 替换 ``astrbot.api.event.filter`` 等顶层
-    namespace,但不会替换 ``astrbot.core.star.filter.command.CommandFilter``
-    自身。这里直接 import 真实源文件。
-    """
-    # 先把 conftest 可能 stub 过的命名空间卸了,让真实 module 能 import
-    for mod_name in (
-        "astrbot",
-        "astrbot.core",
-        "astrbot.core.star",
-        "astrbot.core.star.filter",
-        "astrbot.core.star.filter.command",
-    ):
-        sys.modules.pop(mod_name, None)
-    # 找源文件绝对路径
-    from pathlib import Path as _P
-    real_module = _P(r"F:\github\Astrbot\astrbot\core\star\filter\command.py")
-    spec = importlib.util.spec_from_file_location(
-        "astrbot.core.star.filter.command",
-        str(real_module),
-    )
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["astrbot.core.star.filter.command"] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-_command_module = _import_real_command_filter_module()
-CommandFilter = _command_module.CommandFilter
+# ── 直接 import 真实 CommandFilter ─────────────────────────
+# 2026-09-15 fix: 原实现在 **pytest 收集期**(模块 import 阶段,先于全部
+# 测试执行)把 ``astrbot`` 及其父包从 sys.modules 永久 pop 掉再按文件路径
+# exec,导致整个会话里后续所有以 ``"astrbot.api.*"`` 为字符串目标的
+# monkeypatch 解析失败(test_file_restore 5 failed + test_todo_split_tools
+# 19 errors,均与本文件的用例无关)。其存在理由是绕开 conftest.py 的
+# sys.modules stub —— 该 stub 机制早已移除,直接走正常 import,与套件
+# 其余部分共享同一份 astrbot 模块对象。
+from astrbot.core.star.filter.command import CommandFilter  # noqa: E402
 
 
 # ── helper ─────────────────────────────────────────────────────

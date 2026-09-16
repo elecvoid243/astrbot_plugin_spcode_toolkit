@@ -26,9 +26,14 @@ class TestVivadoE2E:
     """vivado-mcp 真启动验证 (CI 默认 skip, 本地装了才跑)。"""
 
     def test_vivado_mcp_imports(self, skip_if_no_vivado_mcp):
+        import importlib
+
         import vivado_mcp  # noqa: F401
 
-        assert hasattr(vivado_mcp, "server")
+        # 2026-09-15 fix: vivado_mcp 0.3.x 的 server 是子模块,不随包
+        # 自动导入,hasattr(vivado_mcp, "server") 恒 False。改为显式
+        # 导入子模块验证(意图不变: 包已安装且 server 可导入)。
+        assert importlib.import_module("vivado_mcp.server") is not None
 
     def test_config_find_vivado_works(self, skip_if_no_vivado_mcp):
         from vivado_mcp import config

@@ -180,6 +180,7 @@ def test_routes_table_has_forty_six_endpoints() -> None:
         "/spcode/file-write",  # 2026-07-17 (workspace file editor)
         "/spcode/file-rename",  # 2026-07-18 (workspace file editor)
         "/spcode/file-remove",  # 2026-07-18 (workspace file editor)
+        "/spcode/file-remove/restore",  # 2026-09-14 回收站恢复(be03cc7 补登)
         "/spcode/vivado-status",  # PR-4 (2026-07-23)
         # ── v2.22.0+ 冲突/合并系列(此前漏记,2026-08-06 对账补登) ──
         "/spcode/git-merge",
@@ -237,14 +238,15 @@ def test_routes_table_has_forty_six_endpoints() -> None:
     # 2026-09-08: +1 POST (codegraph-init)
     # 2026-09-09: +1 POST (git-reset)
     # 2026-09-12: +1 POST (git-tag-create)
-    # 70 unique paths total: 23 GET + 49 POST + 1 PATCH + 1 DELETE
+    # 2026-09-14: +1 POST (file-remove/restore 回收站恢复,be03cc7)
+    # 71 unique paths total: 23 GET + 50 POST + 1 PATCH + 1 DELETE
     methods = [m for entry in ROUTES for m in entry[1]]
     assert (
         methods.count("GET") == 23
     )  # +operation-progress +home-directory +drives +git-remotes +terminal/stream+status
     assert (
-        methods.count("POST") == 49
-    )  # +terminal 4 +codegraph-init +git-reset +git-tag-create
+        methods.count("POST") == 50
+    )  # +terminal 4 +codegraph-init +git-reset +git-tag-create +file-remove/restore
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
 
@@ -562,10 +564,11 @@ def test_register_webapi_routes_calls_context_fifty_three_times() -> None:
     2026-09-08: +1 POST (codegraph-init) → 72
     2026-09-09: +1 POST (git-reset) → 73
     2026-09-12: +1 POST (git-tag-create) → 74
+    2026-09-14: +1 POST (file-remove/restore 回收站恢复) → 75
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    assert plugin.context.register_web_api.call_count == 74
+    assert plugin.context.register_web_api.call_count == 75
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -582,14 +585,14 @@ def test_register_webapi_routes_continues_on_failure() -> None:
 
     plugin.context.register_web_api.side_effect = _maybe_fail
 
-    # Should not raise; should attempt all 74 routes
+    # Should not raise; should attempt all 75 routes
     # (含 2026-08-12 新增的 git-pull / git-push / git-remote-set-url /
     # code-check / code-format;2026-08-13 git-commit-amend;2026-08-15
     # home-directory / drives;2026-08-16 git-remotes / git-remote-remove;
     # 2026-09-01 terminal 6 端点;2026-09-08 codegraph-init;2026-09-09
-    # git-reset;2026-09-12 git-tag-create)。
+    # git-reset;2026-09-12 git-tag-create;2026-09-14 file-remove/restore)。
     register_webapi_routes(plugin)
-    assert call_count == 74
+    assert call_count == 75
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

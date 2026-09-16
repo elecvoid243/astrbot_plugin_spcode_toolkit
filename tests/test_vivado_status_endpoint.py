@@ -24,7 +24,7 @@ class TestVivadoStatusHandle:
 
         mock_plugin._config["vivado_enabled"] = False
         with patch(
-            "tools.webapi.vivado_status.importlib.util.find_spec", return_value=object()
+            "tools.webapi.vivado_status.is_vivado_installed", return_value=True
         ):
             resp = await handle(mock_plugin)
         assert resp["status"] == "ok"
@@ -37,7 +37,7 @@ class TestVivadoStatusHandle:
         from tools.webapi.vivado_status import handle
 
         with patch(
-            "tools.webapi.vivado_status.importlib.util.find_spec", return_value=None
+            "tools.webapi.vivado_status.is_vivado_installed", return_value=False
         ):
             resp = await handle(mock_plugin)
         assert resp["data"]["install_missing"] is True
@@ -61,7 +61,7 @@ class TestVivadoStatusHandle:
         mock_mgr.mcp_server_runtime = {"vivado": {}}
         mock_plugin.context.get_llm_tool_manager = MagicMock(return_value=mock_mgr)
         with patch(
-            "tools.webapi.vivado_status.importlib.util.find_spec", return_value=object()
+            "tools.webapi.vivado_status.is_vivado_installed", return_value=True
         ), patch(
             "tools.webapi.vivado_status.find_vivado_executable",
             return_value="D:/Xilinx/Vivado/2024.1/bin/vivado.bat",
@@ -78,7 +78,7 @@ class TestVivadoStatusHandle:
         from tools.webapi.vivado_status import handle
 
         with patch(
-            "tools.webapi.vivado_status.importlib.util.find_spec", return_value=object()
+            "tools.webapi.vivado_status.is_vivado_installed", return_value=True
         ):
             resp = await handle(mock_plugin)
         assert {"status", "data", "elapsed_ms", "reason"} <= resp.keys()
@@ -89,7 +89,7 @@ class TestVivadoStatusHandle:
         from tools.webapi.vivado_status import handle
 
         with patch(
-            "tools.webapi.vivado_status.importlib.util.find_spec", return_value=object()
+            "tools.webapi.vivado_status.is_vivado_installed", return_value=True
         ), patch(
             "tools.webapi.vivado_status._vivado_state.get_state",
             side_effect=RuntimeError("state read failed"),

@@ -165,7 +165,11 @@ def _setup_repo_with_remote(tmp_path):
     )
 
     # 初始化 bare remote + 关联 + push
-    subprocess.run(["git", "init", "-q", "--bare", str(remote_repo)], check=True)
+    # -b main: 固定 remote HEAD 指向,否则 init.defaultBranch!=main 的机器上
+    # remote HEAD 悬空 → clone 无法 checkout → 后续 push 报 src refspec 错
+    subprocess.run(
+        ["git", "init", "-q", "--bare", "-b", "main", str(remote_repo)], check=True
+    )
     subprocess.run(
         ["git", "-C", str(local_repo), "remote", "add", "origin", str(remote_repo)],
         check=True,
