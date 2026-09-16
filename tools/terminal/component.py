@@ -132,6 +132,14 @@ class TerminalSessionManager:
         # write()/poll() convert accordingly. Injecting PYTHONUTF8 here
         # would make python.exe children emit UTF-8 and corrupt the
         # otherwise-consistent GBK stream.
+        else:
+            # Inherited vars count too: a user-level PYTHONUTF8=1 /
+            # PYTHONIOENCODING=utf-8 (observed 2026-09-15) silently
+            # flips child interpreters into the UTF-8 world and breaks
+            # the GBK byte stream. Strip them so the ANSI code page
+            # rules (locked by tests/test_terminal_cmd_encoding.py).
+            run_env.pop("PYTHONUTF8", None)
+            run_env.pop("PYTHONIOENCODING", None)
 
         process_kwargs: dict[str, Any] = {}
         if sys.platform == "win32":

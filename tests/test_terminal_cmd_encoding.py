@@ -115,7 +115,16 @@ async def test_cmd_session_status_peek_decodes_from_zero(manager, tmp_cwd):
         chars="print('快照中文', flush=True)\n",
     )
     # Consume output normally (advances the session decoder state).
-    await manager.poll(owner_id="umo:cmd3", session_id=sid, yield_time_ms=1000)
+    # 2026-09-15 fix: 固定 1s 单次窗口在本机 ConPTY 节奏下取不到 print
+    # 输出(只见 banner),改为有界重试。消费式 poll 正是本用例要验证的
+    # "主 decoder 状态已推进" 前提。
+    deadline = time.monotonic() + 10.0
+    while True:
+        consumed = await manager.poll(
+            owner_id="umo:cmd3", session_id=sid, yield_time_ms=1000
+        )
+        if "快照中文" in consumed["stdout"] or time.monotonic() >= deadline:
+            break
     # Peek from byte 0 (same as handle_status) must still decode Chinese
     # correctly with a fresh decoder.
     snap = await manager.poll(

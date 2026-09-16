@@ -80,15 +80,23 @@ async def test_poll_cursor_is_incremental(manager, tmp_cwd):
     )
     sid = started["session_id"]
     await manager.write(owner_id="umo:1", session_id=sid, chars="print('A'*200, flush=True)\n")
-    # 绗竴娆?poll 鐢ㄥ皬 max 闄愬埗,纭 cursor 鍓嶈繘浣嗚緭鍑轰笉閲嶅
+    # 第一次 poll 用小 max 限制,确认 cursor 前进但输出不重复
     r1 = await manager.poll(
         owner_id="umo:1", session_id=sid, yield_time_ms=1000, max_output_chars=64
     )
     assert "A" * 200 not in r1["stdout"] or r1["has_more"] is True
-    r2 = await manager.poll(owner_id="umo:1", session_id=sid, yield_time_ms=1000)
-    joined = r1["stdout"] + r2["stdout"]
-    assert "A" * 200 in joined
-    assert r2["cursor"] >= r1["cursor"]
+    # 2026-09-15 fix: 固定单次窗口在本机 ConPTY 启动节奏下取不到 print
+    # 输出(只见 banner),改为有界重试累积(与 _wait_for_output 同模式),
+    # 同时逐次断言 cursor 单调不回退。
+    seen = r1["stdout"]
+    prev_cursor = r1["cursor"]
+    deadline = time.monotonic() + 10.0
+    while "A" * 200 not in seen and time.monotonic() < deadline:
+        r = await manager.poll(owner_id="umo:1", session_id=sid, yield_time_ms=500)
+        assert r["cursor"] >= prev_cursor
+        prev_cursor = r["cursor"]
+        seen += r["stdout"]
+    assert "A" * 200 in seen
     await manager.terminate(owner_id="umo:1", session_id=sid)
 
 
@@ -160,11 +168,17 @@ async def test_poll_without_advance_keeps_cursor(manager, tmp_cwd):
     )
     sid = started["session_id"]
     await manager.write(owner_id="umo:1", session_id=sid, chars="print('CUR', flush=True)\n")
-    snap = await manager.poll(
-        owner_id="umo:1", session_id=sid, yield_time_ms=1000, advance=False
-    )
+    # 2026-09-15 fix: advance=False peek 不消费,重试安全 —— 有界重试等
+    # CUR 出现(原固定单次窗口在本机取不到输出),再断言快照语义。
+    deadline = time.monotonic() + 10.0
+    while True:
+        snap = await manager.poll(
+            owner_id="umo:1", session_id=sid, yield_time_ms=1000, advance=False
+        )
+        if "CUR" in snap["stdout"] or time.monotonic() >= deadline:
+            break
     assert "CUR" in snap["stdout"]
-    # advance=False 涓嶆帹杩涗細璇濇父鏍?鍐嶆 poll 浠?0 寮€濮嬩粛鑳界湅鍒?CUR
+    # advance=False 不推进会话游标,再次 poll 仍从同一位置看到 CUR
     again = await manager.poll(
         owner_id="umo:1", session_id=sid, yield_time_ms=0, advance=False
     )
