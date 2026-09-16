@@ -388,3 +388,35 @@ async def test_handle_etag_304_short_circuit(monkeypatch, plugin, tmp_path: Path
 
     r2 = await _call_with_query(monkeypatch, plugin, headers={"If-None-Match": etag})
     assert r2.status_code == 304
+
+
+async def test_stats_chinese_tag_ref_returns_latin1_safe_etag(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """中文 tag 作 ref: 200 + ETag latin-1 可编码。
+
+    2026-09-14 fix 镜像回归(git_log 同款): 修复前 query_fingerprint 含
+    ref 原文直接拼进 ETag 响应头,非 ASCII 输入触发
+    ``'latin-1' codec can't encode ...`` → dashboard 500。
+    """
+    _init_git_repo(tmp_path)
+    _commit(
+        tmp_path, {"a.txt": "v1"}, "2026-09-10T10:00:00+08:00", "中文统计提交"
+    )
+    _git(tmp_path, "tag", "v1.0-中文修复")
+    _load_project(plugin, "test:umo", str(tmp_path))
+    _gs._STATS_ETAG_CACHE.clear()
+    monkeypatch.setattr(_gs, "_STATS_ETAG_TTL", 0.0)
+
+    result = await _call_with_query(
+        monkeypatch, plugin, query={"ref": "v1.0-中文修复"}
+    )
+    data = result["data"]
+    assert result.status_code == 200
+    assert data["loaded"] is True, f"expected success, got: {data}"
+    assert data["totals"]["commits"] == 1
+
+    etag = result.headers.get("etag", "")
+    assert etag, "missing ETag header"
+    etag.encode("latin-1")  # 修复前此处抛 UnicodeEncodeError
+    assert "中文" not in etag, f"raw user input leaked into ETag: {etag!r}"

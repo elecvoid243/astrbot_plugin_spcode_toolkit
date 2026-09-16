@@ -5,6 +5,7 @@ Spec: docs/superpowers/specs/2026-06-23-git-stage-untage-commit-log-design.md §
 """
 
 from __future__ import annotations
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -769,3 +770,124 @@ async def test_classify_log_failure_empty_repository_wins():
 async def test_classify_log_failure_fallback_git_error():
     """无法归类 → git_error 兜底。"""
     assert _gl._classify_log_failure("fatal: unrelated failure") == "git_error"
+
+
+# ──────────────────────────────────────────────────────────
+# 2026-09-14 fix: 非 ASCII(中文)查询参数回归
+#
+# 背景: _compute_log_etag 曾把 query_fingerprint(含 grep/author/path/ref
+# 用户输入原文)直接拼进 ETag 响应头。HTTP 响应头必须 latin-1 可编码
+# (h11/hypercorn 强制),dashboard 中文 grep 必现 500:
+#   'latin-1' codec can't encode characters in position 78-79
+# 修复后指纹先 sha1 哈希为短摘要再进 ETag,以下用例锁定该行为。
+# ──────────────────────────────────────────────────────────
+
+
+def _append_chinese_commit(path: Path, message: str, author: str | None = None) -> None:
+    """在已有 repo 上追加一条中文 commit(author 可选中文)。"""
+    (path / "zh.txt").write_text("zh", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=path, check=True)
+    env = None
+    if author is not None:
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": author,
+            "GIT_COMMITTER_NAME": author,
+        }
+    subprocess.run(["git", "commit", "-q", "-m", message], cwd=path, check=True, env=env)
+
+
+async def test_log_chinese_grep_returns_latin1_safe_etag(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """中文 grep: 200 + 命中过滤 + ETag 可 latin-1 编码(核心回归)。
+
+    修复前: ETag 含 ``|||||中文`` 原文 → 响应头写入抛 UnicodeEncodeError。
+    """
+    from tools.webapi import git_log as _m
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path, n_commits=2)
+    _append_chinese_commit(tmp_path, "修复登录页面的中文乱码问题")
+    _load_project(plugin, "u:m", str(tmp_path))
+    _m._LOG_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_LOG_ETAG_TTL", 0.0)
+
+    monkeypatch.setattr(
+        web, "request", make_web_request_mock(query={"grep": "中文乱码"})
+    )
+    r = await _gl.handle(plugin)
+    data = r["data"]
+    assert data["loaded"] is True, f"expected success, got: {data}"
+    assert data["count"] == 1
+    assert data["commits"][0]["subject"] == "修复登录页面的中文乱码问题"
+
+    etag = r.headers.get("etag", "")
+    assert etag, "missing ETag header"
+    etag.encode("latin-1")  # 修复前此处抛 UnicodeEncodeError → dashboard 500
+    assert "中文" not in etag, f"raw user input leaked into ETag: {etag!r}"
+
+
+async def test_log_etag_differs_between_distinct_chinese_keywords(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """不同中文 grep 关键词 → ETag 必不同(摘要化不损失区分度)。"""
+    from tools.webapi import git_log as _m
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path, n_commits=1)
+    _load_project(plugin, "u:m", str(tmp_path))
+    _m._LOG_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_LOG_ETAG_TTL", 0.0)
+
+    etags: list[str] = []
+    for kw in ("登录", "注销"):
+        monkeypatch.setattr(
+            web, "request", make_web_request_mock(query={"grep": kw})
+        )
+        r = await _gl.handle(plugin)
+        etags.append(r.headers.get("etag", ""))
+    assert etags[0] and etags[1]
+    assert etags[0] != etags[1], f"different keywords must yield different ETags: {etags}"
+
+
+async def test_log_chinese_author_filter(monkeypatch, plugin, tmp_path: Path):
+    """author=张三 只命中中文作者的提交,ETag 同样 latin-1 安全。"""
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path, n_commits=1)
+    _append_chinese_commit(tmp_path, "chinese author commit", author="张三")
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    monkeypatch.setattr(
+        web, "request", make_web_request_mock(query={"author": "张三"})
+    )
+    r = await _gl.handle(plugin)
+    data = r["data"]
+    assert data["loaded"] is True
+    assert data["count"] == 1
+    assert data["commits"][0]["author"]["name"] == "张三"
+    r.headers.get("etag", "").encode("latin-1")
+
+
+async def test_log_chinese_tag_ref(monkeypatch, plugin, tmp_path: Path):
+    """中文 tag 作 ref 可查历史,commit.tags 徽章含中文 tag 名,ETag 安全。"""
+    from astrbot.api import web
+
+    shas = _init_git_repo(tmp_path, n_commits=2)
+    subprocess.run(["git", "tag", "v1.0-中文修复"], cwd=tmp_path, check=True)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    monkeypatch.setattr(
+        web, "request", make_web_request_mock(query={"ref": "v1.0-中文修复"})
+    )
+    r = await _gl.handle(plugin)
+    data = r["data"]
+    assert data["loaded"] is True, f"expected success, got: {data}"
+    # tag 打在 HEAD(最新 commit)上,ancestry 含两条
+    assert data["count"] == 2
+    assert data["commits"][0]["sha"] == shas[-1]
+    assert data["commits"][0]["tags"] == ["v1.0-中文修复"]
+    # 非 hex ref 不做 rev-parse 归一化,resolved_ref 保持 None
+    assert data["resolved_ref"] is None
+    r.headers.get("etag", "").encode("latin-1")

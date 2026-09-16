@@ -335,6 +335,9 @@ async def _compute_log_etag(
         query_fingerprint: 稳定的 query 字符串指纹 (由 caller 在 n/ref/path/
             author/since/until 校验通过后构造),用 ``|`` 分隔保持可读。
             为空串时行为与 v3.9 等价(无 query 维度的请求)。
+            注意: 指纹含用户输入原文 (grep/author/path/ref),**不会**原样
+            进入 ETag —— 先哈希为短摘要 (见下),否则非 ASCII 输入会让
+            响应头写入抛 latin-1 UnicodeEncodeError。
         extra_inputs: 额外 ETag 因子(如 refs/tags 原始输出)。新建 / 删除
             tag 不改 HEAD / index,不纳入会让 304 复用旧 tags(2026-09-08)。
     """
@@ -342,7 +345,17 @@ async def _compute_log_etag(
     extra_digest = (
         hashlib.sha1(extra_blob.encode("utf-8")).hexdigest()[:12] if extra_blob else ""
     )
-    cache_key = f"{directory}\x00{query_fingerprint}\x00{extra_digest}"
+    # 2026-09-14 fix: query_fingerprint 含用户输入原文,不能拼进 ETag 响应头
+    # (HTTP 头必须 latin-1 可编码,h11/hypercorn 强制)。dashboard 中文 grep
+    # 必现 500: 'latin-1' codec can't encode characters ...。改为哈希成短
+    # 十六进制摘要 —— 仍满足 "任一 query 参数变化 → ETag 必变",且与
+    # extra_digest 模式一致。
+    query_digest = (
+        hashlib.sha1(query_fingerprint.encode("utf-8")).hexdigest()[:12]
+        if query_fingerprint
+        else ""
+    )
+    cache_key = f"{directory}\x00{query_digest}\x00{extra_digest}"
     now = _time.monotonic()
     cached = _LOG_ETAG_CACHE.get(cache_key)
     if cached is not None and (now - cached[1]) < _LOG_ETAG_TTL:
@@ -373,10 +386,10 @@ async def _compute_log_etag(
     except OSError:
         pass
 
-    # 拼 ETag: query_fingerprint / extra_digest 拼在 wt_mtime 之后(避免
-    # head_sha / wt_mtime 之间被截断的可读性下降)。二者皆空时保持旧字符串。
-    if query_fingerprint or extra_digest:
-        etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}-{query_fingerprint}-{extra_digest}"'
+    # 拼 ETag: query_digest / extra_digest 拼在 wt_mtime 之后。二者皆空时
+    # 保持旧字符串。ETag 是不透明标识,摘要化不影响 304 语义。
+    if query_digest or extra_digest:
+        etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}-{query_digest}-{extra_digest}"'
     else:
         etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}"'
 
@@ -619,12 +632,13 @@ async def handle(
 
     # ── 4. ETag 检查 (v3.10 修复: query fingerprint 纳入 ETag) ──
     # 把 query string 维度 (ref / n / path / author / since / until / grep)
-    # 序列化为 ``|`` 分隔指纹, 拼进 ETag 字符串与 cache key。author / path
-    # / ref 等任意一个变化 → ETag 必变 → 重置 filter 时不会 304 空 body。
-    # 用 ``|`` 而不是 ``&`` 是因为后者在 query 里是分隔符, 易混淆; ``|``
-    # 是 git porcelain 风格的稳定选择。
-    # WHY ``str(…)`` 显式包: type-checker 友好 + 防 None 漏处理(None
-    # 在 ``f"|{None}"`` 会变字符串 ``"None"``, 这里用 ``or ""`` 兜底)。
+    # 序列化为 ``|`` 分隔指纹传入 _compute_log_etag。author / path / ref /
+    # grep 等任意一个变化 → 指纹变 → 摘要变 → ETag 必变 → 重置 filter 时
+    # 不会 304 空 body。指纹在 _compute_log_etag 内部先哈希为短摘要才拼进
+    # ETag 响应头(2026-09-14 fix): 中文等非 ASCII 输入原文进 HTTP 头会触发
+    # latin-1 编码错误。
+    # WHY 指纹用 ``|`` 而不是 ``&``: 后者在 query 里是分隔符, 易混淆;
+    # ``|`` 是 git porcelain 风格的稳定选择。
     query_fingerprint = (
         f"{ref or 'HEAD'}|{n}|{path or ''}|{author or ''}|{since or ''}|{until or ''}|{grep or ''}"
     )

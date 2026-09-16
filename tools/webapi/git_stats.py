@@ -8,6 +8,7 @@ Spec: docs/superpowers/specs/2026-07-18-git-stats-endpoint-design.md
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import time as _time
@@ -195,16 +196,25 @@ async def _compute_stats_etag(
         directory: Worktree root.
         query_fingerprint: Stable ``|``-joined fingerprint of the query
             params (ref/max_commits/top_files/since/until) so any param
-            change yields a different ETag (no 304 staleness).
+            change yields a different ETag (no 304 staleness). The raw
+            fingerprint never reaches the ETag header — it is hashed to
+            a short digest first (non-ASCII user input would otherwise
+            break latin-1 header encoding).
 
     Returns:
         ``(etag, head_sha)`` — weak ETag string plus the resolved HEAD
         sha (``"no-head"`` when unresolvable). head_sha doubles as the
         envelope's ``resolved_sha`` field, sparing a second subprocess.
     """
-    cache_key = (
-        f"{directory}\x00{query_fingerprint}" if query_fingerprint else directory
+    # 2026-09-14 fix: 指纹含用户输入原文(如中文 tag 作 ref),不能拼进 ETag
+    # 响应头(HTTP 头必须 latin-1 可编码)。哈希为短摘要,镜像
+    # git_log._compute_log_etag 同日的同款修复。
+    query_digest = (
+        hashlib.sha1(query_fingerprint.encode("utf-8")).hexdigest()[:12]
+        if query_fingerprint
+        else ""
     )
+    cache_key = f"{directory}\x00{query_digest}" if query_digest else directory
     now = _time.monotonic()
     cached = _STATS_ETAG_CACHE.get(cache_key)
     if cached is not None and (now - cached[2]) < _STATS_ETAG_TTL:
@@ -235,8 +245,8 @@ async def _compute_stats_etag(
     except OSError:
         pass
 
-    if query_fingerprint:
-        etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}-{query_fingerprint}"'
+    if query_digest:
+        etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}-{query_digest}"'
     else:
         etag = f'W/"{head_sha}-{wt_mtime}-{idx_mtime}"'
 
