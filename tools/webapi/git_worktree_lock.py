@@ -91,6 +91,8 @@ async def handle(
         plugin,
         umo=umo,
         worktree_param=worktree,
+        # 写操作禁用"最近加载项目"回退:否则会落到别的会话的项目上。
+        require_session_umo=True,
     )
     if err is not None:
         err["data"]["elapsed_ms"] = _elapsed()

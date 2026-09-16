@@ -524,6 +524,7 @@ async def _git_endpoint_preflight(
     umo: str | None,
     worktree_param: str | None,
     feature_flags: tuple[str, ...] = ("agentsmd_enabled", "codegraph_enabled"),
+    require_session_umo: bool = False,
 ) -> tuple[dict | None, dict | None]:
     """Git 端点 5 步前置检查(供所有 git-* 端点共用)。
 
@@ -531,7 +532,8 @@ async def _git_endpoint_preflight(
 
     5 步:
       1. feature flag(任一为 false → feature_disabled)
-      2. umo 解析 + 回退最近 loaded project
+      2. umo 解析 + 回退最近 loaded project(``require_session_umo=True``
+         时禁用回退 → no_project_loaded)
       3. worktree 6 步防御(若 worktree_param 非空)
       4. 目录存在性检查
       5. git 仓库探测(rev-parse --is-inside-work-tree)
@@ -541,6 +543,10 @@ async def _git_endpoint_preflight(
         umo: 请求中的 umo 参数(可能 None)
         worktree_param: 请求中的 ?worktree= 参数(可能 None / 空)
         feature_flags: feature flag 字段名元组,默认 ("agentsmd_enabled", "codegraph_enabled")
+        require_session_umo: True 时**禁用**"最近加载项目"回退,umo 缺失
+            或未登记直接返回 no_project_loaded。worktree 写系列(add /
+            remove / lock / unlock / activate)使用它:那些回退会把请求
+            落到别的会话的项目上,造成跨会话误操作。
 
     Returns:
         (error_envelope, None)  — 前置失败
@@ -562,10 +568,14 @@ async def _git_endpoint_preflight(
             ), None
 
     # 2. umo 解析 + 回退
+    # ``require_session_umo=True`` 的端点(worktree 写系列)禁用"最近加载
+    # 项目"回退:那个回退会把请求落到**别的会话**的项目上,正是"在 A 会话
+    # 点创建、worktree 落到 B 项目"的根因。写操作宁可直接报
+    # ``no_project_loaded`` 也不能猜。
     info = None
     if umo:
         info = plugin.get_loaded_project(umo)  # type: ignore[attr-defined]
-    else:
+    elif not require_session_umo:
         items = _proj_state.items()
         if items:
             umo, info = max(items.items(), key=lambda kv: kv[1].get("loaded_at", 0.0))

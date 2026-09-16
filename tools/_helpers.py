@@ -424,10 +424,15 @@ def _validate_new_worktree_path(
     4-step defense:
       1. format     — non-empty / ≤4096 chars / absolute / no ``..`` segment
       2. .git component — no path component may be ``.git``
-      3. parent dir — must exist and be writable
+      3. ancestor dir — the nearest **existing** ancestor must be writable.
+         The target's own tail may be missing: the WebUI's default path is
+         ``<repo>/.worktrees/<branch>`` and nothing pre-creates that
+         container dir, so demanding ``isdir(dirname(target))`` rejected
+         the dialog's own suggestion. The caller (ADD handler) creates the
+         missing dirs before invoking git.
       4. blacklist  — outside the caller-supplied ``blacklist`` entries
-        (caller passes ``plugin._config.get("file_remove_blacklist")``;
-        see ``tools/agentsmd/_handlers.py:77`` for the same injection pattern)
+         (caller passes ``plugin._config.get("file_remove_blacklist")``;
+         see ``tools/agentsmd/_handlers.py:77`` for the same injection pattern)
 
     Note: Backslashes are **allowed** because Windows absolute paths naturally
     contain them (e.g. ``C:\\Users\\foo\\feature``). Other rules (absolute,
@@ -467,11 +472,27 @@ def _validate_new_worktree_path(
     parts = Path(new_path).parts
     if any(part == ".git" for part in parts):
         return None, "path_unsafe"
-    # Step 3: parent dir must exist and be writable
-    parent = os.path.dirname(new_path)
-    if not parent or not os.path.isdir(parent):
+    # Step 3: nearest existing ancestor must be writable.
+    # NOTE: the target's own tail is allowed to be missing. The WebUI's
+    # default worktree path is ``<repo>/.worktrees/<branch>`` and nothing
+    # pre-creates that container dir, so requiring the immediate parent
+    # to be a directory rejected the dialog's own suggestion with
+    # ``path_unsafe`` on the first worktree of a repo. ``git worktree add``
+    # creates the missing tail itself (verified), therefore walking up to
+    # the nearest existing ancestor keeps the writability defense without
+    # blocking legitimate targets.
+    ancestor = os.path.dirname(new_path)
+    while ancestor and not os.path.exists(ancestor):
+        parent_of_ancestor = os.path.dirname(ancestor)
+        if parent_of_ancestor == ancestor:
+            # Reached the filesystem root without finding anything.
+            break
+        ancestor = parent_of_ancestor
+    # The nearest existing node must be a directory (a regular file in the
+    # middle of the path is still a hard reject) and must be writable.
+    if not ancestor or not os.path.isdir(ancestor):
         return None, "path_unsafe"
-    if not os.access(parent, os.W_OK):
+    if not os.access(ancestor, os.W_OK):
         return None, "path_unsafe"
     # Step 4: blacklist (e.g. C:\\Windows, /etc, etc.)
     # MAJOR-1 fix: parameter injection instead of module-level mutable global

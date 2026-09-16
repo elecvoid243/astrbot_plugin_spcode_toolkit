@@ -137,17 +137,54 @@ def test_validate_new_path_rejects_too_long(tmp_path):
     assert err == "path_unsafe"
 
 
-def test_validate_new_path_rejects_missing_parent(tmp_path):
+def test_validate_new_path_allows_missing_parent(tmp_path):
+    """缺失的中间目录**不再**拒绝(2026-09-16 修复,现象 1)。
+
+    旧契约要求 ``dirname(target)`` 必须已存在,于是对话框的默认路径
+    ``<repo>/.worktrees/<branch>`` 在从未建过 worktree 的仓库上被判
+    ``path_unsafe``。新契约:最近存在的祖先可写即可,缺失的尾巴由 ADD
+    handler(makedirs)与 git 自己创建。
+    """
     target = str(tmp_path / "nonexistent_dir" / "feature")
+    ok, err = _validate_new_worktree_path(target)
+    assert err is None
+    assert ok == target
+
+
+def test_validate_new_path_rejects_unwritable_ancestor(tmp_path, monkeypatch):
+    """防御 3:最近存在的祖先不可写 → 拒绝。
+
+    monkeypatch ``os.access`` 保证跨平台可断言(Windows 上目录的 W_OK
+    不总可靠)。
+    """
+    from tools import _helpers as _h
+
+    monkeypatch.setattr(_h.os, "access", lambda *a, **k: False)
+    target = str(tmp_path / "feature")
     ok, err = _validate_new_worktree_path(target)
     assert ok is None
     assert err == "path_unsafe"
 
 
-def test_validate_new_path_rejects_backslash():
-    ok, err = _validate_new_worktree_path("C:\\Users\\foo\\feature")
-    assert ok is None
-    assert err == "path_unsafe"
+def test_validate_new_path_allows_backslash_separators(tmp_path):
+    """反斜杠只是分隔符 —— 文档明确允许,不再是拒绝理由。
+
+    重构说明 (2026-09-16):本用例原名
+    ``test_validate_new_path_rejects_backslash``,断言
+    ``C:\\Users\\foo\\feature`` 被拒;但那条路径只是**恰好**因为
+    ``C:\\Users\\foo`` 不存在而被旧规则(父目录必须存在)拒掉,与反斜杠
+    本身无关 —— 在存在该目录的机器上,或是 POSIX 上(isabs 判定),它的
+    通过原因各不相同。helper 的文档一直写明反斜杠合法,这里改为断言真实
+    契约,避免继续用一个假阳性用例锁死错误行为。
+    """
+    if os.name == "nt":
+        target = f"{tmp_path}\\feature"
+    else:
+        # POSIX 上反斜杠不是分隔符,用普通路径验证"祖先可写即放行"。
+        target = str(tmp_path / "feature")
+    ok, err = _validate_new_worktree_path(target)
+    assert err is None
+    assert ok == target
 
 
 def test_validate_new_path_none_input():

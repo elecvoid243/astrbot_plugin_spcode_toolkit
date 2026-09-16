@@ -673,7 +673,12 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
     values from the request:
 
     * ``umo``             — GET  ``query.umo``  /  POST ``body.umo``
+                            (POST falls back to ``query.umo`` so callers
+                            that only send the query string still address
+                            the right session instead of the
+                            most-recently-loaded one)
     * ``worktree``        — GET  ``query.worktree``  /  POST ``body.worktree``
+                            (same body-first / query-fallback rule)
     * ``scope``           — GET  ``query.scope`` (default ``"unstaged"``)
     * ``path``            — GET  ``query.path`` (default ``""``)
     * ``if_none_match``   — GET  ``headers.If-None-Match``
@@ -714,13 +719,24 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
 
         if "umo" in accepts:
             if is_post:
-                call_kwargs["umo"] = body.get("umo")
+                # Body wins; the query string is a fallback. Several
+                # bundled composables (and any cached older bundle) pass
+                # ?umo= for POSTs too, and dropping it silently made the
+                # handler resolve "most-recently-loaded project across
+                # ALL sessions" — i.e. write into another conversation's
+                # repo. Accepting the query keeps such callers correct.
+                call_kwargs["umo"] = (
+                    body.get("umo") or web.request.query.get("umo") or None
+                )
             else:
                 call_kwargs["umo"] = web.request.query.get("umo") or None
 
         if "worktree" in accepts:
             if is_post:
-                call_kwargs["worktree"] = body.get("worktree")
+                # Same body-first / query-fallback rule as ``umo`` above.
+                call_kwargs["worktree"] = body.get("worktree") or (
+                    web.request.query.get("worktree")
+                )
             else:
                 call_kwargs["worktree"] = web.request.query.get("worktree")
 

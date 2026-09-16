@@ -6,11 +6,12 @@ PR-B (v2.14.0, 2026-06-26).
 7-layer defense chain:
   1. body type guard (non-dict → invalid_body)
   2. _validate_new_worktree_path (4-step format defense, with blacklist)
-  3. _validate_add_cross_fields (create / force / detach / base / branch)
-  4. _is_valid_ref_name (branch ref-format)
-  5. _is_valid_ref_name (base ref-format, when present)
-  6. path-exists-nonempty preventive check
-  7. _run_git_async(git worktree add ...) + post-create git-common-dir verify
+  3. parent-dir materialization (makedirs of the missing target tail)
+  4. _validate_add_cross_fields (create / force / detach / base / branch)
+  5. _is_valid_ref_name (branch ref-format)
+  6. _is_valid_ref_name (base ref-format, when present)
+  7. path-exists-nonempty preventive check
+  8. _run_git_async(git worktree add ...) + post-create git-common-dir verify
 """
 
 from __future__ import annotations
@@ -181,11 +182,18 @@ async def handle(
     7-layer defense:
       L1: body type guard
       L2: _validate_new_worktree_path (4-step format, with blacklist)
+      L2.5: parent-dir materialization (makedirs of the missing target tail,
+            so the WebUI's default <repo>/.worktrees/<branch> works on a
+            repo that never had a worktree before)
       L3: _validate_add_cross_fields (create / force / detach / base / branch)
       L4: _is_valid_ref_name (branch / base ref-format)
       L5: path-exists-nonempty preventive check
       L6: _run_git_async(git worktree add ...)
       L7: post-create git-common-dir verification
+
+    The preflight runs with ``require_session_umo=True``: this endpoint
+    must never fall back to "the most-recently-loaded project", because
+    that would create the worktree inside another chat session's repo.
 
     PR-A MAJOR-1 fix: blacklist parameter is injected from
     ``plugin._config.get("file_remove_blacklist")`` here, so the
@@ -223,6 +231,8 @@ async def handle(
         plugin,
         umo=umo,
         worktree_param=worktree,
+        # 写操作禁用"最近加载项目"回退:否则会落到别的会话的项目上。
+        require_session_umo=True,
     )
     if err is not None:
         err["data"]["elapsed_ms"] = _elapsed()
@@ -247,6 +257,29 @@ async def handle(
             umo=effective_umo,
             worktree=directory,
             stderr=f"path validation failed: {body.get('path')!r}",
+        )
+
+    # ── L2.5: materialize missing parent dirs ──────────────────────
+    # L2 accepts a not-yet-existing target (that is what ADD is for) and
+    # only guarantees the nearest existing ancestor is writable. ``git
+    # worktree add`` creates the missing tail on its own; doing it here
+    # keeps the behaviour independent of the git version and turns a bad
+    # filesystem (EACCES / EROFS / name too long) into a clean envelope
+    # instead of a `git_error` stderr that no longer mentions the cause.
+    parent = os.path.dirname(new_path)
+    try:
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+    except OSError as exc:
+        return _make_envelope(
+            success=False,
+            reason="path_unsafe",
+            elapsed_ms=_elapsed(),
+            loaded=False,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
+            stderr=f"cannot create parent directory {parent!r}: {exc}",
         )
 
     # ── L3: cross-field validation ─────────────────────────────────

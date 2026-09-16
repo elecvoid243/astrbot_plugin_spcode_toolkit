@@ -790,6 +790,104 @@ async def test_add_feature_disabled():
     assert result["data"]["reason"] == "feature_disabled"
 
 
+# ─── Regression (2026-09-16): default UI path + cross-session safety ──
+# 报告的两个现象:
+#   1. 对话框默认路径 ``<repo>/.worktrees/<branch>`` 被 L2 判成 path_unsafe
+#      —— 因为校验要求父目录已存在,但没有任何人创建那个容器目录。
+#   2. 多会话下创建 worktree 落到别的会话的项目 —— umo 丢失时 preflight
+#      回退到"最近加载的项目"。
+
+
+def test_validate_new_worktree_path_allows_missing_parent(tmp_path):
+    """L2: 目标尾部缺失时,只要最近存在的祖先可写就放行。"""
+    from tools._helpers import _validate_new_worktree_path
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = str(repo / ".worktrees" / "feat-x")
+    resolved, err = _validate_new_worktree_path(target, blacklist=[])
+    assert err is None
+    assert resolved == target
+
+
+def test_validate_new_worktree_path_rejects_file_ancestor(tmp_path):
+    """L2: 路径中间是普通文件(不是目录)→ 仍拒绝。"""
+    from tools._helpers import _validate_new_worktree_path
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    blocker = repo / "a.txt"
+    blocker.write_text("x")
+    resolved, err = _validate_new_worktree_path(str(blocker / "wt"), blacklist=[])
+    assert resolved is None
+    assert err == "path_unsafe"
+
+
+@pytest.mark.asyncio
+async def test_add_default_ui_path_with_missing_container_dir(primary_repo):
+    """现象 1 回归:默认 UI 路径在 .worktrees 容器缺失时必须成功。"""
+    plugin, umo, primary = primary_repo
+    target = primary / ".worktrees" / "feat-x"
+    assert not (primary / ".worktrees").exists()
+
+    result = await plugin_module_handle(
+        plugin,
+        umo=umo,
+        worktree=None,
+        body={"path": str(target), "branch": "feat-x", "create": True},
+    )
+
+    assert result["data"]["reason"] is None, result["data"].get("stderr")
+    assert target.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_add_deep_missing_parent_chain(primary_repo):
+    """多层父目录缺失(.worktrees/a/b)时同样可创建。"""
+    plugin, umo, primary = primary_repo
+    target = primary / ".worktrees" / "a" / "b"
+
+    result = await plugin_module_handle(
+        plugin,
+        umo=umo,
+        worktree=None,
+        body={"path": str(target), "branch": "feat-deep", "create": True},
+    )
+
+    assert result["data"]["reason"] is None, result["data"].get("stderr")
+    assert target.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_add_never_falls_back_to_other_session(primary_repo, tmp_path):
+    """现象 2 回归:umo 缺失时禁止回退到"最近加载的项目"。
+
+    场景 —— 会话 A 打开侧边栏,会话 B 随后加载了项目。若请求没带 umo,
+    写操作必须直接失败(no_project_loaded),绝不能把 worktree 建到 B
+    的仓库里。
+    """
+    from tools.project import state as _proj_state
+
+    plugin, _umo, _primary = primary_repo
+    other = tmp_path / "other-project"
+    other.mkdir()
+    leak = other / ".worktrees" / "leak"
+
+    _proj_state.reset()
+    _proj_state.put("session-B", {"directory": str(other), "loaded_at": 9.0e9})
+    try:
+        result = await plugin_module_handle(
+            plugin,
+            umo=None,
+            worktree=None,
+            body={"path": str(leak), "branch": "leak", "create": True},
+        )
+        assert result["data"]["reason"] == "no_project_loaded"
+        assert not leak.exists(), "worktree 被创建到了别的会话的项目里"
+    finally:
+        _proj_state.reset()
+
+
 # ── handler accessor (delays import to allow module-level patch) ────
 
 

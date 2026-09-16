@@ -806,6 +806,73 @@ async def test_wrap_post_to_git_worktree_add_passes_body(
     assert "body" in sig.parameters
 
 
+@pytest.mark.asyncio
+async def test_wrap_post_umo_falls_back_to_query(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """E2E:_wrap 对 POST 的 umo 支持 query 兜底。
+
+    回归(2026-09-16):前端 worktree 管理组合式函数只把 umo 放在 ``?umo=``
+    上,而 _wrap 此前对 POST 只读 body → handler 收到 umo=None → preflight
+    回退到"最近加载的项目",于是 A 会话点创建却建到了 B 会话的仓库里。
+    这里锁定"body 优先、query 兜底"的契约。
+    """
+    from astrbot.api import web
+    from tests.conftest import make_web_request_mock
+    from tools.webapi import _wrap
+
+    captured: dict = {}
+
+    async def stub_handle(plugin, *, body=None, umo=None, worktree=None):  # type: ignore[no-untyped-def]
+        captured["umo"] = umo
+        captured["worktree"] = worktree
+        return {"status": "ok", "data": {"reason": None}}
+
+    async def _json(default=None):  # type: ignore[no-untyped-def]
+        # 组合式函数发的 body:不含 umo
+        return {"path": str(tmp_path / "x"), "branch": "feat"}
+
+    mock_req = make_web_request_mock(query={"umo": "sess-A:1", "worktree": "/wt/a"})
+    mock_req.method = "POST"
+    mock_req.json = _json
+    monkeypatch.setattr(web, "request", mock_req)
+
+    await _wrap(stub_handle, plugin=None)()
+
+    assert captured["umo"] == "sess-A:1"
+    assert captured["worktree"] == "/wt/a"
+
+
+@pytest.mark.asyncio
+async def test_wrap_post_umo_body_wins_over_query(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """E2E:POST 的 umo 同时出现时,body 优先于 query。"""
+    from astrbot.api import web
+    from tests.conftest import make_web_request_mock
+    from tools.webapi import _wrap
+
+    captured: dict = {}
+
+    async def stub_handle(plugin, *, body=None, umo=None, worktree=None):  # type: ignore[no-untyped-def]
+        captured["umo"] = umo
+        return {"status": "ok", "data": {"reason": None}}
+
+    async def _json(default=None):  # type: ignore[no-untyped-def]
+        return {"umo": "from-body"}
+
+    mock_req = make_web_request_mock(query={"umo": "from-query"})
+    mock_req.method = "POST"
+    mock_req.json = _json
+    monkeypatch.setattr(web, "request", mock_req)
+
+    await _wrap(stub_handle, plugin=None)()
+
+    assert captured["umo"] == "from-body"
+
+
 # ─── v2.16.0 (2026-07-06) file-discard-hunk ───────────────────────
 
 
