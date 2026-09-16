@@ -248,11 +248,15 @@ def test_no_production_subprocess_call_without_no_window():
     WRAPPER_FILES = {
         Path("tools/_helpers.py").resolve(),  # run_cmd
         Path("tools/inta_shell/component.py").resolve(),  # Popen (component.py:632)
+        # terminal 会话 spawn: 刻意 CREATE_NEW_CONSOLE + SW_HIDE(自有隐藏
+        # 控制台,PS 5.1 标题更新语义,见 component.py 内注释),不走
+        # CREATE_NO_WINDOW 路径。与 inta_shell 同理视为"自管窗口策略"。
+        Path("tools/terminal/component.py").resolve(),
     }
 
     spawn_calls = []  # list of (file, lineno, text)
     for py in ROOT.rglob("*.py"):
-        # 排除 tests / data / docs / 缓存
+        # 排除 tests / data / docs / 缓存 / 历史 worktree 副本
         if any(
             part in py.parts
             for part in {
@@ -264,6 +268,7 @@ def test_no_production_subprocess_call_without_no_window():
                 ".codegraph",
                 ".pytest_cache",
                 ".ruff_cache",
+                ".worktrees",
             }
         ):
             continue
@@ -380,6 +385,7 @@ def test_no_sys_executable_in_production_subprocess_calls():
         ".codegraph",
         ".pytest_cache",
         ".ruff_cache",
+        ".worktrees",
     }
     SPAWN_NAMES = {
         "subprocess.run",

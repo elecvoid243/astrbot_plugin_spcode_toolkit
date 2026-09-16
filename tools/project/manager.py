@@ -28,6 +28,7 @@ from pathlib import Path
 
 from astrbot.api.event import AstrMessageEvent
 
+from .._helpers import _NO_WINDOW_KWARGS
 from .._path_safety import is_path_safe
 from ..agentsmd import strip_surrounding_quotes
 from ..operation_progress import ProgressList
@@ -87,6 +88,7 @@ async def _ensure_git_repo(target: Path) -> tuple[bool, str]:
             cwd=str(target),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
+            **_NO_WINDOW_KWARGS,
         )
         _, err = await proc.communicate()
     except FileNotFoundError:
