@@ -78,6 +78,15 @@ MIME_BY_EXT: dict[str, str] = {
 # above this size in browser tabs; v1 rejects with 413.
 FILE_BINARY_MAX_BYTES: int = 50 * 1024 * 1024  # 50 MB
 
+# git 子进程默认超时(秒),webapi 层所有 git-* 端点共用。
+# WHY: 15s 对大仓库过紧 —— 冷启动的 ``git add -A``、大工作树上的
+# ``git status``、或带慢速 fsmonitor/filter 的仓库都可能跑超,超时结果
+# 会被折叠成笼统的 ``git_error``,用户误以为"仓库坏了"。45s 仍在可交互
+# 范围内,同时给"慢但合法"的操作留出余量。
+# 需要更长的端点各自显式覆盖:远端类走 _git_remote.REMOTE_TIMEOUT_SECONDS
+# (60s),stash push 走 git_stash.STASH_PUSH_TIMEOUT_SECONDS(30s)。
+GIT_DEFAULT_TIMEOUT_SECONDS: float = 45.0
+
 
 # 从 main.py line 80-136 整体迁移,行为不变。
 # 行为兼容 ``run_cmd`` 的返回 dict 格式,便于无侵入替换 ``run_sync(run_cmd, ...)``:
@@ -87,7 +96,7 @@ FILE_BINARY_MAX_BYTES: int = 50 * 1024 * 1024  # 50 MB
 async def _run_git_async(
     cmd_args: list[str],
     cwd: str = "",
-    timeout: float = 15.0,
+    timeout: float = GIT_DEFAULT_TIMEOUT_SECONDS,
     encoding: str = "utf-8",
     input_text: str | None = None,
     env: dict[str, str] | None = None,
@@ -193,7 +202,7 @@ async def _get_staged_files(git_bin: str, directory: str) -> list[str]:
 async def _run_git_async_bytes(
     cmd_args: list[str],
     cwd: str = "",
-    timeout: float = 15.0,
+    timeout: float = GIT_DEFAULT_TIMEOUT_SECONDS,
 ) -> dict:
     """Asyncio async variant of ``_run_git_async`` that returns stdout as bytes.
 

@@ -16,6 +16,7 @@ from ._git_remote import (
     _mask_remote_url,
 )
 from ._helpers import (
+    GIT_DEFAULT_TIMEOUT_SECONDS,
     ReasonCode,
     _git_endpoint_preflight,
     _JSONResponseCompat,
@@ -95,7 +96,9 @@ async def handle(
             remote,
             url,
         ]
-        result = await _run_git_async(args, encoding="utf-8", timeout=15.0)
+        result = await _run_git_async(
+            args, encoding="utf-8", timeout=GIT_DEFAULT_TIMEOUT_SECONDS
+        )
         if not result.get("ok"):
             stderr = result.get("stderr", "") or result.get("error", "") or probe_error
             return _make_envelope(

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from .._helpers import _is_valid_ref_name
 from ._helpers import (
+    GIT_DEFAULT_TIMEOUT_SECONDS,
     ReasonCode,
     _git_endpoint_preflight,
     _JSONResponseCompat,
@@ -119,7 +120,7 @@ async def handle(
     result = await _run_git_async(
         [git_bin, "-C", directory, "branch", flag, name],
         encoding="utf-8",
-        timeout=15.0,
+        timeout=GIT_DEFAULT_TIMEOUT_SECONDS,
     )
     if not result["ok"]:
         stderr_lower = result.get("stderr", "").lower()

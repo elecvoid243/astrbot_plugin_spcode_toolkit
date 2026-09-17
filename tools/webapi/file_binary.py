@@ -25,6 +25,7 @@ from starlette.responses import Response as _RawResponse
 
 from ._helpers import (
     FILE_BINARY_MAX_BYTES,
+    GIT_DEFAULT_TIMEOUT_SECONDS,
     MIME_BY_EXT,
     ReasonCode,
     _git_endpoint_preflight,
@@ -220,7 +221,7 @@ async def _serve_ref_path(
     git_bin = plugin._git_binary()  # type: ignore[attr-defined]
     result = await _run_git_async_bytes(
         [git_bin, "-C", directory, "-c", "color.ui=never", "show", f"{ref}:{rel_path}"],
-        timeout=15.0,
+        timeout=GIT_DEFAULT_TIMEOUT_SECONDS,
     )
     if not result["ok"]:
         stderr = (result.get("stderr") or "").lower()

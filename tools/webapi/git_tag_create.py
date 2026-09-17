@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from .._helpers import _is_valid_ref_name
 from ._helpers import (
+    GIT_DEFAULT_TIMEOUT_SECONDS,
     ReasonCode,
     _git_endpoint_preflight,
     _JSONResponseCompat,
@@ -136,7 +137,9 @@ async def handle(
     if rev != "HEAD":
         args.append(rev)
 
-    result = await _run_git_async(args, encoding="utf-8", timeout=15.0)
+    result = await _run_git_async(
+        args, encoding="utf-8", timeout=GIT_DEFAULT_TIMEOUT_SECONDS
+    )
     if not result["ok"]:
         stderr = result.get("stderr", "")
         reason = _classify_tag_error(stderr)

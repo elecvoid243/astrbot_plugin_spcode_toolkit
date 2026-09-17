@@ -11,6 +11,7 @@ import time as _time
 from typing import TYPE_CHECKING
 
 from ._helpers import (
+    GIT_DEFAULT_TIMEOUT_SECONDS,
     ReasonCode,
     _detect_conflict_operation,
     _git_endpoint_preflight,
@@ -76,7 +77,9 @@ async def handle(
     # ── 4. execute abort ──
     cmd_parts = _ABORT_CMD[operation]
     result = await _run_git_async(
-        [git_bin, "-C", directory] + cmd_parts, encoding="utf-8", timeout=15.0
+        [git_bin, "-C", directory] + cmd_parts,
+        encoding="utf-8",
+        timeout=GIT_DEFAULT_TIMEOUT_SECONDS,
     )
     if not result["ok"]:
         return _make_envelope(

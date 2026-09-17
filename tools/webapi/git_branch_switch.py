@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from .._helpers import _is_valid_ref_name
 from ._helpers import (
+    GIT_DEFAULT_TIMEOUT_SECONDS,
     ReasonCode,
     _classify_switch_stderr,
     _git_endpoint_preflight,
@@ -195,7 +196,9 @@ async def handle(
     if create and start_point is not None and start_point != "HEAD":
         args.append(start_point)
 
-    result = await _run_git_async(args, encoding="utf-8", timeout=15.0)
+    result = await _run_git_async(
+        args, encoding="utf-8", timeout=GIT_DEFAULT_TIMEOUT_SECONDS
+    )
     if not result["ok"]:
         reason = _classify_switch_stderr(result.get("stderr", ""))
         logger.info(
