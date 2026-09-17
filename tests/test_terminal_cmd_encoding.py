@@ -6,20 +6,24 @@ terminal manager must therefore:
   - NOT inject PYTHONUTF8 / PYTHONIOENCODING for cmd sessions (otherwise
     python.exe children would emit UTF-8 and break the mixed stream);
   - encode input as GBK when writing to a cmd session;
-  - decode output with a stateful GB18030 decoder.
+  - decode output with a stateful GB18030 decoder — with a UTF-8
+    fallback, because node/npm-family children write UTF-8 to a pipe
+    regardless of the console code page (2026-09-17, see the
+    ``test_cmd_decode_*`` cases below).
 
 A real cmd.exe is not used (test suite convention: ``exe_override`` with
 ``python -i``); the python REPL honours the same locale-based encodings
 on a piped stdin/stdout, making it a faithful stand-in for the byte
 world behavior.
 
-Author: elecvoid243 · 2026-09-07
+Author: elecvoid243 · 2026-09-07 (updated 2026-09-17: UTF-8 fallback)
 """
 
 import sys
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -158,3 +162,84 @@ async def test_powershell_session_keeps_utf8_env(manager, tmp_cwd):
     )
     result = await _wait_for_output(manager, "umo:ps1", sid, "utf-8")
     assert "1 utf-8" in result["stdout"]
+
+
+# ── 2026-09-17:UTF-8 子进程输出容错 ──
+# node / npm / vite 对**管道** stdout 恒写 UTF-8(与控制台代码页无关)。
+# ``npm run build`` 里 ``node scripts/subset-mdi-font.mjs`` 打印的
+# "✅ Found 395 unique mdi-* icons" 就是 UTF-8 的 E2 9C 85:严格 GB18030
+# 解不下来(E2 9C 是合法 GBK 对,余下的 0x85 撞上空格 → illegal multibyte)。
+# 抛出的 UnicodeDecodeError 是 ValueError 的子类,会被 webapi 层的
+# ``except ValueError`` 误报成 "session not found" 并终止 SSE 流
+# (实测用户会话日志 offset 186),而 cmd 进程其实还活着。
+
+_UTF8_ICON_LINE = b"\xe2\x9c\x85 Found 395 unique mdi-* icons"
+
+
+def _decode(raw: bytes, advance: bool = True, session=None):
+    """Call the manager's cmd decoder with a minimal session stand-in."""
+    if session is None:
+        session = SimpleNamespace(gbk_decoder=None)
+    return TerminalSessionManager._decode_cmd_output(session, raw, advance)
+
+
+def test_cmd_decode_tolerates_utf8_child_output():
+    """ASCII + UTF-8 chunk:must decode AND keep the emoji intact."""
+    text = _decode(b"npm run build\r\n\r\n" + _UTF8_ICON_LINE + b"\n")
+    assert "\u2705 Found 395 unique mdi-* icons" in text
+
+
+def test_cmd_decode_recovers_gbk_after_utf8_chunk():
+    """After a UTF-8 chunk the decoder must re-sync for later GBK output."""
+    session = SimpleNamespace(gbk_decoder=None)
+    _decode(_UTF8_ICON_LINE + b"\n", session=session)
+    assert _decode("目录".encode("gbk"), session=session) == "目录"
+
+
+def test_cmd_decode_peek_survives_mixed_chunk():
+    """advance=False (status snapshot reads from byte 0) must not raise.
+
+    A chunk mixing GBK and UTF-8 bytes is inherently lossy — only the
+    ASCII payload is guaranteed; the point is that the snapshot call
+    never explodes into a bogus "session not found".
+    """
+    raw = b"banner\r\n" + _UTF8_ICON_LINE + b"\n" + "目录".encode("gbk")
+    text = _decode(raw, advance=False)
+    assert "Found 395 unique mdi-* icons" in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_session_survives_utf8_child_output(manager, tmp_cwd):
+    """A cmd session whose child writes UTF-8 must stay alive and readable."""
+    started = await manager.start(
+        owner_id="umo:cmd5",
+        shell="cmd",
+        cwd=tmp_cwd,
+        exe_override=[sys.executable, "-i"],
+    )
+    sid = started["session_id"]
+    # ASCII-only source line (write() encodes it as GBK) that pushes raw
+    # UTF-8 bytes into the pipe, exactly like node does.
+    command = (
+        'import sys; sys.stdout.buffer.write(b"\\xe2\\x9c\\x85'
+        ' Found 395 unique mdi-* icons\\n"); sys.stdout.flush()\n'
+    )
+    try:
+        await manager.write(owner_id="umo:cmd5", session_id=sid, chars=command)
+        out = ""
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            res = await manager.poll(
+                owner_id="umo:cmd5", session_id=sid, yield_time_ms=200
+            )
+            out += res["stdout"]
+            if "Found 395 unique mdi-* icons" in out:
+                break
+        assert "Found 395 unique mdi-* icons" in out, out
+        snap = await manager.poll(
+            owner_id="umo:cmd5", session_id=sid, yield_time_ms=0, cursor=0,
+            advance=False,
+        )
+        assert snap["status"] == "running"
+    finally:
+        await manager.terminate(owner_id="umo:cmd5", session_id=sid)

@@ -136,6 +136,14 @@ async def handle_stream(
                     yield_time_ms=1_000,
                     max_output_chars=65_536,
                 )
+            except UnicodeDecodeError as exc:
+                # UnicodeDecodeError is a ValueError subclass, so letting
+                # it reach the branch below would disguise every internal
+                # decode fault as "session not found" — 2026-09-17: the
+                # cmd process was still alive, only node's UTF-8 "✅"
+                # (E2 9C 85) blew up the GB18030 decoder.
+                yield _sse_event("error", f"output_decode_error: {exc}")
+                return
             except ValueError:
                 yield _sse_event("error", "session not found")
                 return
@@ -324,6 +332,13 @@ async def handle_status(
                 advance=False,
             )
         return {"status": "ok", "data": data}
+    except UnicodeDecodeError as exc:
+        # Same distinction as the SSE path: a decode failure is not a
+        # missing session (2026-09-17).
+        return {
+            "status": "ok",
+            "data": {"error": "output_decode_error", "reason": str(exc)},
+        }
     except ValueError as exc:
         return {
             "status": "ok",

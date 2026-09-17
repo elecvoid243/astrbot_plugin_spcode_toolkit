@@ -136,6 +136,40 @@ async def test_stream_error_when_session_missing(mgr):
     assert '"type":"error"' in body
 
 
+def _raise_decode_error(*args, **kwargs):
+    """Stand-in for a decode blow-up inside poll()."""
+    raise UnicodeDecodeError("gb18030", b"x\x85y", 1, 2, "illegal multibyte sequence")
+
+
+@pytest.mark.asyncio
+async def test_stream_reports_decode_error_not_session_missing(mgr, monkeypatch):
+    """解码失败不得被伪装成 'session not found'。
+
+    UnicodeDecodeError 是 ValueError 的子类,裸 ``except ValueError`` 会把
+    任何内部解码异常说成"会话不存在"并终止 SSE 流(2026-09-17:用户
+    ``npm run build`` 撞上 node 的 UTF-8 输出,cmd 进程其实还活着)。
+    """
+    monkeypatch.setattr(mgr, "poll", _raise_decode_error)
+    query = {"session_id": "term_decode", "cursor": "0"}
+    with patch("astrbot.api.web.request", _fake_request(query)):
+        body = await _collect(await handle_stream(None, "umo:dec"))
+
+    assert "session not found" not in body
+    assert "output_decode_error" in body
+
+
+@pytest.mark.asyncio
+async def test_status_reports_decode_error_not_session_missing(mgr, monkeypatch):
+    """状态快照(连接/恢复路径)同样要区分解码失败与会话不存在。"""
+    monkeypatch.setattr(mgr, "poll", _raise_decode_error)
+    with patch(
+        "astrbot.api.web.request", _fake_request({"session_id": "term_decode"})
+    ):
+        res = await handle_status(None, "umo:dec")
+
+    assert res["data"]["error"] == "output_decode_error"
+
+
 @pytest.mark.asyncio
 async def test_interrupt_unknown_session(mgr):
     res = await handle_interrupt(None, "umo:x", {"session_id": "term_nope"})

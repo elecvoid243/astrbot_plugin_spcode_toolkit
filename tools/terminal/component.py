@@ -524,6 +524,17 @@ class TerminalSessionManager:
         chunk independently would garble a multi-byte sequence split at
         a chunk boundary, so the decoder state lives on the session.
 
+        The GBK world is not exclusive: node / npm / vite write **UTF-8**
+        to a piped stdout regardless of the console code page
+        (2026-09-17 — ``npm run build`` ran ``node scripts/subset-mdi-
+        font.mjs``, whose "✅" is ``E2 9C 85``: ``E2 9C`` parses as a GBK
+        pair and the leftover ``0x85`` collides with the following space,
+        an illegal GB18030 sequence). Raising there aborted the SSE
+        stream and was misreported as "session not found" while the cmd
+        process was still alive. Strict GB18030 therefore stays the fast
+        path, and any failure degrades to a per-chunk best-effort decode
+        that never raises.
+
         Args:
             session: The owned terminal session.
             raw_output: Raw bytes read from the output file.
@@ -533,13 +544,30 @@ class TerminalSessionManager:
                 used instead of the advanced state.
 
         Returns:
-            Decoded text (GB18030, superset of GBK).
+            Decoded text — GB18030 (superset of GBK) for the GBK world,
+            UTF-8 for chunks a UTF-8-emitting child produced, and
+            replacement chars for a chunk that mixes both.
         """
-        if not advance:
-            return codecs.getincrementaldecoder("gb18030")().decode(raw_output)
-        if session.gbk_decoder is None:
-            session.gbk_decoder = codecs.getincrementaldecoder("gb18030")()
-        return session.gbk_decoder.decode(raw_output)
+        if not raw_output:
+            return ""
+        if advance:
+            if session.gbk_decoder is None:
+                session.gbk_decoder = codecs.getincrementaldecoder("gb18030")()
+            decoder = session.gbk_decoder
+        else:
+            decoder = codecs.getincrementaldecoder("gb18030")()
+        try:
+            return decoder.decode(raw_output)
+        except UnicodeDecodeError:
+            # Re-sync the stateful decoder, then pick the least-lossy
+            # reading of this chunk (ties favour UTF-8, which keeps the
+            # emoji/box-drawing chars node-family tools emit intact).
+            decoder.reset()
+            candidates = (
+                raw_output.decode("utf-8", errors="replace"),
+                raw_output.decode("gb18030", errors="replace"),
+            )
+            return min(candidates, key=lambda text: text.count("\ufffd"))
 
     @staticmethod
     def _status_of(session: _TerminalSession, exit_code: int | None) -> str:
