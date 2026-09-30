@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import os
 import sys
 import types
 from unittest.mock import patch
@@ -117,25 +116,7 @@ class TestFindVivadoExecutable:
                 vivado_mcp_module.find_vivado_executable(configured="")
 
 
-class TestEnsureStdioAllowlist:
-    def test_idempotent(self, vivado_mcp_module, monkeypatch):
-        monkeypatch.delenv("ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS", raising=False)
-        vivado_mcp_module.ensure_stdio_allowlist()
-        first = os.environ["ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS"]
-        vivado_mcp_module.ensure_stdio_allowlist()
-        second = os.environ["ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS"]
-        assert first == second
-        items = {x.strip().lower() for x in first.split(",") if x.strip()}
-        assert "python" in items
-        assert "pythonw" in items
-        assert "vivado_mcp" in items
-
-    def test_preserves_existing(self, vivado_mcp_module, monkeypatch):
-        monkeypatch.setenv("ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS", "codegraph,node")
-        vivado_mcp_module.ensure_stdio_allowlist()
-        items = {
-            x.strip().lower()
-            for x in os.environ["ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS"].split(",")
-            if x.strip()
-        }
-        assert {"codegraph", "node", "python", "pythonw", "vivado_mcp"} <= items
+# NOTE(2026-09-30): ``ensure_stdio_allowlist`` 已从 tools/_vivado_mcp.py 移除。
+# 白名单改为探针驱动(零写入优先) + 只在必要时追加到 Dashboard 的
+# mcp_settings.stdio_allowlist,实现见 tools/_stdio_allowlist.py,
+# 用例见 tests/test_stdio_allowlist.py。

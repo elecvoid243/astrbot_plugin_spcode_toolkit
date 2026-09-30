@@ -26,7 +26,7 @@ async def bootstrap_mcp(plugin, *, state: "_state.VivadoState") -> None:
 
     1. 双重 gate (__init__ + 函数本身)
     2. launcher 不可用 → logger.info 跳过
-    3. ensure_stdio_allowlist() (幂等)
+    3. ensure_stdio_command() 探针(零写入优先;见 tools/_stdio_allowlist.py)
     4. mgr.enable_mcp_server("vivado", cfg, timeout=180)
     5. 成功 → state.mark_running(True); 失败 → logger.warning + mark_running(False)
     """
@@ -41,8 +41,15 @@ async def bootstrap_mcp(plugin, *, state: "_state.VivadoState") -> None:
         )
         return
 
-    from .._vivado_mcp import ensure_stdio_allowlist
-    ensure_stdio_allowlist()
+    from .._stdio_allowlist import ensure_stdio_command
+
+    if not ensure_stdio_command(cfg["command"]):
+        logger.warning(
+            "vivado MCP 启动命令 `%s` 未被 stdio 白名单放行,跳过 MCP 集成"
+            "(spcode 其它工具照常工作;原因见上一条 warning)",
+            cfg["command"],
+        )
+        return
 
     try:
         mgr = plugin.context.get_llm_tool_manager()

@@ -1,6 +1,5 @@
 """codegraph MCP 集成测试。"""
 
-import os
 import shutil
 import sys
 from pathlib import Path
@@ -14,7 +13,6 @@ from tools._codegraph_mcp import (  # noqa: E402
     build_cli_launcher,
     candidate_npm_roots,
     detect_codegraph_launcher,
-    ensure_stdio_allowlist,
     resolve_project_path,
 )
 
@@ -240,43 +238,9 @@ def test_resolve_project_path_require_code_files_message_lists_supported(tmp_pat
         assert ext in r, f"错误消息应列出 {ext}"
 
 
-# ── ensure_stdio_allowlist ─────────────────────────
-
-
-def test_ensure_stdio_allowlist_empty_env(monkeypatch):
-    monkeypatch.delenv("ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS", raising=False)
-    ensure_stdio_allowlist()
-    assert "codegraph" in os.environ["ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS"]
-    assert "node" in os.environ["ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS"]
-
-
-def test_ensure_stdio_allowlist_preserves_existing(monkeypatch):
-    monkeypatch.setenv("ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS", "python,node")
-    ensure_stdio_allowlist()
-    items = set(
-        x.strip() for x in os.environ["ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS"].split(",")
-    )
-    assert {"python", "node", "codegraph"}.issubset(items)
-
-
-def test_ensure_stdio_allowlist_idempotent(monkeypatch):
-    monkeypatch.delenv("ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS", raising=False)
-    ensure_stdio_allowlist()
-    before = os.environ["ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS"]
-    ensure_stdio_allowlist()
-    after = os.environ["ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS"]
-    assert before == after  # 重复调用不重复添加
-
-
-def test_ensure_stdio_allowlist_normalizes_case(monkeypatch):
-    monkeypatch.setenv("ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS", "CodeGraph,NODE")
-    ensure_stdio_allowlist()
-    items = {
-        x.strip().lower()
-        for x in os.environ["ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS"].split(",")
-    }
-    assert "codegraph" in items
-    assert "node" in items
+# NOTE(2026-09-30): ``ensure_stdio_allowlist`` 已从 tools/_codegraph_mcp.py 移除。
+# 白名单改为探针驱动(零写入优先),实现见 tools/_stdio_allowlist.py,
+# 用例见 tests/test_stdio_allowlist.py。
 
 
 # ── candidate_npm_roots ────────────────────────────

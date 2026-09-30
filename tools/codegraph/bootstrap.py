@@ -24,8 +24,8 @@ from astrbot.api import logger
 from .._codegraph_mcp import (
     SHELL_META_RE,
     detect_codegraph_launcher,
-    ensure_stdio_allowlist,
 )
+from .._stdio_allowlist import ensure_stdio_command
 from . import state as _state
 
 # 兼容老的 MCP 关闭超时异常类型(从 main.py:90-101 import 复制)
@@ -68,8 +68,9 @@ async def bootstrap_mcp(plugin) -> None:
     1. 双重 gate(防御性):__init__ 已 gate codegraph_enabled,函数本身也再 check
     2. install_dir 未配置 → logger.info 跳过
     3. build_mcp_cfg() 返回 None → logger.warning 跳过(install_dir 验证失败)
-    4. 若 mcp_server.json 已注册 codegraph,先 disable 再 enable(覆盖用户手写)
-    5. 启动失败仅 logger.warning,不影响 spcode 其它工具
+    4. stdio 白名单探针不通过 → logger.warning 跳过(见 tools/_stdio_allowlist.py)
+    5. 若 mcp_server.json 已注册 codegraph,先 disable 再 enable(覆盖用户手写)
+    6. 启动失败仅 logger.warning,不影响 spcode 其它工具
     """
     # 防御性:即便 __init__ 已 gate,函数本身也再 check 一次,便于单测
     if not plugin._config.get("codegraph_enabled", True):
@@ -84,13 +85,21 @@ async def bootstrap_mcp(plugin) -> None:
             )
             return
 
-        ensure_stdio_allowlist()
         cfg = build_mcp_cfg(plugin)
         if not cfg:
             # install_dir 已配置但 _detect_from_install_dir 验证失败,
             # 详细原因已在 _detect_from_install_dir 内 logger.warning
             logger.warning(
                 f"codegraph_install_dir 验证失败,MCP 不启动: {install_dir!r}"
+            )
+            return
+
+        # 探针:过不了 AstrBot 的 stdio 白名单就别 enable(否则 core 抛 ValueError)
+        if not ensure_stdio_command(cfg["command"]):
+            logger.warning(
+                "codegraph MCP 启动命令 `%s` 未被 stdio 白名单放行,跳过 MCP 集成"
+                "(spcode 其它工具照常工作;原因见上一条 warning)",
+                cfg["command"],
             )
             return
 

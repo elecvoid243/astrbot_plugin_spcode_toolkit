@@ -22,10 +22,10 @@ from astrbot.api.event import AstrMessageEvent
 from .._codegraph_mcp import (
     build_cli_launcher,
     detect_codegraph_launcher,
-    ensure_stdio_allowlist,
     resolve_project_path,
 )
 from .._helpers import _NO_WINDOW_KWARGS
+from .._stdio_allowlist import ensure_stdio_command
 from ..operation_progress import ProgressList
 from ..operation_progress import finish as _progress_finish
 from . import state as _state
@@ -122,12 +122,17 @@ class CodegraphManager:
             )
 
         try:
-            ensure_stdio_allowlist()
             cfg = build_mcp_cfg(self._plugin)
             if not cfg:
                 yield event.plain_result(
                     f"⚠️ 已更新 codegraph_project,但无法构造新 MCP 配置"
                     f"(install_dir 可能已失效)。新值: {target_str}"
+                )
+                return
+            if not ensure_stdio_command(cfg["command"]):
+                yield event.plain_result(
+                    "⚠️ codegraph MCP 启动命令未被 AstrBot 的 stdio 白名单放行,"
+                    "已跳过重启(codegraph_project 已更新,详见日志)"
                 )
                 return
             await mgr.enable_mcp_server(

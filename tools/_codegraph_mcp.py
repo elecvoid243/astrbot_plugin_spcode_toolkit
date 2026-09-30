@@ -2,7 +2,6 @@
 _codegraph_mcp — codegraph 官方 MCP server 集成的纯函数工具集。
 
 - SHELL_META_RE / SYSTEM_DIR_BLACKLIST: 与 mcp_client.py:50 保持完全一致
-- ensure_stdio_allowlist: 启动 MCP server 前追加白名单环境变量
 - detect_codegraph_launcher: 平台特定启动器检测 (Win bundled, Unix PATH)
 - build_cli_launcher: 给 /codegraph init|uninit 命令构造进程参数
 - candidate_npm_roots: 列举 npm 全局根目录候选
@@ -115,24 +114,6 @@ def resolve_project_path(
                 "请确认目录是否正确,或选择包含源代码的目录。"
             )
     return p
-
-
-_STDIO_ALLOWLIST_ENV = "ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS"
-_REQUIRED_FOR_CODEGRAPH = frozenset({"codegraph", "node"})
-
-
-def ensure_stdio_allowlist() -> None:
-    """把 codegraph 追加到 stdio 白名单。必须在 enable_mcp_server 之前调用。
-
-    mcp_client.py:140 的 `_get_stdio_command_allowlist()` 在 validate_mcp_stdio_config
-    内被延迟调用,所以只要在 enable 之前注入即可。
-    """
-    current = os.environ.get(_STDIO_ALLOWLIST_ENV, "")
-    items = {x.strip().lower() for x in current.split(",") if x.strip()}
-    needed = _REQUIRED_FOR_CODEGRAPH - items
-    if needed:
-        items |= needed
-        os.environ[_STDIO_ALLOWLIST_ENV] = ",".join(sorted(items))
 
 
 def candidate_npm_roots() -> list[str]:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -79,11 +79,27 @@ class TestBootstrapMcp:
         mock_mgr.enable_mcp_server = fake_enable
         mock_plugin.context.get_llm_tool_manager = MagicMock(return_value=mock_mgr)
         with patch("tools.vivado.bootstrap.build_vivado_launcher_cfg", return_value=fake_cfg), \
-             patch("tools._vivado_mcp.ensure_stdio_allowlist") as mock_ensure:
+             patch("tools._stdio_allowlist.ensure_stdio_command") as mock_ensure:
             await bootstrap_module.bootstrap_mcp(mock_plugin, state=fresh_state)
         assert fresh_state.mcp_running is True
         assert fresh_state.mcp_started_at > 0
-        mock_ensure.assert_called_once()
+        mock_ensure.assert_called_once_with(fake_cfg["command"])
+
+    @pytest.mark.asyncio
+    async def test_allowlist_probe_failure_skips_enable(self, mock_plugin, fresh_state):
+        """探针拒绝(如用户 pin 的 env 不含该命令)→ 不 enable,也不抛。"""
+        mock_mgr = MagicMock()
+        mock_mgr.mcp_server_runtime = {}
+        mock_mgr.enable_mcp_server = AsyncMock()
+        mock_plugin.context.get_llm_tool_manager = MagicMock(return_value=mock_mgr)
+
+        with patch("tools.vivado.bootstrap.build_vivado_launcher_cfg",
+                   return_value={"type": "stdio", "command": "python", "args": ["-m", "vivado_mcp"], "env": {}}), \
+             patch("tools._stdio_allowlist.ensure_stdio_command", return_value=False):
+            await bootstrap_module.bootstrap_mcp(mock_plugin, state=fresh_state)
+
+        assert fresh_state.mcp_running is False
+        mock_mgr.enable_mcp_server.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_enable_failure_does_not_raise(self, mock_plugin, fresh_state):
@@ -97,7 +113,7 @@ class TestBootstrapMcp:
         mock_plugin.context.get_llm_tool_manager = MagicMock(return_value=mock_mgr)
         with patch("tools.vivado.bootstrap.build_vivado_launcher_cfg",
                    return_value={"type": "stdio", "command": "p", "args": [], "env": {}}), \
-             patch("tools._vivado_mcp.ensure_stdio_allowlist"):
+             patch("tools._stdio_allowlist.ensure_stdio_command"):
             await bootstrap_module.bootstrap_mcp(mock_plugin, state=fresh_state)  # 不应抛
         assert fresh_state.mcp_running is False
 
