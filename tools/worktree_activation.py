@@ -5,8 +5,8 @@
       → POST /spcode/worktree-activate 写入本状态
       → on_llm_request 钩子(main.py ``_worktree_activation_inject``)读取,
         把激活 worktree 指引以 ``extra_user_content_parts``
-        (``TextPart.mark_as_temp()``)注入每次 LLM 请求,
-        让 LLM 知道要在哪个 worktree 上工作。
+        (普通 ``TextPart``,随历史持久化以维持 prefix cache 连续性)
+        注入每次 LLM 请求,让 LLM 知道要在哪个 worktree 上工作。
 
 绑定校验:
     activation 记录激活时已加载项目的 ``directory``。读取方

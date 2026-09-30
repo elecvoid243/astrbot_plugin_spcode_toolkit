@@ -1,8 +1,8 @@
 """POST /spcode/worktree-activate — 激活/取消激活 worktree(2026-08-20)。
 
 激活后,on_llm_request 钩子(main.py ``_worktree_activation_inject``)把
-激活 worktree 信息以 ``extra_user_content_parts``(TextPart.mark_as_temp)
-注入每次 LLM 请求,让 LLM 知道要在哪个 worktree 上工作。
+激活 worktree 信息以 ``extra_user_content_parts``(普通 TextPart,随
+历史持久化)注入每次 LLM 请求,让 LLM 知道要在哪个 worktree 上工作。
 ``body.path`` 为空/缺省 → 取消激活(清除状态)。
 
 4 层防御链(仿照 git-worktree-lock):

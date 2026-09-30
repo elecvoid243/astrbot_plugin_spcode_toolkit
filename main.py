@@ -813,9 +813,12 @@ class SPCodeToolkit(star.Star):
 
         worktree 指引注入(受 feature flags 门控,形式与 system_prompt
         系指引刻意不同):
-        - ``TextPart.mark_as_temp()`` — 仅参与本轮 LLM 请求,不持久化到
-          会话历史(不污染上下文,也不破坏 system_prompt 缓存)
-        - 每次请求重新注入 → 切换/取消激活立即生效
+        - 普通 ``TextPart`` 经 ``extra_user_content_parts`` 注入并随
+          user 消息持久化到会话历史(2026-09-30 起不再用 mark_as_temp):
+          下一轮历史重建包含该段文本,上一轮 assistant 输出(及工具轮)
+          的服务器侧 prefix cache 不会被丢弃
+        - 每次请求重新注入;切换/取消激活后新块附在新一轮 user 消息
+          尾部,历史中的旧块按时间序自然退居次要(模型以最新一条为准)
 
         注入跳过条件(任一满足): flags 关闭 / 无有效激活。
 
@@ -867,12 +870,15 @@ class SPCodeToolkit(star.Star):
         if not worktree_path:
             return
         branch = activation.get("branch") or "detached"
+        # WHY 不标 mark_as_temp: temp 文本不落库,下一轮请求的历史重建
+        # 会在注入点分叉,上一轮 assistant 输出(及工具轮)的服务器侧
+        # prefix cache 全部失效;持久化后历史连续,缓存命中得以延伸。
         req.extra_user_content_parts.append(
             TextPart(
                 text=ACTIVE_WORKTREE_GUIDANCE_TEMPLATE.format(
                     worktree=worktree_path, branch=branch
                 )
-            ).mark_as_temp()
+            )
         )
         logger.debug(
             f"[worktree-activation] 已向会话 {umo} 注入激活 worktree: {worktree_path}"

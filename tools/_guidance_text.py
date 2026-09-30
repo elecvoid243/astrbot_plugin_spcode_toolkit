@@ -41,9 +41,10 @@ A codegraph project is loaded. When dealing with the code for this project:
 
 
 # GitDiffSidebar "激活 worktree" 后注入到 extra_user_content_parts 的指引。
-# 与上面 system_prompt 系指引不同:该文本走 TextPart.mark_as_temp(),
-# 仅参与本轮 LLM 请求、不持久化到会话历史;每次请求重新注入,
-# 切换/取消激活立即生效(AstrBot >= v4.24.0 支持 mark_as_temp)。
+# 2026-09-30 起改为普通 TextPart(不再 mark_as_temp):随 user 消息
+# 持久化到会话历史,保持 prefix cache 连续性(temp 文本不落库,下一轮
+# 请求在注入点分叉,上一轮 assistant 输出的缓存会被丢弃);每次请求
+# 重新注入,切换/取消激活后新块附在新 user 消息尾部,模型以最新一条为准。
 ACTIVE_WORKTREE_GUIDANCE_TEMPLATE: str = """
 <active_worktree>
 当前激活的 git worktree: {worktree} (分支: {branch})

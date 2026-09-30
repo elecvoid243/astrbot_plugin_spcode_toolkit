@@ -5,7 +5,7 @@
 - POST /spcode/worktree-activate 端点(激活 / 取消激活 / 防御链)
 - GET /spcode/git-worktrees 响应的 active_worktree 字段(含过期清理)
 - main.py 的 _worktree_activation_inject 钩子(结构性 / 注册性 / 行为性:
-  extra_user_content_parts 注入 TextPart.mark_as_temp)
+  extra_user_content_parts 注入持久化 TextPart)
 
 路径形式说明:
     git porcelain 输出正斜杠路径;python str(Path) 在 Windows 上是反斜杠。
@@ -353,8 +353,8 @@ def _make_req() -> MagicMock:
     return req
 
 
-def test_hook_injects_temp_text_part(tmp_path):
-    """激活 + 项目加载 + 路径存在 → 追加 mark_as_temp 的 TextPart。
+def test_hook_injects_persisted_text_part(tmp_path):
+    """激活 + 项目加载 + 路径存在 → 追加持久化的 TextPart(非 mark_as_temp)。
 
     状态必须写进 main.py 相对导入的那个模块实例
     (``astrbot_plugin_spcode_toolkit.tools.worktree_activation``),
@@ -378,8 +378,9 @@ def test_hook_injects_temp_text_part(tmp_path):
     assert isinstance(part, TextPart)
     assert _norm(wt_dir) in _norm(part.text)
     assert "feat" in part.text
-    # mark_as_temp:仅本轮请求可见,不持久化到会话历史
-    assert getattr(part, "_no_save", False) is True
+    # 2026-09-30 起不使用 mark_as_temp:文本随历史持久化,
+    # 保证 prefix cache 连续性(上一轮 assistant 输出缓存不被丢弃)
+    assert getattr(part, "_no_save", False) is False
 
 
 def test_hook_no_injection_cases(tmp_path):
