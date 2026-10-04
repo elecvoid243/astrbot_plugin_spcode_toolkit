@@ -12,7 +12,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 |------|------|
 | 代码质量 | `code_check` 语法+风格合并检查；`code_format` 源码自动格式化 |
 | 代码理解 | 通过 codegraph 官方 MCP server 注入 `codegraph_explore` 语义搜索工具（codegraph ≥ 1.5 默认仅暴露该工具） |
-| 文件操作 | `astrbot_file_remove` 沙箱化删除；`astrbot_file_compare` 结构化差异比较 |
+| 文件操作 | `astrbot_file_remove` 沙箱化删除（v2.29.3 起已上移内核）；`astrbot_file_compare` 结构化差异比较 |
 | 文件搜索 | `es_search` Everything/locate/fd/Python 兜底文件名搜索 |
 | 任务管理 | `todo_*` 6 工具，LLM 自我管理跨会话持久化任务清单 |
 | 交互式 Shell | `astrbot_inta_shell_*` 5 工具，多轮双向 Shell 会话管理 |
@@ -33,7 +33,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | `code_check` | 代码质量（只读） | Python (ruff) / C·C++ (cppcheck 正确性 + clang-format 格式，与 code_format 同源) 语法+风格合并检查，结构化 issues |
 | `code_format` | 代码质量（写入） | 源码自动格式化：`.py` → ruff format；C/C++/Java/JS/TS/C# → clang-format (stdin/stdout，项目内 `.clang-format` 优先)。v2.14 引入 |
 | `es_search` | 文件搜索 | Windows Everything (es.exe) 毫秒级搜索；Linux/macOS `locate`→`fd`→Python `os.walk` 三层 fallback |
-| `astrbot_file_remove` | 文件操作（写入） | 沙箱化文件/目录删除，双层黑名单 + 批量确认提案机制 |
+| `astrbot_file_remove` | 文件操作（写入） | 沙箱化文件/目录删除，双层黑名单 + 批量确认提案机制。**v2.29.3 起已上移内核**：AstrBot 主仓库内置同名工具时插件让位不重复注册（旧核心仍由本插件提供），详见下节 |
 | `astrbot_file_compare` | 文件操作（只读） | 结构化文件差异（added/removed 行数 + unified diff），UTF-8/GBK 自适应 |
 | `todo_create` / `todo_query` / `todo_add` / `todo_update` / `todo_delete` / `todo_clear` | 任务管理（6 个，组别名 `todo_list`） | LLM 自我管理任务清单；v2.12 把 `todo_modify` 拆为 3 个独立工具，消除 `mode` 误用 |
 | `astrbot_inta_shell_start` / `_send` / `_read` / `_stop` / `_list` | 交互式 Shell（5 个，组别名 `inta_shell`） | 持久子进程多轮双向通信 |
@@ -138,9 +138,11 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 ### file_remove 配置
 
+> **v2.29.3 起 `astrbot_file_remove` 已上移内核**，新核心请改用核心配置项 `provider_settings.file_remove_blacklist`。下表插件字段已标注 deprecated，**字段名保留**以免破坏既有用户配置；仅在旧核心回退路径（插件自注册 `astrbot_file_remove`）下生效。
+
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `file_remove_blacklist` | 字符串列表 | `[]` | 用户自定义黑名单，每行一个绝对路径前缀，与内置系统目录黑名单叠加生效 |
+| `file_remove_blacklist` | 字符串列表 | `[]` | **[deprecated]** 用户自定义黑名单，每行一个绝对路径前缀，与内置系统目录黑名单叠加生效。新核心改用 `provider_settings.file_remove_blacklist` |
 
 ### es_search 配置
 
@@ -256,6 +258,8 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 ### astrbot_file_remove - 文件删除
 
+> **v2.29.3：本工具已上移 AstrBot 内核**（`local` runtime，配核心配置 `provider_settings.file_remove_blacklist`）。插件在 `__init__` 中探测核心是否已注册内置 `astrbot_file_remove`（`astrbot.core.tools.registry.get_builtin_tool_class`）：核心已提供则**让位**、不重复注册；旧核心无该 registry（`ImportError`）时照常注册本插件工具，能力不丢。下文的删除/黑名单/提案语义对新旧两条路径均适用。
+
 删除文件或目录时有两层黑名单保护：
 
 | 层级 | 来源 | 说明 |
@@ -282,6 +286,13 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
   ]
 }
 ```
+
+**回收站恢复（双轨）**：删除走系统回收站（`send2trash`），可在 ChatUI 回合文件变更总结卡片点"撤销删除"复原：
+
+- **新核心**：dashboard 调内核路由 `POST /chat/file-changes/restore-removed` 完成复原。
+- **旧核心（回退路径）**：插件端点 `POST /spcode/file-remove/restore`（业务实现 `tools/file_remove_restore.py`、webapi `tools/webapi/file_remove_restore.py`）**保留**，行为不变。
+
+> 两条恢复路径按核心版本二选一；插件端点作为旧核心回退路径长期保留，不会因新核心上线而删除。
 
 ### astrbot_file_compare - 文件差异比较
 
@@ -488,6 +499,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/file-write` | POST | 保存任意 repo 文本文件（不限扩展名；upsert：不存在则新建并自动建父目录，响应带 `created` 标志） | body: `{path, content, umo?, worktree?}` |
 | `/spcode/file-rename` | POST | 同目录重命名任意 repo 文件（不限扩展名；`new_name` 须为纯文件名；目标已存在 `file_exists`，源缺失 `file_not_found`） | body: `{path, new_name, umo?, worktree?}` |
 | `/spcode/file-remove` | POST | 删除任意 repo 文件（不限扩展名；仅文件，目录拒绝；源缺失 `file_not_found`） | body: `{path, umo?, worktree?}` |
+| `/spcode/file-remove/restore` | POST | 从系统回收站恢复被 send2trash 删除的文件/目录（**旧核心回退路径**；新核心由内核 `POST /chat/file-changes/restore-removed` 接管） | body: `{path}` |
 | `/spcode/git-worktree-add` | POST | 新建 git worktree（CLI 旗标平铺） | body: `{path, branch?, create?, force?, detach?, base?}` |
 | `/spcode/git-worktree-remove` | POST | 删除 git worktree（硬禁 main，locked 拒，`force=true` 跳过 dirty） | body: `{path, force?}` |
 | `/spcode/git-worktree-lock` | POST | 锁定 git worktree（可选 `--reason`），main 允许但 git 自身拒绝 | body: `{path, reason?}` |

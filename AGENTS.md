@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.29.2** · Author: elecvoid243 · 最后更新: 2026-09-15
+> **当前版本: v2.29.3** · Author: elecvoid243 · 最后更新: 2026-10-05
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -237,7 +237,7 @@ astrbot_plugin_spcode_toolkit/
     │   ├── code_crap.py          #   v2.25 CRAP 风险检测（只读）
     │   ├── es_search.py
     │   ├── file_diff.py          #   astrbot_file_compare
-    │   ├── file_remove.py
+    │   ├── file_remove.py        #   上移核心(v2.29.3);核心内置同名工具时 shim 让位不注册
     │   ├── todo_base.py          #   _TodoToolBase 共用基类 + scope 注入（v2.28.0）
     │   ├── todo_create.py
     │   ├── todo_query.py
@@ -265,6 +265,7 @@ astrbot_plugin_spcode_toolkit/
     ├── es_search.py              # [legacy 入口] es_search 业务实现
     ├── file_compare.py           # [legacy 入口] 文件差异业务实现
     ├── file_remove.py            # [legacy 入口] 删除业务实现
+    ├── file_remove_restore.py    # [业务实现] 回收站恢复(旧核心回退路径;新核心由 /chat/file-changes/restore-removed 接管)
     ├── todo_list.py              # [legacy 入口] v2.6+ stub，保留兼容
     │
     └── webapi/                   # Web API 层（44 条路由记录 / 42 个唯一路径，每端点一文件）
@@ -305,6 +306,7 @@ astrbot_plugin_spcode_toolkit/
         ├── file_write.py         #   POST   /spcode/file-write          (2026-07-17, 通用文本保存 upsert)
         ├── file_rename.py        #   POST   /spcode/file-rename         (2026-07-18, 同目录重命名)
         ├── file_remove.py        #   POST   /spcode/file-remove         (2026-07-18, 删除文件)
+        ├── file_remove_restore.py#   POST   /spcode/file-remove/restore (2026-09-14, 旧核心回退路径)
         ├── file_binary.py        #   GET    /spcode/file-binary         (2026-07-22, 原始字节流供 BinaryPreview)
         ├── git_stats.py          #   GET    /spcode/git-stats           (v2.21, 2026-07-18, 变更统计面板)
         ├── vivado_status.py      #   GET    /spcode/vivado-status       (v2.21, PR-4 2026-07-23, vivado MCP 状态)
@@ -316,7 +318,7 @@ astrbot_plugin_spcode_toolkit/
 
 1. **入口层** `main.py`
    - 在 AstrBot 启动时被加载
-   - 注册 AstrBot **工具**（17 个本地 LLM 工具，经 `enabled_tools` 过滤）
+   - 注册 AstrBot **工具**（17 个本地 LLM 工具，经 `enabled_tools` 过滤；v2.29.3 起若核心已内置 `astrbot_file_remove` 则 shim 让位、跳过注册，见下节）
    - 注册 AstrBot **命令**（`/codegraph`(+别名`/cg`)、`/agentsmd`、`/project`、`/vivado`、`/plan`、`/build`）
    - 注册多个 `@filter.on_llm_request()` 钩子：AGENTS.md 注入、codegraph 指引、todo/file_remove/code_check/code_format 指引、L1 鉴权、plan 模式工具禁用
    - 读取 `_conf_schema.json` 配置（`_flatten_config` 拍平嵌套分组）
@@ -380,6 +382,25 @@ astrbot_plugin_spcode_toolkit/
    - `api/`：Web API 前端消费参考（TypeScript / fetch 示例）
    - `superpowers/`：`specs/`（设计文档）+ `plans/`（实施计划）+ `reviews/` + `handoffs/`
    - 顶层 `webapi_endpoints_report.md` 等端点报告
+
+## file_remove 上移核心 + shim (2026-10-05, v2.29.3)
+
+AstrBot 主仓库（`all` 分支）已内置 `astrbot_file_remove` 工具（`local` runtime）、核心配置
+`provider_settings.file_remove_blacklist`、dashboard 路由 `POST /chat/file-changes/restore-removed`。
+插件侧相应让位（**shim**），但**不删除**任何代码/路由/测试：
+
+- **shim 探测**（`main.py`）：模块级 `_CORE_PROVIDES_FILE_REMOVE`（默认 `False`，旧核心回退）。
+  `__init__` 中 `from astrbot.core.tools.registry import get_builtin_tool_class` 后
+  `get_builtin_tool_class("astrbot_file_remove") is not None` 判定核心是否已提供；旧核心无该
+  registry（`ImportError`）一律视为“未提供”。为真则从 `tools_to_register` 过滤 `FileRemoveTool`，
+  日志 `[file_remove] 核心已提供内置 astrbot_file_remove，插件让位`。
+- **旧核心回退路径（保留）**：`tools/file_remove_restore.py`、`tools/webapi/file_remove_restore.py`、
+  路由 `POST /spcode/file-remove/restore`、`tests/test_file_remove_restore.py`、
+  `_file_remove_inject_guidance` 钩子与 `FILE_REMOVE_GUIDANCE*` 常量。旧核心由这些路径承担删除+恢复，
+  新核心的恢复由内核 `POST /chat/file-changes/restore-removed` 接管（两条路径按核心版本二选一）。
+- **配置兼容**：`_conf_schema.json` 的 `file_remove_blacklist` 仅加 deprecated 标注，**字段名不变**
+  （须知第 9 条：不改字段名以免破坏既有用户配置）；新核心用户改用
+  `provider_settings.file_remove_blacklist`。
 
 ## 代码风格指南
 
@@ -469,7 +490,7 @@ astrbot_plugin_spcode_toolkit/
 10. **路径安全**：任何涉及用户输入路径的代码，先调用 `_path_safety` 校验，**不要**自己实现路径判断
 11. **Web API 参数安全**：`?worktree=` 等用户控制的路径参数，必须经过 `_validate_worktree_param`（位于 `tools/_helpers.py`）的 6 步防御链：**关键不变量 - git-common-dir 不匹配 = 直接拒绝**
 12. **配置拍平**：`_conf_schema.json` 是分组结构，`main.py._flatten_config()` 会把嵌套分组拍平为顶层键（如 `codegraph.codegraph_enabled` -> `codegraph_enabled`）。新增配置项时保持此约定
-13. **版本号统一**：当前版本统一为 **v2.29.2**。发布时同步更新 `metadata.yaml` 的 `version` 字段
+13. **版本号统一**：当前版本统一为 **v2.29.3**。发布时同步更新 `metadata.yaml` 的 `version` 字段
 
 ## Project 加载 — 静默变体 (2026-07-28)
 

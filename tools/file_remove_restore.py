@@ -15,6 +15,10 @@
 
 ``recycle_root`` 参数仅供测试注入(指向合成回收站根目录);生产调用传
 None,Windows 枚举所有盘符,Linux 取 XDG 数据目录。
+
+旧核心回退路径:新核心(AstrBot 主仓库内置 astrbot_file_remove)的恢复由
+dashboard ``POST /chat/file-changes/restore-removed`` 接管,本模块与 webapi
+端点 ``POST /spcode/file-remove/restore`` 保留供旧核心使用。
 """
 
 from __future__ import annotations

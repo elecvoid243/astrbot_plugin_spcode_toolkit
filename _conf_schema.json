@@ -145,8 +145,8 @@
     "type": "object",
     "items": {
       "file_remove_blacklist": {
-        "description": "用户自定义黑名单",
-        "hint": "每行一个绝对路径前缀,与内置系统目录黑名单叠加生效。在黑名单中的路径无法被删除",
+        "description": "用户自定义黑名单(已弃用)",
+        "hint": "[deprecated] 每行一个绝对路径前缀,与内置系统目录黑名单叠加生效。在黑名单中的路径无法被删除。新版核心已内置 astrbot_file_remove 工具,请改用核心配置 provider_settings.file_remove_blacklist;本字段仅对旧核心回退路径(插件自注册的 astrbot_file_remove)生效",
         "type": "list",
         "item": {
           "type": "string",

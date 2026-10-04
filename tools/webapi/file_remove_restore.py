@@ -7,6 +7,9 @@ ChatUI 回合文件变更总结卡片的"撤销删除"按钮调本端点把最�
 不要求已加载项目:删除工具作用于任意可写绝对路径,恢复亦然;原始路径
 以回收站元数据($I / .trashinfo)为准,入参 path 仅用于匹配选择。
 
+旧核心回退路径:新核心(AstrBot 主仓库内置 astrbot_file_remove)由 dashboard
+``POST /chat/file-changes/restore-removed`` 接管恢复,本端点保留供旧核心使用。
+
 恢复核心在 ``tools.file_remove_restore.restore_from_recycle_bin``。
 """
 
