@@ -129,6 +129,12 @@ _DEFAULT_CONFIG = {
 
 _PLUGINS_TOOLS = [cls() for cls in ALL_TOOL_CLASSES]
 
+# Task 5 (2026-10-05) 优雅降级 shim 状态:True = 运行时核心已提供内置
+# ``astrbot_file_remove``,插件跳过自身同名工具注册。在 __init__ 探测后赋值,
+# 模块级默认 False(旧核心回退 = 照常注册)。详见
+# docs/superpowers/specs/2026-10-04-file-remove-core-integration-design.md §4.1。
+_CORE_PROVIDES_FILE_REMOVE = False
+
 
 @register(
     "astrbot_plugin_spcode_toolkit",
@@ -209,6 +215,26 @@ class SPCodeToolkit(star.Star):
                 f"enabled_tools 中包含未识别的工具名: {sorted(unknown)}，已忽略"
             )
         tools_to_register = [t for t in _PLUGINS_TOOLS if t.name in enabled_names]
+
+        # Task 5 (2026-10-05): 优雅降级 shim — 核心已提供同名内置
+        # ``astrbot_file_remove`` 时插件让位,不重复注册。旧核心无
+        # ``astrbot.core.tools.registry``(ImportError)视为"未提供",维持现状
+        # 注册,能力不丢。详见 spec §4.1。
+        global _CORE_PROVIDES_FILE_REMOVE
+        try:
+            from astrbot.core.tools.registry import get_builtin_tool_class
+
+            _CORE_PROVIDES_FILE_REMOVE = (
+                get_builtin_tool_class("astrbot_file_remove") is not None
+            )
+        except ImportError:  # 旧核心无 registry → 视为未提供
+            _CORE_PROVIDES_FILE_REMOVE = False
+
+        if _CORE_PROVIDES_FILE_REMOVE:
+            tools_to_register = [
+                t for t in tools_to_register if not isinstance(t, FileRemoveTool)
+            ]
+            logger.info("[file_remove] 核心已提供内置 astrbot_file_remove，插件让位")
 
         # file_remove_blacklist 注入(必须在 enabled_tools 过滤之后)
         for t in tools_to_register:
