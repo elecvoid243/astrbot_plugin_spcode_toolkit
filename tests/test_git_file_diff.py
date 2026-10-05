@@ -309,3 +309,109 @@ async def test_reverse_direction(
     assert d["status"] == "modified"
     assert "-v2" in d["patch"] and "+v1" in d["patch"]
     assert d["base_content"] == "v2\n"
+
+
+# ─── Task 3: 截断 / 二进制 / 路径安全 ────────────────────────────────
+
+
+async def test_patch_truncated(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(_gfd, "MAX_PATCH_BYTES", 512)
+    big_v1 = "".join(f"line-{i:04d} {'x' * 40}\n" for i in range(100))
+    big_v2 = big_v1.replace("line-0005", "LINE-0005").replace("line-0095", "LINE-0095")
+    shas = _init_git_repo_with_commits(
+        tmp_path, [("big.txt", big_v1), ("big.txt", big_v2)]
+    )
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_with_query(
+        monkeypatch, plugin, **{"from": shas[0], "to": shas[1], "path": "big.txt"}
+    )
+    d = r["data"]
+    assert d["success"] is True, d
+    assert d["truncated"] is True
+    assert d["truncated_at_bytes"] == 512
+    assert d["max_bytes"] == 512
+    assert len(d["patch"]) <= 512
+
+
+async def test_base_blob_too_large_truncated(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    """基准 blob 超上限 → 截断 + base_truncated 标志(与 git-file 截断先例一致),
+    而非 file_too_large 失败——用户仍能看到 diff。"""
+    monkeypatch.setattr(_gfd, "MAX_BASE_BLOB_BYTES", 100)
+    big = "y" * 200 + "\n"
+    shas = _init_git_repo_with_commits(
+        tmp_path, [("big.txt", big), ("big.txt", big + "more\n")]
+    )
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_with_query(
+        monkeypatch, plugin, **{"from": shas[0], "to": shas[1], "path": "big.txt"}
+    )
+    d = r["data"]
+    assert d["success"] is True, d
+    assert d["base_truncated"] is True
+    assert d["base_size"] == 201  # 原始 blob 字节数
+    assert len(d["base_content"].encode("utf-8")) <= 104  # 截断 + decode 容差
+
+
+async def test_binary_file(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    subprocess.run(
+        ["git", "-c", "init.defaultBranch=main", "init", "-q", "-b", "main"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    (tmp_path / "bin.dat").write_bytes(b"\x00\x01\x02\x03" * 32)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "b1", "-q"], cwd=tmp_path, check=True)
+    sha1 = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    (tmp_path / "bin.dat").write_bytes(b"\x00\x05\x06\x07" * 32)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "b2", "-q"], cwd=tmp_path, check=True)
+    sha2 = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_with_query(
+        monkeypatch, plugin, **{"from": sha1, "to": sha2, "path": "bin.dat"}
+    )
+    d = r["data"]
+    assert d["success"] is True, d
+    assert d["is_binary"] is True
+    assert d["patch"] is None
+    assert d["base_content"] == ""
+    assert d["additions"] is None
+    assert d["deletions"] is None
+
+
+async def test_path_unsafe_dotdot(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    _init_git_repo_with_commits(tmp_path, [("a.txt", "v1\n")])
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_with_query(
+        monkeypatch, plugin, **{"from": "HEAD", "to": "HEAD", "path": "../x.txt"}
+    )
+    assert r["data"]["success"] is False
+    assert r["data"]["reason"] == "path_unsafe"
+
+
+async def test_path_unsafe_absolute(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    _init_git_repo_with_commits(tmp_path, [("a.txt", "v1\n")])
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_with_query(
+        monkeypatch, plugin, **{"from": "HEAD", "to": "HEAD", "path": "/abs/x.txt"}
+    )
+    assert r["data"]["success"] is False
+    assert r["data"]["reason"] == "path_unsafe"

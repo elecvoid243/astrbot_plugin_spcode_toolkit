@@ -221,12 +221,19 @@ async def handle(
             elif pline.startswith("-") and not pline.startswith("---"):
                 deletions += 1
 
+    # patch 截断(与 git-diff 同语义:截断不失败,前端仍渲染可见部分)
+    truncated = len(patch_text) > MAX_PATCH_BYTES
+    if truncated:
+        patch_text = patch_text[:MAX_PATCH_BYTES]
+
     # ── 7. 基准 blob(added 时 from 侧无此文件,跳过) ──
     # WHY deleted 也要读:前端叠加视图需要展示被删全文。
     # WHY bytes 变体:`_run_git_async` 会 rstrip 尾部换行(porcelain 安全设计),
     # blob 内容需要保字节级完整,且二进制 NUL 探测必须在解码前做。
     base_content = ""
     base_size = 0
+    base_truncated = False
+    is_binary = False
     if status != "added":
         blob_path = old_path or target_path
         show = await _run_git_async_bytes(
@@ -245,7 +252,28 @@ async def handle(
             )
         raw_blob: bytes = show["stdout"]
         base_size = len(raw_blob)
+        # 二进制:NUL 探测(与 git-file HEAD_BYTES 窗口一致)
+        if b"\x00" in raw_blob[:8000]:
+            is_binary = True
+        # 超上限截断(与 git-file 先例一致:截断不失败,前端对齐失败时
+        # 会自动降级为纯 patch 视图)
+        base_truncated = len(raw_blob) > MAX_BASE_BLOB_BYTES
+        if base_truncated:
+            raw_blob = raw_blob[:MAX_BASE_BLOB_BYTES]
         base_content = raw_blob.decode("utf-8", errors="replace")
+
+    # added 场景无 base blob 可探,patch 文本是唯一的二进制信号
+    if status == "added" and patch_text.startswith("Binary files"):
+        is_binary = True
+    if is_binary:
+        patch_text_out: str | None = None
+        additions_out: int | None = None
+        deletions_out: int | None = None
+        base_content = ""
+    else:
+        patch_text_out = patch_text
+        additions_out = additions
+        deletions_out = deletions
 
     return _JSONResponseCompat(
         _make_envelope(
@@ -261,14 +289,15 @@ async def handle(
             path=target_path,
             status=status,
             old_path=old_path,
-            is_binary=False,
+            is_binary=is_binary,
             base_content=base_content,
             base_size=base_size,
-            patch=patch_text,
-            additions=additions,
-            deletions=deletions,
-            truncated=False,
-            truncated_at_bytes=0,
+            base_truncated=base_truncated,
+            patch=patch_text_out,
+            additions=additions_out,
+            deletions=deletions_out,
+            truncated=truncated,
+            truncated_at_bytes=MAX_PATCH_BYTES if truncated else 0,
             max_bytes=MAX_PATCH_BYTES,
         ),
         status_code=200,
