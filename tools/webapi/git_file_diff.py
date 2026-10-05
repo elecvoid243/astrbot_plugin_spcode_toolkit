@@ -9,11 +9,17 @@ Author: elecvoid243, 2026-10-06 · v2.30.0
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .file_browser import (
+    _common_cache_headers,
+    _get_if_none_match,
+    _make_304_response,
+)
 from ._helpers import (
     _JSONResponseCompat,
     _git_endpoint_preflight,
@@ -40,6 +46,11 @@ def _qget(query: object, key: str, default: str | None = None) -> str | None:
         return v if v else default
     except Exception:
         return default
+
+
+def _is_full_sha(ref: str) -> bool:
+    """是否为完整 40-hex SHA(决定响应可否标记 immutable)。"""
+    return len(ref) == 40 and all(c in "0123456789abcdef" for c in ref.lower())
 
 
 def _bad_ref_reason(stderr_lower: str) -> str:
@@ -156,6 +167,20 @@ async def handle(
 
     from_sha = resolved["from"]
     to_sha = resolved["to"]
+
+    # ── 4.5 ETag:基于**解析后**的 from_sha/to_sha 计算(分支漂移在下次解析时
+    # 自然反映;若基于原始输入,分支移动后 If-None-Match 会返回陈旧 304)。
+    # 仅当 from/to 原始输入均为完整 40-hex SHA 时结果才天然不可变 → immutable。
+    etag = 'W/"' + hashlib.sha1(
+        f"{from_sha}|{to_sha}|{target_path}|v1".encode()
+    ).hexdigest() + '"'
+    cache_headers = _common_cache_headers(etag)
+    if _is_full_sha(from_ref) and _is_full_sha(to_ref):
+        cache_headers["Cache-Control"] = "private, immutable"
+    else:
+        cache_headers["Cache-Control"] = "private, no-cache"
+    if _get_if_none_match() == etag:
+        return _make_304_response(cache_headers)
 
     # ── 5. 状态探测(全量 name-status 后按 path 匹配) ──
     # WHY 不加 pathspec: rename 检测与 pathspec 过滤的交互有版本差异,
@@ -301,4 +326,5 @@ async def handle(
             max_bytes=MAX_PATCH_BYTES,
         ),
         status_code=200,
+        headers=cache_headers,
     )

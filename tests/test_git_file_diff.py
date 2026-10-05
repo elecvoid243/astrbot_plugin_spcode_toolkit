@@ -415,3 +415,61 @@ async def test_path_unsafe_absolute(
     )
     assert r["data"]["success"] is False
     assert r["data"]["reason"] == "path_unsafe"
+
+
+# ─── Task 4: ETag / 304 / immutable ──────────────────────────────────
+
+
+def _call_full(
+    monkeypatch: pytest.MonkeyPatch,
+    plugin: Any,
+    query: dict[str, str],
+    headers: dict[str, str] | None = None,
+) -> Any:
+    from astrbot.api import web
+
+    monkeypatch.setattr(
+        web, "request", make_web_request_mock(query=query, headers=headers)
+    )
+    return _gfd.handle(plugin)
+
+
+async def test_etag_304(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    shas = _init_git_repo_with_commits(
+        tmp_path, [("a.txt", "v1\n"), ("a.txt", "v2\n")]
+    )
+    _load_project(plugin, "u1", str(tmp_path))
+    q = {"from": shas[0], "to": shas[1], "path": "a.txt"}
+    r1 = await _call_full(monkeypatch, plugin, q)
+    etag = r1.headers["ETag"]
+    assert etag
+    r2 = await _call_full(monkeypatch, plugin, q, {"If-None-Match": etag})
+    assert r2.status_code == 304
+
+
+async def test_etag_immutable_for_shas(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    shas = _init_git_repo_with_commits(
+        tmp_path, [("a.txt", "v1\n"), ("a.txt", "v2\n")]
+    )
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_full(
+        monkeypatch, plugin, {"from": shas[0], "to": shas[1], "path": "a.txt"}
+    )
+    assert "immutable" in r.headers["Cache-Control"]
+
+
+async def test_etag_no_cache_for_branch(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    _init_git_repo_with_commits(tmp_path, [("a.txt", "v1\n"), ("a.txt", "v2\n")])
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_full(
+        monkeypatch, plugin, {"from": "HEAD~1", "to": "main", "path": "a.txt"}
+    )
+    cc = r.headers["Cache-Control"]
+    assert "no-cache" in cc
+    assert "immutable" not in cc
