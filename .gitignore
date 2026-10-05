@@ -9,3 +9,6 @@ docs/
 .worktrees/
 logo.png
 .codegraph/
+
+# superpowers plan workspace (ledger / briefs / review packages)
+.superpowers/
