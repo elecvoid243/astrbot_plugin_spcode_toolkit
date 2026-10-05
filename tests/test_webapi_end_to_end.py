@@ -57,6 +57,7 @@ _SKIP_FILE_BROWSER = frozenset(
         "handle_get_git_log",  # PR-2 (2026-06-24)
         "handle_get_git_show",  # v3.8 (2026-06-25)
         "handle_get_git_file",  # spec B (2026-07-11) — uses web.request.query inline
+        "handle_get_git_file_diff",  # v2.30.0 (2026-10-06) — uses web.request.query inline
         "handle_post_btw",  # v2.20 (2026-07-17) — 需要 body 形参(_wrap 注入)
         # 2026-09-08: terminal 系列 handler 的 umo 是必填位置参数
         # (``handle_status(plugin, umo)``),无参 smoke 调用会 TypeError;
@@ -114,7 +115,7 @@ def test_btw_handler_excluded_from_smoke() -> None:
     assert "handle_post_btw" not in (set(HANDLERS.keys()) - _SKIP_FILE_BROWSER)
 
 
-def test_routes_table_has_forty_six_endpoints() -> None:
+def test_routes_table_covers_all_endpoints() -> None:
     """The route table lists all spcode webapi endpoints.
 
     v2.17.0 (2026-07-15) 新增 6 个 git 端点(init/branches/create/delete/switch/revert)。
@@ -136,6 +137,7 @@ def test_routes_table_has_forty_six_endpoints() -> None:
       → 50 entries (17 GET + 31 POST + 1 PATCH + 1 DELETE)
     - 2026-09-12: +1 POST (git-tag-create,提交对话框打 tag)
       → 51 entries (17 GET + 32 POST + 1 PATCH + 1 DELETE)
+    - 2026-10-06: +1 GET (git-file-diff 任意两版本单文件比较,v2.30.0)
     """
     routes = {entry[0] for entry in ROUTES}
     assert routes == {
@@ -167,6 +169,7 @@ def test_routes_table_has_forty_six_endpoints() -> None:
         "/spcode/file-search",  # v2.15.0 (2026-07-02)
         "/spcode/file-name-search",  # v2.15.0 (2026-07-02)
         "/spcode/git-file",  # spec B (2026-07-11)
+        "/spcode/git-file-diff",  # v2.30.0 (2026-10-06) — 任意两版本单文件比较
         "/spcode/docs",  # spec B (2026-07-11)
         # ── v2.17.0 (2026-07-15) PR-B ~ PR-G 新增 6 端点 ──
         "/spcode/git-init",  # v2.17.0 PR-B
@@ -239,11 +242,12 @@ def test_routes_table_has_forty_six_endpoints() -> None:
     # 2026-09-09: +1 POST (git-reset)
     # 2026-09-12: +1 POST (git-tag-create)
     # 2026-09-14: +1 POST (file-remove/restore 回收站恢复,be03cc7)
-    # 71 unique paths total: 23 GET + 50 POST + 1 PATCH + 1 DELETE
+    # 2026-10-06: +1 GET (git-file-diff 任意两版本单文件比较,v2.30.0)
+    # 72 unique paths total: 24 GET + 50 POST + 1 PATCH + 1 DELETE
     methods = [m for entry in ROUTES for m in entry[1]]
     assert (
-        methods.count("GET") == 23
-    )  # +operation-progress +home-directory +drives +git-remotes +terminal/stream+status
+        methods.count("GET") == 24
+    )  # +operation-progress +home-directory +drives +git-remotes +terminal/stream+status +git-file-diff
     assert (
         methods.count("POST") == 50
     )  # +terminal 4 +codegraph-init +git-reset +git-tag-create +file-remove/restore
@@ -568,7 +572,7 @@ def test_register_webapi_routes_calls_context_fifty_three_times() -> None:
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    assert plugin.context.register_web_api.call_count == 75
+    assert plugin.context.register_web_api.call_count == 76
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -592,7 +596,7 @@ def test_register_webapi_routes_continues_on_failure() -> None:
     # 2026-09-01 terminal 6 端点;2026-09-08 codegraph-init;2026-09-09
     # git-reset;2026-09-12 git-tag-create;2026-09-14 file-remove/restore)。
     register_webapi_routes(plugin)
-    assert call_count == 75
+    assert call_count == 76
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

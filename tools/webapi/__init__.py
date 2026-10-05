@@ -44,6 +44,7 @@ Dashboard / WebUI:
   * ``/spcode/terminal/status``   (GET)   # 2026-09-01 — 终端状态快照
 
   * ``/spcode/git-file``         (GET)   # spec B (2026-07-11)
+  * ``/spcode/git-file-diff``    (GET)   # v2.30.0 (2026-10-06) — 任意两版本单文件比较
   * ``/spcode/docs``             (POST)  # spec B (2026-07-11) — create/upsert
   * ``/spcode/docs``             (PATCH) # spec B (2026-07-11) — rename
   * ``/spcode/docs``             (DELETE) # spec B (2026-07-11) — delete
@@ -99,6 +100,7 @@ from . import (
     git_conflict_status,  # v2.22.0 (2026-07-28)
     git_diff,
     git_file,  # spec B (2026-07-11): GET /spcode/git-file
+    git_file_diff,  # v2.30.0 (2026-10-06): GET /spcode/git-file-diff
     git_init,  # v2.17.0 (2026-07-16) - PR-B POST endpoint
     git_log,
     git_merge,  # v2.22.0 (2026-07-28)
@@ -409,6 +411,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "获取 ref 下某文件的完整内容(blob),供 dashboard 文档管理子页面",
     ),
     (
+        "/spcode/git-file-diff",  # v2.30.0 (2026-10-06) — 任意两版本单文件比较
+        ["GET"],
+        git_file_diff.handle,
+        "单文件任意两版本比较(from→to patch + from 侧全文,供历史面板叠加视图)",
+    ),
+    (
         "/spcode/docs",  # spec B (2026-07-11) — create / upsert
         ["POST"],
         docs_crud.handle_post_docs,
@@ -630,6 +638,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_get_codegraph_status": codegraph_status.handle,  # v2.14.x (2026-06-28)
     "handle_post_btw": btw.handle,  # v2.20 (2026-07-17)
     "handle_get_git_file": git_file.handle,  # spec B (2026-07-11)
+    "handle_get_git_file_diff": git_file_diff.handle,  # v2.30.0 (2026-10-06)
     "handle_post_docs": docs_crud.handle_post_docs,  # spec B (2026-07-11)
     "handle_patch_docs": docs_crud.handle_patch_docs,  # spec B (2026-07-11)
     "handle_delete_docs": docs_crud.handle_delete_docs,  # spec B (2026-07-11)
@@ -826,6 +835,7 @@ __all__ = [
     "git_commit_amend",  # 2026-08-13
     "git_diff",
     "git_file",  # spec B (2026-07-11)
+    "git_file_diff",  # v2.30.0 (2026-10-06)
     "git_init",  # v2.17.0
     "git_log",
     "git_pull",  # 2026-08-12
