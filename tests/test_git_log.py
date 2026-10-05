@@ -891,3 +891,130 @@ async def test_log_chinese_tag_ref(monkeypatch, plugin, tmp_path: Path):
     # 非 hex ref 不做 rev-parse 归一化,resolved_ref 保持 None
     assert data["resolved_ref"] is None
     r.headers.get("etag", "").encode("latin-1")
+
+
+# ──────────────────────────────────────────────────────────
+# 2026-10-05 (elecvoid243): all / topo —— 分支树(lane gutter)所需
+# ──────────────────────────────────────────────────────────
+
+
+async def test_log_all_includes_unmerged_branch_commit(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """未合并分支的提交只在 all=true 时出现；all=0 / 缺省时不可见。"""
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=tmp_path, check=True)
+    (tmp_path / "b.txt").write_text("b", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "feature only"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=tmp_path, check=True)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    default = await _call_with_query(monkeypatch, plugin)
+    assert "feature only" not in [c["subject"] for c in default["data"]["commits"]]
+
+    off = await _call_with_query(monkeypatch, plugin, all="0")
+    assert "feature only" not in [c["subject"] for c in off["data"]["commits"]]
+
+    on = await _call_with_query(monkeypatch, plugin, all="true")
+    assert "feature only" in [c["subject"] for c in on["data"]["commits"]]
+
+
+async def test_log_all_invalid_value_invalid_param(monkeypatch, plugin, tmp_path: Path):
+    """拼写错误不能被静默当 false —— 否则用户以为开关坏了。"""
+    _init_git_repo(tmp_path, n_commits=1)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    for bad in ("ture", "yes", "2"):
+        result = await _call_with_query(monkeypatch, plugin, all=bad)
+        assert result["data"]["success"] is False, bad
+        assert result["data"]["reason"] == "invalid_param", bad
+
+    result = await _call_with_query(monkeypatch, plugin, topo="ture")
+    assert result["data"]["reason"] == "invalid_param"
+
+
+async def test_log_topo_order_places_child_before_parent(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """topo=true 时任一 commit 必须排在它的父提交之前。
+
+    时钟偏移构造:C 是 P 的子提交,但 C 的 committer date 早于 P(merge 把它
+    拉进 main 的可达集)。git 默认顺序 (commit-date) 会先把 P 吐出来,
+    ``--topo-order`` 保证 C 在前 —— 前端 lane 布局依赖这个不变量。
+    """
+    p_env = {
+        **os.environ,
+        "GIT_AUTHOR_DATE": "2026-01-05T00:00:00+00:00",
+        "GIT_COMMITTER_DATE": "2026-01-05T00:00:00+00:00",
+    }
+    c_env = {
+        **os.environ,
+        "GIT_AUTHOR_DATE": "2026-01-02T00:00:00+00:00",
+        "GIT_COMMITTER_DATE": "2026-01-02T00:00:00+00:00",
+    }
+    m_env = {
+        **os.environ,
+        "GIT_AUTHOR_DATE": "2026-01-06T00:00:00+00:00",
+        "GIT_COMMITTER_DATE": "2026-01-06T00:00:00+00:00",
+    }
+
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "P"], cwd=tmp_path, env=p_env, check=True)
+
+    subprocess.run(["git", "checkout", "-q", "-b", "side"], cwd=tmp_path, check=True)
+    (tmp_path / "b.txt").write_text("b", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "C"], cwd=tmp_path, env=c_env, check=True)
+
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "merge", "--no-ff", "-m", "M", "side"],
+        cwd=tmp_path,
+        env=m_env,
+        check=True,
+    )
+
+    _load_project(plugin, "u:m", str(tmp_path))
+    result = await _call_with_query(monkeypatch, plugin, topo="true")
+    commits = result["data"]["commits"]
+    order = {c["sha"]: i for i, c in enumerate(commits)}
+    for c in commits:
+        for parent in c["parents"]:
+            if parent in order:
+                assert order[c["sha"]] < order[parent], (
+                    f"child {c['sha']} must precede parent {parent}"
+                )
+
+
+async def test_log_etag_changes_when_all_flag_changes(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """all/topo 必须进 ETag fingerprint,否则两种模式互相 304 回放快照。"""
+    from tools.webapi import git_log as _m
+    from astrbot.api import web
+
+    _init_git_repo(tmp_path, n_commits=2)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    _m._LOG_ETAG_CACHE.clear()
+    monkeypatch.setattr(_m, "_LOG_ETAG_TTL", 0.0)
+
+    monkeypatch.setattr(web, "request", make_web_request_mock(query={}))
+    r1 = await _gl.handle(plugin)
+    etag_default = r1.headers.get("etag")
+    assert etag_default, f"first response missing ETag: {dict(r1.headers)}"
+
+    monkeypatch.setattr(web, "request", make_web_request_mock(query={"all": "true"}))
+    r2 = await _gl.handle(plugin)
+    etag_all = r2.headers.get("etag")
+    assert etag_all and etag_all != etag_default

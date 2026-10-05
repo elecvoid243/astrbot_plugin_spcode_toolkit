@@ -40,6 +40,21 @@ DEFAULT_LOG_N = 20
 MAX_PARAM_LENGTH = 512
 MAX_LOG_BYTES = 1 * 1024 * 1024  # 1 MB 硬上限
 
+# 2026-10-05 (elecvoid243): all / topo 是白名单布尔 —— 只接受固定字面量,
+# 永不把用户字符串拼进 argv(与 ref 的 '-' 前缀防护同一个目的)。
+_BOOL_TRUE = ("1", "true")
+_BOOL_FALSE = ("", "0", "false")
+
+
+def _parse_tristate_bool(raw: str | None) -> bool | None:
+    """True / False / None(None = 非法值,调用方返回 invalid_param)。"""
+    value = (raw or "").strip().lower()
+    if value in _BOOL_TRUE:
+        return True
+    if value in _BOOL_FALSE:
+        return False
+    return None
+
 # 11 字段 NUL 分隔 pretty=format 模板
 # %H  full sha | %h short sha | %an author name | %ae author email
 # %cn committer name | %ce committer email
@@ -495,6 +510,18 @@ async def handle(
     since = _qget("since")
     until = _qget("until")
     grep = _qget("grep")
+    # 2026-10-05: 分支树(lane gutter)需要跨 ref 抓取 + 拓扑排序。
+    all_refs = _parse_tristate_bool(_qget("all"))
+    topo = _parse_tristate_bool(_qget("topo"))
+    if all_refs is None or topo is None:
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.INVALID_PARAM,
+            elapsed_ms=_elapsed(),
+            loaded=False,
+            umo=umo,
+            worktree=worktree,
+        )
 
     # 长度校验
     for name, val in (
@@ -639,8 +666,11 @@ async def handle(
     # latin-1 编码错误。
     # WHY 指纹用 ``|`` 而不是 ``&``: 后者在 query 里是分隔符, 易混淆;
     # ``|`` 是 git porcelain 风格的稳定选择。
+    # 2026-10-05: all / topo 也进 fingerprint —— 否则两种模式的 ETag 相同,
+    # 切换抓取范围会命中假 304 并回放另一模式的快照。
     query_fingerprint = (
-        f"{ref or 'HEAD'}|{n}|{path or ''}|{author or ''}|{since or ''}|{until or ''}|{grep or ''}"
+        f"{ref or 'HEAD'}|{n}|{path or ''}|{author or ''}|{since or ''}"
+        f"|{until or ''}|{grep or ''}|{int(all_refs)}|{int(topo)}"
     )
     etag = await _compute_log_etag(
         plugin._git_binary(),
@@ -667,6 +697,10 @@ async def handle(
         "--shortstat",
         f"-n{n + 1}",
     ]
+    if topo:
+        log_args.append("--topo-order")
+    if all_refs:
+        log_args.append("--all")
     if grep:
         # 子串匹配 + 忽略大小写:用户输入按字面处理,正则元字符不生效。
         # 注意:`-i` / `--fixed-strings` 是 git **全局**标志,会同时作用于
