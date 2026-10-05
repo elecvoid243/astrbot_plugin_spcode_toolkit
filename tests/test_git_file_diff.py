@@ -166,3 +166,146 @@ async def test_to_ref_not_found(
     assert r["data"]["success"] is False
     assert r["data"]["reason"] == "ref_not_found"
     assert r["data"]["failing_ref"] == "to"
+
+
+# ─── Task 2: status 探测 / patch / base blob ─────────────────────────
+
+
+async def test_modified_happy_path(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    shas = _init_git_repo_with_commits(
+        tmp_path, [("a.txt", "v1\n"), ("a.txt", "v2\n")]
+    )
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_with_query(
+        monkeypatch, plugin, **{"from": shas[0], "to": shas[1], "path": "a.txt"}
+    )
+    d = r["data"]
+    assert d["success"] is True, d
+    assert d["status"] == "modified"
+    assert d["old_path"] is None
+    assert d["is_binary"] is False
+    assert d["base_content"] == "v1\n"
+    assert "@@" in d["patch"]
+    assert "-v1" in d["patch"] and "+v2" in d["patch"]
+    assert d["additions"] == 1
+    assert d["deletions"] == 1
+    assert d["truncated"] is False
+    assert d["from_sha"] == shas[0]
+    assert d["to_sha"] == shas[1]
+
+
+async def test_added_status(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    shas = _init_git_repo_with_commits(
+        tmp_path, [("other.txt", "o\n"), ("new.txt", "hello\n")]
+    )
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_with_query(
+        monkeypatch, plugin, **{"from": shas[0], "to": shas[1], "path": "new.txt"}
+    )
+    d = r["data"]
+    assert d["success"] is True, d
+    assert d["status"] == "added"
+    assert d["base_content"] == ""
+    assert d["base_size"] == 0
+    assert "+hello" in d["patch"]
+    assert d["additions"] == 1
+    assert d["deletions"] == 0
+
+
+async def test_deleted_status(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    shas = _init_git_repo_with_commits(tmp_path, [("del.txt", "bye\n")])
+    (tmp_path / "del.txt").unlink()
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "del", "-q"], cwd=tmp_path, check=True
+    )
+    sha2 = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_with_query(
+        monkeypatch, plugin, **{"from": shas[0], "to": sha2, "path": "del.txt"}
+    )
+    d = r["data"]
+    assert d["success"] is True, d
+    assert d["status"] == "deleted"
+    assert d["base_content"] == "bye\n"
+    assert "-bye" in d["patch"]
+    assert d["deletions"] == 1
+    assert d["additions"] == 0
+
+
+async def test_renamed_status(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    content = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\n"
+    shas = _init_git_repo_with_commits(tmp_path, [("a.py", content)])
+    subprocess.run(["git", "mv", "a.py", "b.py"], cwd=tmp_path, check=True)
+    (tmp_path / "b.py").write_text(content + "line9\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "rename", "-q"], cwd=tmp_path, check=True
+    )
+    sha2 = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_with_query(
+        monkeypatch, plugin, **{"from": shas[0], "to": sha2, "path": "b.py"}
+    )
+    d = r["data"]
+    assert d["success"] is True, d
+    assert d["status"] == "renamed"
+    assert d["old_path"] == "a.py"
+    # 关键:base 必须取旧路径在 from 侧的内容(Review Focus #1)
+    assert d["base_content"] == content
+
+
+async def test_unchanged_status(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    shas = _init_git_repo_with_commits(
+        tmp_path, [("a.txt", "v1\n"), ("other.txt", "o\n")]
+    )
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_with_query(
+        monkeypatch, plugin, **{"from": shas[0], "to": shas[1], "path": "a.txt"}
+    )
+    d = r["data"]
+    assert d["success"] is True, d
+    assert d["status"] == "unchanged"
+    assert d["patch"] == ""
+    assert d["additions"] == 0
+    assert d["deletions"] == 0
+    assert d["base_content"] == "v1\n"
+
+
+async def test_reverse_direction(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    shas = _init_git_repo_with_commits(
+        tmp_path, [("a.txt", "v1\n"), ("a.txt", "v2\n")]
+    )
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_with_query(
+        monkeypatch, plugin, **{"from": shas[1], "to": shas[0], "path": "a.txt"}
+    )
+    d = r["data"]
+    assert d["success"] is True, d
+    assert d["status"] == "modified"
+    assert "-v2" in d["patch"] and "+v1" in d["patch"]
+    assert d["base_content"] == "v2\n"

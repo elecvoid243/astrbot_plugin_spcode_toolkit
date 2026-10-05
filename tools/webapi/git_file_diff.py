@@ -19,6 +19,7 @@ from ._helpers import (
     _git_endpoint_preflight,
     _make_envelope,
     _run_git_async,
+    _run_git_async_bytes,
     _validate_repo_relative_file,
     ReasonCode,
 )
@@ -156,7 +157,96 @@ async def handle(
     from_sha = resolved["from"]
     to_sha = resolved["to"]
 
-    # ── 5+. 状态探测 / patch / blob:Task 2 填充 ──
+    # ── 5. 状态探测(全量 name-status 后按 path 匹配) ──
+    # WHY 不加 pathspec: rename 检测与 pathspec 过滤的交互有版本差异,
+    # 全量输出后自行匹配(新路径或旧路径命中皆可)行为最稳定。
+    ns = await _run_git_async(
+        git_prefix + ["diff", "--name-status", from_sha, to_sha],
+        encoding="utf-8",
+    )
+    if not ns["ok"]:
+        return _make_envelope(
+            success=False,
+            reason=ReasonCode.GIT_ERROR,
+            elapsed_ms=_elapsed(),
+            loaded=False,
+            directory=directory,
+            umo=effective_umo,
+            worktree=directory,
+            stderr=ns.get("stderr", "") or ns.get("error", ""),
+        )
+
+    status = "unchanged"
+    old_path: str | None = None
+    for line in ns["stdout"].splitlines():
+        parts = line.split("\t")
+        if not parts or not parts[0]:
+            continue
+        code = parts[0]
+        if code.startswith(("R", "C")):
+            if len(parts) >= 3 and target_path in (parts[1], parts[2]):
+                status = "renamed"
+                old_path = parts[1]
+                break
+        elif len(parts) >= 2 and parts[1] == target_path:
+            status = {"A": "added", "D": "deleted"}.get(code[0], "modified")
+            break
+
+    # ── 6. patch 生成 ──
+    patch_text = ""
+    additions = 0
+    deletions = 0
+    if status != "unchanged":
+        # rename 时 pathspec 同时给旧/新路径,确保 diff 不丢
+        pathspec = [old_path, target_path] if old_path else [target_path]
+        dp = await _run_git_async(
+            git_prefix + ["diff", from_sha, to_sha, "--", *pathspec],
+            encoding="utf-8",
+        )
+        if not dp["ok"]:
+            return _make_envelope(
+                success=False,
+                reason=ReasonCode.GIT_ERROR,
+                elapsed_ms=_elapsed(),
+                loaded=False,
+                directory=directory,
+                umo=effective_umo,
+                worktree=directory,
+                stderr=dp.get("stderr", "") or dp.get("error", ""),
+            )
+        patch_text = dp["stdout"]
+        for pline in patch_text.splitlines():
+            if pline.startswith("+") and not pline.startswith("+++"):
+                additions += 1
+            elif pline.startswith("-") and not pline.startswith("---"):
+                deletions += 1
+
+    # ── 7. 基准 blob(added 时 from 侧无此文件,跳过) ──
+    # WHY deleted 也要读:前端叠加视图需要展示被删全文。
+    # WHY bytes 变体:`_run_git_async` 会 rstrip 尾部换行(porcelain 安全设计),
+    # blob 内容需要保字节级完整,且二进制 NUL 探测必须在解码前做。
+    base_content = ""
+    base_size = 0
+    if status != "added":
+        blob_path = old_path or target_path
+        show = await _run_git_async_bytes(
+            git_prefix + ["show", f"{from_sha}:{blob_path}"],
+        )
+        if not show["ok"]:
+            return _make_envelope(
+                success=False,
+                reason=ReasonCode.GIT_ERROR,
+                elapsed_ms=_elapsed(),
+                loaded=False,
+                directory=directory,
+                umo=effective_umo,
+                worktree=directory,
+                stderr=show.get("stderr", "") or show.get("error", ""),
+            )
+        raw_blob: bytes = show["stdout"]
+        base_size = len(raw_blob)
+        base_content = raw_blob.decode("utf-8", errors="replace")
+
     return _JSONResponseCompat(
         _make_envelope(
             success=True,
@@ -169,6 +259,17 @@ async def handle(
             from_sha=from_sha,
             to_sha=to_sha,
             path=target_path,
+            status=status,
+            old_path=old_path,
+            is_binary=False,
+            base_content=base_content,
+            base_size=base_size,
+            patch=patch_text,
+            additions=additions,
+            deletions=deletions,
+            truncated=False,
+            truncated_at_bytes=0,
+            max_bytes=MAX_PATCH_BYTES,
         ),
         status_code=200,
     )
