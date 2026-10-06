@@ -27,10 +27,36 @@ def plugin() -> Any:
 
 @pytest.fixture(autouse=True)
 def export_root(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch):
-    """把导出根指到临时目录,测试不污染插件 data/temp。"""
+    """把导出根指到临时目录,测试不污染真实 plugin_data。"""
     root = tmp_path_factory.mktemp("git-history-export")
-    monkeypatch.setattr(_gfe, "EXPORT_ROOT", root)
+    monkeypatch.setattr(_gfe, "EXPORT_ROOT_OVERRIDE", root)
     return root
+
+
+def test_export_root_follows_plugin_data_convention() -> None:
+    """默认导出根 = <astrbot data>/plugin_data/astrbot_plugin_spcode_toolkit/
+    temp/git-history(与 todo 存储同一 StarTools.get_data_dir 真源)。"""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(_gfe, "EXPORT_ROOT_OVERRIDE", None)
+        root = _gfe._export_root()
+    assert str(root).replace("\\", "/").endswith(
+        "data/plugin_data/astrbot_plugin_spcode_toolkit/temp/git-history"
+    )
+
+
+def test_export_root_falls_back_when_star_tools_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """StarTools 不可用(standalone/异常)→ 回退插件仓库 data/temp/git-history。"""
+    import astrbot.api.star as _star
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("no star map")
+
+    monkeypatch.setattr(_gfe, "EXPORT_ROOT_OVERRIDE", None)
+    monkeypatch.setattr(_star.StarTools, "get_data_dir", staticmethod(_boom))
+    root = _gfe._export_root()
+    assert str(root).replace("\\", "/").endswith("data/temp/git-history")
 
 
 def _init_git_repo_with_commits(

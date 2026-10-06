@@ -33,11 +33,30 @@ logger = logging.getLogger(__name__)
 
 MAX_PARAM_LENGTH = 512
 
-# 导出根:插件仓库 data/ 已在 .gitignore,写入不产生 git 噪音。
-# 测试通过 monkeypatch 本模块常量重定向到临时目录。
-EXPORT_ROOT: Path = (
+PLUGIN_NAME = "astrbot_plugin_spcode_toolkit"
+
+# 导出根(2026-10-06 修订:按 AstrBot 插件约定放 plugin_data 下):
+#   <astrbot data>/plugin_data/astrbot_plugin_spcode_toolkit/temp/git-history/
+# 与 todo 存储同一真源(StarTools.get_data_dir)。StarTools 不可用时回退
+# 插件仓库 data/temp(standalone 测试 / 异常兜底;data/ 已 gitignore)。
+# 测试通过 EXPORT_ROOT_OVERRIDE 重定向到临时目录。
+EXPORT_ROOT_OVERRIDE: Path | None = None
+_FALLBACK_EXPORT_ROOT: Path = (
     Path(__file__).resolve().parents[2] / "data" / "temp" / "git-history"
 )
+
+
+def _export_root() -> Path:
+    """解析导出根:plugin_data 约定优先,异常回退插件仓库 data/temp。"""
+    if EXPORT_ROOT_OVERRIDE is not None:
+        return EXPORT_ROOT_OVERRIDE
+    try:
+        from astrbot.api.star import StarTools
+
+        data_dir = StarTools.get_data_dir(PLUGIN_NAME)
+        return Path(str(data_dir)) / "temp" / "git-history"
+    except Exception:  # noqa: BLE001 — standalone / 运行时缺失一律回退
+        return _FALLBACK_EXPORT_ROOT
 
 
 def _bad_ref_reason(stderr_lower: str) -> str:
@@ -168,8 +187,9 @@ async def handle(
 
     # ── 写临时文件(<sha7>/<repo-relative path>,同目标覆盖) ──
     sha7 = resolved_sha[:7]
-    target = EXPORT_ROOT / sha7 / Path(target_path)
-    export_root_resolved = EXPORT_ROOT.resolve()
+    export_root = _export_root()
+    target = export_root / sha7 / Path(target_path)
+    export_root_resolved = export_root.resolve()
     try:
         resolved_target = target.resolve()
         if not resolved_target.is_relative_to(export_root_resolved):
