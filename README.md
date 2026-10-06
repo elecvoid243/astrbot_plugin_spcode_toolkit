@@ -481,6 +481,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/git-stats` | GET | 仓库变更统计（按日聚合 + 热点文件 topN + totals + 范围），供 Dashboard stats 面板 | `umo?`, `worktree?`, `ref?`(默认 `HEAD`), `max_commits?`(≤2000), `top_files?`(≤100), `since?`, `until?` |
 | `/spcode/git-file` | GET | 给定 ref 下某文件的完整内容（blob，≤1MB，no-store） | `umo?`, `worktree?`, `ref`(默认 `HEAD`), `path` |
 | `/spcode/git-file-diff` | GET | 单文件任意两版本比较（from→to patch + from 侧全文，ETag 内容寻址/immutable） | `umo?`, `worktree?`, `from`, `to`, `path` |
+| `/spcode/git-file-export` | POST | 历史版本 blob 导出到 `data/temp/git-history/<sha7>/`，返回绝对路径（供核心 open-file 打开；同目标覆盖） | body: `{path, ref, umo?, worktree?}` |
 | `/spcode/git-branches` | GET | 列出 branch（local+remote）+current+default（ETag/304），响应含 tags 列表 | `umo?`, `worktree?` |
 | `/spcode/git-branch-create` | POST | 从 HEAD/指定 start_point 创建 branch | body: `{name, start_point?, force?}` |
 | `/spcode/git-branch-delete` | POST | 删除 branch（`-d` 仅 merged，`-D` 含 unmerged；硬禁 current/main） | body: `{name, force?=false}` |
@@ -638,6 +639,7 @@ astrbot_plugin_spcode_toolkit/
         ├── git_show.py           #   GET    /spcode/git-show            (v3.8)
         ├── git_file.py           #   GET    /spcode/git-file            (spec B)
         ├── git_file_diff.py      #   GET    /spcode/git-file-diff       (v2.30.0)
+        ├── git_file_export.py    #   POST   /spcode/git-file-export     (v2.31.0)
         ├── git_branches.py       #   GET    /spcode/git-branches        (v2.17.0)
         ├── git_repo_check.py     #   GET    /spcode/git-repo-check      (v2.18.0)
         ├── codegraph_status.py   #   GET    /spcode/codegraph-status    (v2.14.x)

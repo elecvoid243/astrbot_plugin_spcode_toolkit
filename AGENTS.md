@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.30.0** · Author: elecvoid243 · 最后更新: 2026-10-06
+> **当前版本: v2.31.0** · Author: elecvoid243 · 最后更新: 2026-10-06
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -283,6 +283,7 @@ astrbot_plugin_spcode_toolkit/
         ├── git_show.py           #   GET    /spcode/git-show            (v3.8)
         ├── git_file.py           #   GET    /spcode/git-file            (spec B)
         ├── git_file_diff.py      #   GET    /spcode/git-file-diff       (v2.30.0)
+        ├── git_file_export.py    #   POST   /spcode/git-file-export     (v2.31.0)
         ├── git_branches.py       #   GET    /spcode/git-branches        (v2.17.0)
         ├── git_repo_check.py     #   GET    /spcode/git-repo-check      (v2.18.0)
         ├── codegraph_status.py   #   GET    /spcode/codegraph-status    (v2.14.x)
@@ -491,7 +492,7 @@ AstrBot 主仓库（`all` 分支）已内置 `astrbot_file_remove` 工具（`loc
 10. **路径安全**：任何涉及用户输入路径的代码，先调用 `_path_safety` 校验，**不要**自己实现路径判断
 11. **Web API 参数安全**：`?worktree=` 等用户控制的路径参数，必须经过 `_validate_worktree_param`（位于 `tools/_helpers.py`）的 6 步防御链：**关键不变量 - git-common-dir 不匹配 = 直接拒绝**
 12. **配置拍平**：`_conf_schema.json` 是分组结构，`main.py._flatten_config()` 会把嵌套分组拍平为顶层键（如 `codegraph.codegraph_enabled` -> `codegraph_enabled`）。新增配置项时保持此约定
-13. **版本号统一**：当前版本统一为 **v2.30.0**。发布时同步更新 `metadata.yaml` 的 `version` 字段
+13. **版本号统一**：当前版本统一为 **v2.31.0**。发布时同步更新 `metadata.yaml` 的 `version` 字段
 
 ## Project 加载 — 静默变体 (2026-07-28)
 
@@ -564,6 +565,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | `/spcode/git-stats` | GET | 仓库变更统计（按日聚合 + 热点文件 topN + totals + 范围），供 Dashboard stats 面板 | `umo?`, `worktree?`, `ref?`(默认 `HEAD`), `max_commits?`(≤2000), `top_files?`(≤100), `since?`, `until?` |
 | `/spcode/git-file` | GET | 给定 ref 下某文件的完整内容（blob，≤1MB，no-store） | `umo?`, `worktree?`, `ref`(默认 `HEAD`), `path` |
 | `/spcode/git-file-diff` | GET | 单文件任意两版本比较（from→to patch + from 侧全文，ETag 内容寻址/immutable） | `umo?`, `worktree?`, `from`, `to`, `path` |
+| `/spcode/git-file-export` | POST | 历史版本 blob 导出到 `data/temp/git-history/<sha7>/`，返回绝对路径（供核心 open-file 打开；同目标覆盖） | body: `{path, ref, umo?, worktree?}` |
 | `/spcode/git-branches` | GET | 列出 branch（local+remote）+current+default（ETag/304），响应含 tags | `umo?`, `worktree?` |
 | `/spcode/git-branch-create` | POST | 从 HEAD/指定 start_point 创建 branch | body: `{name, start_point?, force?}` |
 | `/spcode/git-branch-delete` | POST | 删除 branch（`-d` 仅 merged，`-D` 含 unmerged；硬禁 current/main） | body: `{name, force?=false}` |

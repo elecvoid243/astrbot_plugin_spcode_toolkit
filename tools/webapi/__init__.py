@@ -45,6 +45,7 @@ Dashboard / WebUI:
 
   * ``/spcode/git-file``         (GET)   # spec B (2026-07-11)
   * ``/spcode/git-file-diff``    (GET)   # v2.30.0 (2026-10-06) — 任意两版本单文件比较
+  * ``/spcode/git-file-export``  (POST)  # v2.31.0 (2026-10-06) — 历史版本导出到临时文件
   * ``/spcode/docs``             (POST)  # spec B (2026-07-11) — create/upsert
   * ``/spcode/docs``             (PATCH) # spec B (2026-07-11) — rename
   * ``/spcode/docs``             (DELETE) # spec B (2026-07-11) — delete
@@ -101,6 +102,7 @@ from . import (
     git_diff,
     git_file,  # spec B (2026-07-11): GET /spcode/git-file
     git_file_diff,  # v2.30.0 (2026-10-06): GET /spcode/git-file-diff
+    git_file_export,  # v2.31.0 (2026-10-06): POST /spcode/git-file-export
     git_init,  # v2.17.0 (2026-07-16) - PR-B POST endpoint
     git_log,
     git_merge,  # v2.22.0 (2026-07-28)
@@ -417,6 +419,12 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "单文件任意两版本比较(from→to patch + from 侧全文,供历史面板叠加视图)",
     ),
     (
+        "/spcode/git-file-export",  # v2.31.0 (2026-10-06) — 历史版本导出到临时文件
+        ["POST"],
+        git_file_export.handle,
+        "把 <ref>:<path> 的 blob 导出到 data/temp/git-history/<sha7>/,返回绝对路径供打开",
+    ),
+    (
         "/spcode/docs",  # spec B (2026-07-11) — create / upsert
         ["POST"],
         docs_crud.handle_post_docs,
@@ -639,6 +647,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_btw": btw.handle,  # v2.20 (2026-07-17)
     "handle_get_git_file": git_file.handle,  # spec B (2026-07-11)
     "handle_get_git_file_diff": git_file_diff.handle,  # v2.30.0 (2026-10-06)
+    "handle_post_git_file_export": git_file_export.handle,  # v2.31.0 (2026-10-06)
     "handle_post_docs": docs_crud.handle_post_docs,  # spec B (2026-07-11)
     "handle_patch_docs": docs_crud.handle_patch_docs,  # spec B (2026-07-11)
     "handle_delete_docs": docs_crud.handle_delete_docs,  # spec B (2026-07-11)
@@ -836,6 +845,7 @@ __all__ = [
     "git_diff",
     "git_file",  # spec B (2026-07-11)
     "git_file_diff",  # v2.30.0 (2026-10-06)
+    "git_file_export",  # v2.31.0 (2026-10-06)
     "git_init",  # v2.17.0
     "git_log",
     "git_pull",  # 2026-08-12
