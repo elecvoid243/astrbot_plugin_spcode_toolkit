@@ -473,3 +473,105 @@ async def test_etag_no_cache_for_branch(
     cc = r.headers["Cache-Control"]
     assert "no-cache" in cc
     assert "immutable" not in cc
+
+
+# ─── Final review fixes(C1/I1/I2/I3) ────────────────────────────────
+
+
+async def test_non_ascii_path_matches_name_status(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    """C1: 非 ASCII 文件名不能被 core.quotePath 转义后失配 → 误判 unchanged。"""
+    shas = _init_git_repo_with_commits(
+        tmp_path, [("中文文件.txt", "v1\n"), ("中文文件.txt", "v2\n")]
+    )
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_with_query(
+        monkeypatch, plugin,
+        **{"from": shas[0], "to": shas[1], "path": "中文文件.txt"},
+    )
+    d = r["data"]
+    assert d["success"] is True, d
+    assert d["status"] == "modified"
+    assert "-v1" in d["patch"] and "+v2" in d["patch"]
+    assert d["additions"] == 1 and d["deletions"] == 1
+    assert d["base_content"] == "v1\n"
+
+
+async def test_text_to_binary_detected(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    """I1: modified 场景 text→binary 也必须置 is_binary(patch 文本信号,
+    不限于 added 分支)。"""
+    subprocess.run(
+        ["git", "-c", "init.defaultBranch=main", "init", "-q", "-b", "main"],
+        cwd=tmp_path, check=True,
+    )
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    (tmp_path / "f.dat").write_text("plain text\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "c1", "-q"], cwd=tmp_path, check=True)
+    sha1 = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    (tmp_path / "f.dat").write_bytes(b"\x00\x01\x02" * 16)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "c2", "-q"], cwd=tmp_path, check=True)
+    sha2 = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_with_query(
+        monkeypatch, plugin, **{"from": sha1, "to": sha2, "path": "f.dat"}
+    )
+    d = r["data"]
+    assert d["success"] is True, d
+    assert d["is_binary"] is True
+    assert d["patch"] is None
+    assert d["additions"] is None and d["deletions"] is None
+
+
+async def test_query_by_old_rename_path_treated_as_deleted(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    """I2: 用重命名前的旧路径查询 → 该路径在 to 侧不存在,正确语义是
+    status=deleted + old_path=None,而不是 renamed + old_path==path 自相矛盾。"""
+    content = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\n"
+    shas = _init_git_repo_with_commits(tmp_path, [("a.py", content)])
+    subprocess.run(["git", "mv", "a.py", "b.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "rename", "-q"], cwd=tmp_path, check=True)
+    sha2 = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    _load_project(plugin, "u1", str(tmp_path))
+    r = await _call_with_query(
+        monkeypatch, plugin, **{"from": shas[0], "to": sha2, "path": "a.py"}
+    )
+    d = r["data"]
+    assert d["success"] is True, d
+    assert d["status"] == "deleted"
+    assert d["old_path"] is None
+    assert d["base_content"] == content
+
+
+async def test_etag_changes_after_branch_advances(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    """I3(Review Focus #4 pin):分支名作 ref 时,分支推进后同查询 ETag 必须变化
+    (ETag 基于解析后 SHA,不能基于原始输入)。"""
+    _init_git_repo_with_commits(tmp_path, [("a.txt", "v1\n"), ("a.txt", "v2\n")])
+    _load_project(plugin, "u1", str(tmp_path))
+    q = {"from": "HEAD~1", "to": "main", "path": "a.txt"}
+    r1 = await _call_full(monkeypatch, plugin, q)
+    etag1 = r1.headers["ETag"]
+    # main 前进一步
+    (tmp_path / "a.txt").write_text("v3\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "v3", "-q"], cwd=tmp_path, check=True)
+    r2 = await _call_full(monkeypatch, plugin, q)
+    etag2 = r2.headers["ETag"]
+    assert etag1 != etag2

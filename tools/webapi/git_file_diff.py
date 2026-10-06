@@ -141,7 +141,17 @@ async def handle(
         )
 
     git_bin = plugin._git_binary()  # type: ignore[attr-defined]
-    git_prefix = [git_bin, "-C", directory, "-c", "color.ui=never"]
+    # quotePath=false:非 ASCII 路径(中文文件名)在 name-status/diff 输出中
+    # 不被八进制转义,否则下方按 path 匹配会失配并静默误判 unchanged
+    git_prefix = [
+        git_bin,
+        "-C",
+        directory,
+        "-c",
+        "color.ui=never",
+        "-c",
+        "core.quotePath=false",
+    ]
 
     # ── 4. 双 ref 解析(from 先,to 后;failing_ref 区分是哪一侧) ──
     resolved: dict[str, str] = {}
@@ -209,9 +219,14 @@ async def handle(
             continue
         code = parts[0]
         if code.startswith(("R", "C")):
-            if len(parts) >= 3 and target_path in (parts[1], parts[2]):
+            if len(parts) >= 3 and parts[2] == target_path:
+                # 改名为当前查询路径 → renamed,基准 blob 按旧路径取
                 status = "renamed"
                 old_path = parts[1]
+                break
+            if len(parts) >= 3 and parts[1] == target_path:
+                # 查询路径本身被改走 → 该路径在 to 侧不存在 = deleted
+                status = "deleted"
                 break
         elif len(parts) >= 2 and parts[1] == target_path:
             status = {"A": "added", "D": "deleted"}.get(code[0], "modified")
@@ -287,8 +302,12 @@ async def handle(
             raw_blob = raw_blob[:MAX_BASE_BLOB_BYTES]
         base_content = raw_blob.decode("utf-8", errors="replace")
 
-    # added 场景无 base blob 可探,patch 文本是唯一的二进制信号
-    if status == "added" and patch_text.startswith("Binary files"):
+    # patch 文本二进制信号:added(无 base blob 可探)与 text→binary 的
+    # modified(base 是纯文本,NUL 探测不到)都只能靠这个信号。
+    # 注意 patch 以 "diff --git" 头开头,信号行在头部之后。
+    if any(
+        pline.startswith("Binary files") for pline in patch_text.splitlines()
+    ):
         is_binary = True
     if is_binary:
         patch_text_out: str | None = None
