@@ -18,12 +18,15 @@ PROJECT_GUIDANCE_MARKER: str = "# Use Codegraph"
 # agentsmd/_core.py 的 PROJECT_PATH_PREFIX_TEMPLATE 持有,依附于
 # /agentsmd load;解耦后由 project 子系统(tools/project/inject.py)
 # 独立注入,/project load no_agentsmd 也能注入路径。
-# 文本措辞与 v2.8~v2.21 完全一致(仅所有权迁移)。
-PROJECT_PATH_MARKER: str = "你正在处理的项目工作路径为"
+# 2026-10-08: 文本由中文改为英文。理由:同一 system_prompt 中
+# 其余指引(PROJECT_CODEGRAPH_GUIDANCE / AGENTS.md 注入)已是英文,中英混排会
+# 让模型对指引段的"指令"属性判别变弱。MARKER 与 TEMPLATE 必须成对改写 —
+# MARKER 是 inject_guidance 的防重复哨兵(子串匹配),不同步会造成重复注入。
+PROJECT_PATH_MARKER: str = "Current project working directory:"
 
 PROJECT_PATH_GUIDANCE_TEMPLATE: str = """
-你正在处理的项目工作路径为: {directory}。
-在对项目进行修改、写入等操作时，优先使用git worktree（如果可用）
+Current project working directory: {directory}
+When modifying or writing to the project, prefer `git worktree` (if available).
 """
 
 # v2.24.1 (2026-08-15): codegraph >= 1.5 默认仅暴露 codegraph_explore 一个工具
@@ -45,10 +48,13 @@ A codegraph project is loaded. When dealing with the code for this project:
 # 持久化到会话历史,保持 prefix cache 连续性(temp 文本不落库,下一轮
 # 请求在注入点分叉,上一轮 assistant 输出的缓存会被丢弃);每次请求
 # 重新注入,切换/取消激活后新块附在新 user 消息尾部,模型以最新一条为准。
+# 2026-10-08: 文本由中文改为英文(与 system_prompt 侧指引语种统一)。
+# <active_worktree> 标签是块的边界标记,不随措辞变化 — 消费方(前端高亮/
+# 测试)以它定位注入块,而非以正文文案定位。
 ACTIVE_WORKTREE_GUIDANCE_TEMPLATE: str = """
 <active_worktree>
-当前激活的 git worktree: {worktree} (分支: {branch})
-对项目进行文件读写、代码修改、git 操作时，请以该 worktree 路径作为工作目录，除非用户明确指定其他路径。
+Active git worktree: {worktree} (branch: {branch})
+For file reads/writes, code changes and git operations on this project, use that worktree path as the working directory unless the user explicitly specifies another path.
 </active_worktree>
 """
 
@@ -114,6 +120,9 @@ When you write or modify Python or C/C++ code, use the built-in `code_crap` tool
 """
 
 # vivado-mcp 集成 (PR-5 2026-07-23)
+# 2026-10-08: 指引正文由中文改为英文(system_prompt 内所有指引语种统一)。
+# VIVADO_INJECTION_MARKER 是 inject_vivado_guidance 的防重复哨兵(子串匹配),
+# 必须出现在渲染结果首行 — 改措辞时不要动 {marker} 位置与文案。
 VIVADO_INJECTION_MARKER: str = (
     "# === vivado-mcp integration guidance (auto-injected by spcode) ==="
 )
@@ -133,11 +142,11 @@ VIVADO_WRITE_TOOLS: tuple[str, ...] = (
 )
 
 VIVADO_GUIDANCE_TEMPLATE: str = """{marker}
-[vivado-mcp 集成]
-本插件集成了 vivado-mcp (21 个工具), 通过 MCP 协议与 Python stdio 通信。
-- 默认 session_id = "{session_default}". 长任务用专用 session
-- 写工具 ({write_tool_count} 个: {write_tools_sample}) 需在 build 模式 (非 /plan) 下才能调用
-- 烧板 (program_device) 后果不可逆, 务必确认 bitstream 正确
-- start_session 会拉起 vivado -mode tcl 子进程 (~1GB RAM), 谨慎在容器 / CI 启用
-- 如需 vivado 会话状态, 用 chat /vivado status 或 GET /spcode/vivado-status
-- Vivado 路径优先级: spcode 配置 vivado_executable > 系统 VIVADO_PATH env > 自动检测""".strip()
+[vivado-mcp integration]
+This plugin integrates vivado-mcp (21 tools), communicating over the MCP protocol via Python stdio.
+- Default session_id = "{session_default}". Use a dedicated session for long-running tasks.
+- Write tools ({write_tool_count} of them: {write_tools_sample}) are callable only in build mode (i.e. not while /plan is active).
+- Programming the device (program_device) is irreversible — verify the bitstream is correct first.
+- start_session spawns a `vivado -mode tcl` subprocess (~1GB RAM); enable it with care in containers / CI.
+- For vivado session status, use the chat command /vivado status or GET /spcode/vivado-status.
+- Vivado path precedence: spcode config `vivado_executable` > system `VIVADO_PATH` env > auto-detect.""".strip()

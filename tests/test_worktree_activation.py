@@ -297,6 +297,24 @@ def test_git_worktrees_empty_envelope_has_active_worktree_field():
     assert env["data"]["active_worktree"] is None
 
 
+# ── 注入文本模板 ────────────────────────────────────
+
+
+def test_active_worktree_template_keeps_block_bounds():
+    """模板渲染后保留 <active_worktree> 块边界 + 路径 + 分支。
+
+    块边界是消费方(前端高亮 / 测试)定位注入块的锚点,措辞可改、标签不可改。
+    """
+    from tools._guidance_text import ACTIVE_WORKTREE_GUIDANCE_TEMPLATE
+
+    text = ACTIVE_WORKTREE_GUIDANCE_TEMPLATE.format(worktree="/wt/x", branch="feat")
+    assert text.strip().startswith("<active_worktree>")
+    assert text.strip().endswith("</active_worktree>")
+    assert "/wt/x" in text
+    assert "feat" in text
+    assert "working directory" in text
+
+
 # ── main.py 钩子:结构性 / 注册性 / 行为性 ───────────
 
 

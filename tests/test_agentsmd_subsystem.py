@@ -35,6 +35,7 @@ from tools.agentsmd import (  # noqa: E402
 from tools.agentsmd._core import (  # noqa: E402
     INJECTION_MARKER,
 )
+from tools._guidance_text import PROJECT_PATH_MARKER  # noqa: E402
 
 
 pytestmark = pytest.mark.asyncio
@@ -280,8 +281,8 @@ async def test_on_llm_request_does_not_inject_path():
     await h.on_llm_request(ev, req)
     assert INJECTION_MARKER in req.system_prompt
     assert "AGENTS_BODY" in req.system_prompt
-    assert "项目工作路径为" not in req.system_prompt
-    assert "优先使用git worktree" not in req.system_prompt
+    assert PROJECT_PATH_MARKER not in req.system_prompt
+    assert "prefer `git worktree`" not in req.system_prompt
 
 
 async def test_on_llm_request_idempotent_with_marker():

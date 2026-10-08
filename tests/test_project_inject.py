@@ -1,7 +1,8 @@
 """项目路径注入(tools/project/inject.py)单元测试。
 
 v2.22 (2026-07-27): 项目路径注入与 /agentsmd 解耦。
-此前路径前缀("你正在处理的项目工作路径为: ...")由 agentsmd 子系统的
+此前路径前缀(旧中文文案 "你正在处理的项目工作路径为: ...";2026-10-08 起
+改为英文 "Current project working directory: ...")由 agentsmd 子系统的
 ``build_injection(content, directory=...)`` 附带注入;解耦后改由 project
 子系统独立注入 — 只要 ``/project load`` 成功(含 ``no_agentsmd`` 空壳
 load),每次 LLM 请求前都会把项目工作路径注入 system_prompt 末尾。
@@ -63,8 +64,8 @@ def _put(directory: str = "/proj/demo", umo: str = UMO, **extra) -> None:
 def test_guidance_template_renders_path_and_worktree_hint():
     """模板渲染后必须含路径声明 + git worktree 指引,且含 marker。"""
     text = PROJECT_PATH_GUIDANCE_TEMPLATE.format(directory="/proj/x")
-    assert "你正在处理的项目工作路径为: /proj/x" in text
-    assert "优先使用git worktree" in text
+    assert f"{PROJECT_PATH_MARKER} /proj/x" in text
+    assert "prefer `git worktree`" in text
     assert PROJECT_PATH_MARKER in text
 
 
@@ -83,8 +84,8 @@ def test_loaded_project_injects_path():
     _put("/proj/demo")
     req = _make_req("orig")
     assert inject_project_path(_make_event(), req) is True
-    assert "你正在处理的项目工作路径为: /proj/demo" in req.system_prompt
-    assert "优先使用git worktree" in req.system_prompt
+    assert f"{PROJECT_PATH_MARKER} /proj/demo" in req.system_prompt
+    assert "prefer `git worktree`" in req.system_prompt
 
 
 def test_inject_is_idempotent_via_marker():
@@ -93,7 +94,7 @@ def test_inject_is_idempotent_via_marker():
     req = _make_req("")
     assert inject_project_path(_make_event(), req) is True
     assert inject_project_path(_make_event(), req) is False
-    assert req.system_prompt.count("你正在处理的项目工作路径为: /proj/demo") == 1
+    assert req.system_prompt.count(f"{PROJECT_PATH_MARKER} /proj/demo") == 1
 
 
 def test_none_system_prompt_handled():
@@ -103,7 +104,7 @@ def test_none_system_prompt_handled():
     assert inject_project_path(_make_event(), req) is True
     assert req.system_prompt is not None
     assert not req.system_prompt.startswith("\n")
-    assert "你正在处理的项目工作路径为: /proj/demo" in req.system_prompt
+    assert f"{PROJECT_PATH_MARKER} /proj/demo" in req.system_prompt
 
 
 def test_no_agentsmd_skip_still_injects_path():
@@ -115,7 +116,7 @@ def test_no_agentsmd_skip_still_injects_path():
     _put("/proj/demo", skipped_substeps={"agentsmd"})
     req = _make_req("")
     assert inject_project_path(_make_event(), req) is True
-    assert "你正在处理的项目工作路径为: /proj/demo" in req.system_prompt
+    assert f"{PROJECT_PATH_MARKER} /proj/demo" in req.system_prompt
 
 
 def test_empty_directory_returns_false():
@@ -141,7 +142,7 @@ def test_existing_system_prompt_preserved_as_prefix():
     req = _make_req("original system")
     assert inject_project_path(_make_event(), req) is True
     assert req.system_prompt.startswith("original system")
-    assert "你正在处理的项目工作路径为: /proj/demo" in req.system_prompt
+    assert f"{PROJECT_PATH_MARKER} /proj/demo" in req.system_prompt
 
 
 # ── main.py 钩子:结构性 / 注册性 / 委托性 ──────────

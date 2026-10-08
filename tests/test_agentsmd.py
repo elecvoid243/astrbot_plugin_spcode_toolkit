@@ -333,8 +333,8 @@ def test_build_injection_has_no_directory_param():
 def test_build_injection_output_has_no_path_prefix():
     """v2.22: build_injection 输出只含 marker + 内容,不含路径前缀。"""
     s = build_injection("# My Content")
-    assert "项目工作路径为" not in s
-    assert "优先使用git worktree" not in s
+    assert "Current project working directory" not in s
+    assert "prefer `git worktree`" not in s
     assert INJECTION_MARKER in s
     assert "# My Content" in s
 
