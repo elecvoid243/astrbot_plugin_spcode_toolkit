@@ -5,16 +5,17 @@ Spec: docs/superpowers/specs/2026-07-11-document-manager-backend-design.md §3.1
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
 import pytest
-
-from tests.conftest import _make_plugin, make_web_request_mock
 from tools.project import state as _proj_state
 from tools.webapi import git_file as _gf
+
+from tests.conftest import _make_plugin, make_web_request_mock
 
 pytestmark = pytest.mark.asyncio
 
@@ -85,9 +86,7 @@ async def test_git_file_default_head(
     assert result["data"]["ref"] == "HEAD"
     assert result["data"]["resolved_sha"] == shas[-1]
     assert result["data"]["path"] == "README.md"
-    # _run_git_async rstrip trims trailing \r\n once; "\n" → "" via rstrip("\r\n")
-    # so the blob's last "\n" disappears.
-    assert result["data"]["content"] == "v2"
+    assert result["data"]["content"] == "v2\n"
     assert result["data"]["is_binary"] is False
     assert result["data"]["truncated"] is False
     assert result["data"]["max_bytes"] == 1 * 1024 * 1024
@@ -104,7 +103,7 @@ async def test_git_file_explicit_ref(
 
     result = await _call_with_query(monkeypatch, plugin, ref=shas[0], path="README.md")
     assert result["data"]["resolved_sha"] == shas[0]
-    assert result["data"]["content"] == "v1"
+    assert result["data"]["content"] == "v1\n"
 
 
 async def test_git_file_branch_ref(
@@ -117,7 +116,7 @@ async def test_git_file_branch_ref(
 
     result = await _call_with_query(monkeypatch, plugin, ref="main", path="README.md")
     assert result["data"]["loaded"] is True
-    assert result["data"]["content"] == "v2"
+    assert result["data"]["content"] == "v2\n"
 
 
 async def test_git_file_head_parent(
@@ -130,7 +129,7 @@ async def test_git_file_head_parent(
     _load_project(plugin, "u:m", str(tmp_path))
 
     result = await _call_with_query(monkeypatch, plugin, ref="HEAD~1", path="README.md")
-    assert result["data"]["content"] == "v1"
+    assert result["data"]["content"] == "v1\n"
 
 
 async def test_git_file_nested_path(
@@ -218,6 +217,37 @@ async def test_git_file_truncates_oversized_blob(
 
 
 # ─── Error path ──────────────────────────────────────────────────────
+
+
+async def test_git_file_index_preserves_staged_contents_and_trailing_blank_lines(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    """The index baseline must differ from both HEAD and the working file."""
+    _init_git_repo_with_commits(tmp_path, [("a.txt", "committed\n")])
+    original = b"staged\n\n\n"
+    (tmp_path / "a.txt").write_bytes(original)
+    await asyncio.to_thread(
+        subprocess.run, ["git", "add", "a.txt"], cwd=tmp_path, check=True
+    )
+    (tmp_path / "a.txt").write_bytes(b"working\n")
+    _load_project(plugin, "u:m", str(tmp_path))
+    result = await _call_with_query(monkeypatch, plugin, path="a.txt", ref=":index")
+    assert result["data"]["loaded"] is True
+    assert result["data"]["ref"] == ":index"
+    assert result["data"]["content"] == original.decode("utf-8")
+    assert len(result["data"]["resolved_sha"]) == 40
+    head = await _call_with_query(monkeypatch, plugin, path="a.txt", ref="HEAD")
+    assert head["data"]["content"] == "committed\n"
+
+
+async def test_git_file_index_missing_file(
+    monkeypatch: pytest.MonkeyPatch, plugin: Any, tmp_path: Path
+) -> None:
+    _init_git_repo_with_commits(tmp_path, [("a.txt", "committed\n")])
+    _load_project(plugin, "u:m", str(tmp_path))
+    result = await _call_with_query(monkeypatch, plugin, path="missing.txt", ref=":index")
+    assert result["data"]["loaded"] is False
+    assert result["data"]["reason"] == "file_missing_at_ref"
 
 
 async def test_git_file_path_missing(

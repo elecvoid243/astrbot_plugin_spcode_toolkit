@@ -11,12 +11,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ._helpers import (
-    _JSONResponseCompat,
+    ReasonCode,
     _git_endpoint_preflight,
+    _JSONResponseCompat,
     _make_envelope,
     _run_git_async,
+    _run_git_async_bytes,
     _validate_repo_relative_file,
-    ReasonCode,
 )
 
 if TYPE_CHECKING:
@@ -39,21 +40,24 @@ def _qget(query: object, key: str, default: str | None = None) -> str | None:
 
 
 async def handle(
-    plugin: "SPCodeToolkit",
+    plugin: SPCodeToolkit,
     *,
     umo: str | None = None,
     worktree: str | None = None,
 ) -> dict:
-    """GET /spcode/git-file handler。
+    """Read a commit blob or the staged blob selected by ``ref=:index``.
 
-    Query 参数:
-      - ``ref``(默认 ``HEAD``):任意 git ref(commit / branch / tag / HEAD~n)
-      - ``path``:仓库相对路径(必填)
+    Args:
+        plugin: Plugin instance providing Git and project configuration.
+        umo: Project session identifier.
+        worktree: Optional validated worktree selection.
 
     Returns:
         ``{"status": "ok", "data": {loaded, directory, umo, worktree, ref,
         resolved_sha, path, content, is_binary, size, truncated, max_bytes,
         elapsed_ms, reason, stderr}}``
+        ``resolved_sha`` identifies a commit for normal refs and a blob for
+        ``:index``. Text content retains all trailing newlines.
     """
     t0 = _time.time()
 
@@ -134,18 +138,22 @@ async def handle(
     git_bin = plugin._git_binary()  # type: ignore[attr-defined]
     git_prefix = [git_bin, "-C", directory, "-c", "color.ui=never"]
 
-    # 1. 解析 ref → sha
+    # Resolve the index to an immutable blob so staging during the read cannot mix revisions.
+    revision = f":{target_path}" if ref == ":index" else f"{ref}^{{commit}}"
     resolve = await _run_git_async(
-        git_prefix + ["rev-parse", f"{ref}" + "^{commit}"],
+        git_prefix + ["rev-parse", "--verify", "--end-of-options", revision],
         encoding="utf-8",
     )
     if not resolve["ok"] or not resolve["stdout"]:
         stderr = (resolve.get("stderr", "") or resolve.get("error", "")).lower()
-        if (
+        if ref == ":index":
+            reason = ReasonCode.FILE_MISSING_AT_REF
+        elif (
             "bad revision" in stderr
             or "unknown revision" in stderr
             or "bad object" in stderr
             or "not a commit" in stderr
+            or "needed a single revision" in stderr
         ):
             reason = ReasonCode.REF_NOT_FOUND
         elif "does not have any commits" in stderr or "ambiguous" in stderr:
@@ -165,10 +173,10 @@ async def handle(
 
     resolved_sha = resolve["stdout"]
 
-    # 2. 读 blob
-    show = await _run_git_async(
-        git_prefix + ["show", f"{resolved_sha}:{target_path}"],
-        encoding="utf-8",
+    # Byte reads preserve meaningful trailing blank lines and exact blob contents.
+    blob = resolved_sha if ref == ":index" else f"{resolved_sha}:{target_path}"
+    show = await _run_git_async_bytes(
+        git_prefix + ["show", blob],
     )
     if not show["ok"]:
         stderr_lower = (show.get("stderr", "") or show.get("error", "")).lower()
@@ -213,11 +221,10 @@ async def handle(
         )
 
     # 3. binary 判定 + 截断
-    raw = show["stdout"]
-    raw_bytes = raw.encode("utf-8")
+    raw_bytes = show["stdout"]
     is_binary = b"\x00" in raw_bytes[:HEAD_BYTES]
     truncated = False
-    content = raw
+    content = raw_bytes.decode("utf-8", errors="replace")
     if is_binary:
         content = ""
     elif len(raw_bytes) > MAX_FILE_BLOB_BYTES:
