@@ -42,7 +42,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "break_before_braces": "attach",  # BreakBeforeBraces:花括号换行风格
     "pointer_alignment": "right",  # PointerAlignment:指针/引用贴靠方向
     "codegraph_enabled": True,  # 是否启用 codegraph MCP 集成
-    "codegraph_install_dir": "",  # codegraph 安装目录(含 node.exe);留空则不启动 MCP
+    "codegraph_install_dir": "",  # 留空依次查 tc_memory standalone 和 AstrBot external_tools
     "codegraph_project": "",  # codegraph daemon 默认操作的工程根目录
     "agentsmd_enabled": True,  # 是否启用 AGENTS.md 管理
     # inta_shell 配置(v2.5)

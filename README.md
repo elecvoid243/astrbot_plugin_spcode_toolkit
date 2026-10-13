@@ -154,8 +154,8 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `codegraph_enabled` | 布尔 | `true` | codegraph MCP 总开关。必须同时配置 `codegraph_install_dir` 才会启动 MCP server |
-| `codegraph_install_dir` | 字符串 | `""` | codegraph 安装目录（含 `node.exe` 的目录）。**必须显式配置才会启动 MCP**，留空则不启动 |
+| `codegraph_enabled` | 布尔 | `true` | codegraph MCP 总开关。找到可用安装目录后自动启动 MCP server |
+| `codegraph_install_dir` | 字符串 | `""` | 优先检查的 codegraph 安装目录；不可用时依次查找 tc_memory standalone 和 AstrBot external_tools |
 | `codegraph_project` | 字符串 | `""` | codegraph daemon 默认操作的工程根目录，以 `--path` 参数传给 codegraph |
 
 ### AGENTS.md 配置
@@ -426,15 +426,21 @@ codegraph index       # 可选--首次 explore 调用会懒加载
 | 字段 | 说明 |
 |------|------|
 | `codegraph_enabled` | 设为 `true`（默认） |
-| `codegraph_install_dir` | codegraph 包根目录（含 `node.exe` 的目录） |
+| `codegraph_install_dir` | 可选，优先检查的 codegraph 包根目录（含 `node.exe` 的目录） |
 
 **Windows**：如 `F:\tools\codegraph-win32-x64` - 需要里面同时含 `node.exe` 和 `lib\dist\bin\codegraph.js`（或根目录的 `codegraph.js`）。
 
 **Linux/macOS**：指向含 `node` 和 `codegraph.js` 的目录。
 
-填好后**重启 AstrBot**，spcode 插件会启动 MCP server 并把 `codegraph_explore` 工具注入到 LLM。
+配置或部署后**重启 AstrBot**，spcode 插件会启动 MCP server 并把 `codegraph_explore` 工具注入到 LLM。
 
-> **如果未配置 `codegraph_install_dir`**：MCP server 不会启动（不会自动扫描系统），LLM 看不到 `codegraph_explore` 工具。`/codegraph init|uninit` 命令仍可通过 auto-detect 工作（前提是 `codegraph` 在系统 PATH 中）。
+MCP 启动与 `/codegraph init|uninit` 共用以下查找顺序：
+
+1. 用户配置的 `codegraph_install_dir`（未配置则跳过）。
+2. AstrBot 插件目录下的 `astrbot_plugin_tc_memory/standalone/codegraph-win32-x64`。
+3. AstrBot 根目录下的 `external_tools/codegraph-win32-x64`。
+
+目录不存在或缺少 Node / `codegraph.js` 时继续检查下一级；全部不可用时跳过 MCP 启动并记录日志。`codegraph.js` 优先从 `lib/dist/bin/` 查找，也兼容安装目录根下的同名文件。
 
 ### 管理员命令
 

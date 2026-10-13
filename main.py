@@ -103,7 +103,7 @@ _DEFAULT_CONFIG = {
     "cppcheck_shortcircuit": "error",  # cppcheck 短路策略：error/warning/never（仅 auto 模式生效）
     "cppcheck_enable": [],  # cppcheck 启用的额外检查类目（空=只报 error）:warning/style/performance/portability
     "codegraph_enabled": True,  # 是否启用 codegraph MCP 集成
-    "codegraph_install_dir": "",  # codegraph 安装目录（空值由 AstrBot 内置 external_tools 默认路径填充）
+    "codegraph_install_dir": "",  # 优先使用配置目录,再查 tc_memory standalone 和 external_tools
     "codegraph_project": "",  # codegraph daemon 默认操作的工程根目录
     "agentsmd_enabled": True,  # 是否启用 AGENTS.md 管理
     "allowed_ids": "",  # 逗号分隔额外允许的用户 ID

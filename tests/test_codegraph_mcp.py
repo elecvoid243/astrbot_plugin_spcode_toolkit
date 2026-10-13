@@ -273,8 +273,7 @@ def test_candidate_npm_roots_returns_list():
 
 
 def test_detect_windows_bundled(monkeypatch, tmp_path):
-    # 构造一个 mock 的 npm 全局安装目录
-    pkg_dir = tmp_path / "node_modules" / "@colbymchenry" / "codegraph-win32-x64"
+    pkg_dir = tmp_path / "external_tools" / "codegraph-win32-x64"
     pkg_dir.mkdir(parents=True)
     (pkg_dir / "node.exe").write_bytes(b"")
     (pkg_dir / "lib" / "dist" / "bin").mkdir(parents=True)
@@ -282,8 +281,8 @@ def test_detect_windows_bundled(monkeypatch, tmp_path):
 
     monkeypatch.setattr("sys.platform", "win32")
     monkeypatch.setattr(
-        "tools._codegraph_mcp.candidate_npm_roots",
-        lambda: [str(tmp_path)],
+        "tools._codegraph_mcp.codegraph_install_dirs",
+        lambda install_dir=None: [pkg_dir],
     )
 
     cfg = detect_codegraph_launcher()
@@ -297,35 +296,42 @@ def test_detect_windows_bundled(monkeypatch, tmp_path):
 def test_detect_windows_no_bundled(monkeypatch, tmp_path):
     monkeypatch.setattr("sys.platform", "win32")
     monkeypatch.setattr(
-        "tools._codegraph_mcp.candidate_npm_roots",
-        lambda: [str(tmp_path / "nonexistent")],
+        "tools._codegraph_mcp.codegraph_install_dirs",
+        lambda install_dir=None: [tmp_path / "nonexistent"],
     )
     monkeypatch.setattr(shutil, "which", lambda x: None)
     cfg = detect_codegraph_launcher()
     assert cfg is None  # Windows 找不到 bundled → 优雅放弃
 
 
-def test_detect_unix_which(monkeypatch, tmp_path):
-    fake_bin = tmp_path / "codegraph"
+def test_detect_unix_bundled(monkeypatch, tmp_path):
+    fake_bin = tmp_path / "node"
     fake_bin.write_text("#!/bin/sh\n")
     fake_bin.chmod(0o755)
+    (tmp_path / "codegraph.js").write_text("", encoding="utf-8")
 
     monkeypatch.setattr("sys.platform", "linux")
     monkeypatch.setattr(
-        shutil, "which", lambda x: str(fake_bin) if x == "codegraph" else None
+        "tools._codegraph_mcp.codegraph_install_dirs",
+        lambda install_dir=None: [tmp_path],
     )
 
     cfg = detect_codegraph_launcher()
     assert cfg is not None
     assert cfg["command"] == str(fake_bin)
-    assert cfg["args"] == ["serve", "--mcp"]
+    assert cfg["args"] == [
+        "--liftoff-only",
+        str(tmp_path / "codegraph.js"),
+        "serve",
+        "--mcp",
+    ]
 
 
 def test_detect_not_found(monkeypatch):
     monkeypatch.setattr("sys.platform", "linux")
     monkeypatch.setattr(
-        "tools._codegraph_mcp.candidate_npm_roots",
-        lambda: [],
+        "tools._codegraph_mcp.codegraph_install_dirs",
+        lambda install_dir=None: [],
     )
     monkeypatch.setattr(shutil, "which", lambda x: None)
     cfg = detect_codegraph_launcher()
@@ -334,14 +340,14 @@ def test_detect_not_found(monkeypatch):
 
 def test_detect_windows_partial_install(monkeypatch, tmp_path):
     # 只有 node.exe 没有 codegraph.js → 视为未安装
-    pkg_dir = tmp_path / "node_modules" / "@colbymchenry" / "codegraph-win32-x64"
+    pkg_dir = tmp_path / "external_tools" / "codegraph-win32-x64"
     pkg_dir.mkdir(parents=True)
     (pkg_dir / "node.exe").write_bytes(b"")
 
     monkeypatch.setattr("sys.platform", "win32")
     monkeypatch.setattr(
-        "tools._codegraph_mcp.candidate_npm_roots",
-        lambda: [str(tmp_path)],
+        "tools._codegraph_mcp.codegraph_install_dirs",
+        lambda install_dir=None: [pkg_dir],
     )
     cfg = detect_codegraph_launcher()
     assert cfg is None
@@ -479,7 +485,7 @@ def test_detect_from_install_dir_unix_node(monkeypatch, tmp_path):
 
 
 def test_detect_launcher_with_install_dir_skips_auto(monkeypatch, tmp_path):
-    """传入 install_dir → 完全不调 auto-detect(即使环境有其它 codegraph 安装)。"""
+    """有效的 install_dir 优先于其余自动检测候选。"""
     # 构造一个合法 install_dir
     pkg_dir = tmp_path / "user-configured"
     pkg_dir.mkdir()
@@ -488,35 +494,37 @@ def test_detect_launcher_with_install_dir_skips_auto(monkeypatch, tmp_path):
     (pkg_dir / "lib" / "dist" / "bin" / "codegraph.js").write_text("")
     monkeypatch.setattr("sys.platform", "win32")
 
-    # 即使 candidate_npm_roots 返回空(没其它安装),install_dir 仍能用
-    monkeypatch.setattr("tools._codegraph_mcp.candidate_npm_roots", lambda: [])
+    monkeypatch.setattr(
+        "tools._codegraph_mcp.codegraph_install_dirs",
+        lambda install_dir=None: [Path(install_dir), tmp_path / "fallback"],
+    )
     cfg = detect_codegraph_launcher(install_dir=str(pkg_dir))
     assert cfg is not None
     assert cfg["command"].endswith("node.exe")
 
 
 def test_detect_launcher_with_invalid_install_dir_returns_none(monkeypatch, tmp_path):
-    """传入 install_dir 但目录无效 → 返回 None,不调 auto-detect。"""
+    """配置目录和其余候选均无效时返回 None。"""
     monkeypatch.setattr("sys.platform", "win32")
-    # 即使 auto-detect 能找到,无效 install_dir 仍优先返回 None
     monkeypatch.setattr(
-        "tools._codegraph_mcp.candidate_npm_roots",
-        lambda: [str(tmp_path / "fake")],
+        "tools._codegraph_mcp.codegraph_install_dirs",
+        lambda install_dir=None: [Path(install_dir), tmp_path / "fake"],
     )
     cfg = detect_codegraph_launcher(install_dir="Z:/nonexistent")
     assert cfg is None
 
 
 def test_detect_launcher_no_install_dir_falls_back_to_auto(monkeypatch, tmp_path):
-    """不传 install_dir → 走 auto-detect(给 CLI 命令用)。"""
-    pkg_dir = tmp_path / "node_modules" / "@colbymchenry" / "codegraph-win32-x64"
+    """不传 install_dir 时检测内置目录(给 CLI 和 MCP 共用)。"""
+    pkg_dir = tmp_path / "external_tools" / "codegraph-win32-x64"
     pkg_dir.mkdir(parents=True)
     (pkg_dir / "node.exe").write_bytes(b"")
     (pkg_dir / "lib" / "dist" / "bin").mkdir(parents=True)
     (pkg_dir / "lib" / "dist" / "bin" / "codegraph.js").write_text("")
     monkeypatch.setattr("sys.platform", "win32")
     monkeypatch.setattr(
-        "tools._codegraph_mcp.candidate_npm_roots", lambda: [str(tmp_path)]
+        "tools._codegraph_mcp.codegraph_install_dirs",
+        lambda install_dir=None: [pkg_dir],
     )
     cfg = detect_codegraph_launcher()  # install_dir 默认 None
     assert cfg is not None

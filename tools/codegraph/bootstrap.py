@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 from astrbot.api import logger
 
@@ -40,16 +41,13 @@ except ImportError:
     MCPShutdownTimeoutError = None  # type: ignore
 
 
-def build_mcp_cfg(plugin) -> dict | None:
+def build_mcp_cfg(plugin: Any) -> dict | None:
     """根据 plugin._config 构造 codegraph MCP 启动配置。
 
     供 bootstrap_mcp 与 CodegraphManager.set_project 重启复用。
-    Returns None 如果 install_dir 未配置或验证失败(详细原因已在
-    _detect_from_install_dir 内 logger.warning)。
+    Returns None 如果所有候选安装目录都不可用(详细原因通过 logger.warning 给出)。
     """
     install_dir = (plugin._config.get("codegraph_install_dir") or "").strip()
-    if not install_dir:
-        return None
     cfg = detect_codegraph_launcher(install_dir=install_dir)
     if not cfg:
         return None
@@ -61,13 +59,13 @@ def build_mcp_cfg(plugin) -> dict | None:
     return cfg
 
 
-async def bootstrap_mcp(plugin) -> None:
+async def bootstrap_mcp(plugin: Any) -> None:
     """插件加载后异步拉起 codegraph MCP server。失败不抛异常。
 
     行为:
     1. 双重 gate(防御性):__init__ 已 gate codegraph_enabled,函数本身也再 check
-    2. install_dir 未配置 → logger.info 跳过
-    3. build_mcp_cfg() 返回 None → logger.warning 跳过(install_dir 验证失败)
+    2. 按配置、tc_memory standalone、AstrBot external_tools 查找安装目录
+    3. build_mcp_cfg() 返回 None → logger.warning 跳过(未找到可用安装)
     4. stdio 白名单探针不通过 → logger.warning 跳过(见 tools/_stdio_allowlist.py)
     5. 若 mcp_server.json 已注册 codegraph,先 disable 再 enable(覆盖用户手写)
     6. 启动失败仅 logger.warning,不影响 spcode 其它工具
@@ -76,21 +74,11 @@ async def bootstrap_mcp(plugin) -> None:
     if not plugin._config.get("codegraph_enabled", True):
         return
     try:
-        # v2.1: 必须显式配置 install_dir 才会启动 MCP(去除 auto-detect)
-        install_dir = (plugin._config.get("codegraph_install_dir") or "").strip()
-        if not install_dir:
-            logger.info(
-                "codegraph_install_dir 未配置,跳过 MCP 集成"
-                "(spcode 其它工具照常工作;如需启用请配置 codegraph_install_dir)"
-            )
-            return
-
         cfg = build_mcp_cfg(plugin)
         if not cfg:
-            # install_dir 已配置但 _detect_from_install_dir 验证失败,
-            # 详细原因已在 _detect_from_install_dir 内 logger.warning
             logger.warning(
-                f"codegraph_install_dir 验证失败,MCP 不启动: {install_dir!r}"
+                "未找到可用的 codegraph 安装目录,跳过 MCP 集成"
+                "(已检查配置、tc_memory standalone 和 AstrBot external_tools)"
             )
             return
 

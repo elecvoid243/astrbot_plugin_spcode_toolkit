@@ -2,7 +2,7 @@
 _codegraph_mcp — codegraph 官方 MCP server 集成的纯函数工具集。
 
 - SHELL_META_RE / SYSTEM_DIR_BLACKLIST: 与 mcp_client.py:50 保持完全一致
-- detect_codegraph_launcher: 平台特定启动器检测 (Win bundled, Unix PATH)
+- detect_codegraph_launcher: 按配置、tc_memory、AstrBot 内置目录检测启动器
 - build_cli_launcher: 给 /codegraph init|uninit 命令构造进程参数
 - candidate_npm_roots: 列举 npm 全局根目录候选
 - resolve_project_path: 校验 + 解析用户输入的项目目录
@@ -23,6 +23,8 @@ from astrbot.api import logger
 
 # v2.9: 代码文件检测(共享内部模块)。仅在调用方传入 require_code_files=True 时启用。
 from ._code_detect import CODE_FILE_EXTENSIONS, has_code_files  # noqa: F401
+from ._external_tools import codegraph_install_dirs
+from ._path_safety import is_path_safe
 
 # 与 mcp_client.py:50 的 _SHELL_META_RE 完全一致
 SHELL_META_RE = re.compile(r"[\r\n\x00;&|<>`$]")
@@ -175,7 +177,7 @@ def candidate_npm_roots() -> list[str]:
 
 
 def _detect_from_install_dir(install_dir: str) -> dict | None:
-    """从用户显式提供的 codegraph 安装目录构造启动器。
+    """从 codegraph 安装目录构造启动器。
 
     期望目录结构(以 Windows npm 全局安装为例):
         {install_dir}/
@@ -192,30 +194,30 @@ def _detect_from_install_dir(install_dir: str) -> dict | None:
     """
     p = Path(install_dir)
     if not p.is_dir():
-        logger.warning(f"codegraph_install_dir 不存在或不是目录: {install_dir!r}")
+        logger.warning(f"codegraph 安装目录不存在或不是目录: {install_dir!r}")
         return None
 
     is_windows = sys.platform == "win32"
     node_exe_name = "node.exe" if is_windows else "node"
     node_exe = p / node_exe_name
-    if not node_exe.exists():
+    if not node_exe.is_file():
         logger.warning(
-            f"codegraph_install_dir 缺少 {node_exe_name}: {p}"
+            f"codegraph 安装目录缺少 {node_exe_name}: {p}"
             "(请确认是 codegraph 包的根目录,内含 bundled node)"
         )
         return None
 
     # 优先 lib/dist/bin/codegraph.js(npm 全局布局);fallback 找同级 codegraph.js
     entry = p / "lib" / "dist" / "bin" / "codegraph.js"
-    if not entry.exists():
+    if not entry.is_file():
         entry = p / "codegraph.js"
-    if not entry.exists():
+    if not entry.is_file():
         logger.warning(
-            f"codegraph_install_dir 缺少 codegraph.js(尝试过 lib/dist/bin/ 和根): {p}"
+            f"codegraph 安装目录缺少 codegraph.js(尝试过 lib/dist/bin/ 和根): {p}"
         )
         return None
 
-    logger.info(f"使用 codegraph_install_dir 显式路径: {p}")
+    logger.info(f"使用 codegraph 安装目录: {p}")
     return {
         "type": "stdio",
         "command": str(node_exe),
@@ -229,53 +231,26 @@ def _detect_from_install_dir(install_dir: str) -> dict | None:
 
 
 def detect_codegraph_launcher(install_dir: str | None = None) -> dict | None:
-    """跨平台检测 codegraph 启动器。
+    """按配置、tc_memory standalone、AstrBot external_tools 检测启动器。
 
     Args:
-        install_dir: 用户显式配置的安装目录(优先级最高);为 None 时走自动检测
+        install_dir: 用户显式配置的安装目录(优先级最高)。
 
     Returns:
         {"type": "stdio", "command": str, "args": list[str]} 或 None(未安装)
 
     行为:
-    - 若 install_dir 显式传入:仅在该目录内查找,失败返回 None
-    - 若 install_dir 为 None:走自动检测
-        - Windows:扫 npm 全局根目录找 @colbymchenry/codegraph-win32-x64 bundled node.exe
-        - macOS/Linux:shutil.which("codegraph")
+    每个候选目录都须包含 node.exe(Unix 为 node)与 codegraph.js。
+    目录不存在或文件不完整时继续检查下一候选;全部失败返回 None。
     """
-    if install_dir:
-        return _detect_from_install_dir(install_dir)
-
-    if sys.platform == "win32":
-        for npm_root in candidate_npm_roots():
-            pkg_dir = (
-                Path(npm_root)
-                / "node_modules"
-                / "@colbymchenry"
-                / "codegraph-win32-x64"
-            )
-            node_exe = pkg_dir / "node.exe"
-            entry = pkg_dir / "lib" / "dist" / "bin" / "codegraph.js"
-            if node_exe.exists() and entry.exists():
-                return {
-                    "type": "stdio",
-                    "command": str(node_exe),
-                    "args": [
-                        "--liftoff-only",  # 防 Node 22+ tree-sitter WASM Zone OOM
-                        str(entry),
-                        "serve",
-                        "--mcp",
-                    ],
-                }
-        return None
-    # macOS / Linux
-    cg = shutil.which("codegraph")
-    if cg:
-        return {
-            "type": "stdio",
-            "command": cg,
-            "args": ["serve", "--mcp"],
-        }
+    for directory in codegraph_install_dirs(install_dir):
+        safe, reason = is_path_safe(directory)
+        if not safe:
+            logger.warning(f"跳过不安全的 codegraph 安装目录 {directory}: {reason}")
+            continue
+        cfg = _detect_from_install_dir(str(directory))
+        if cfg:
+            return cfg
     return None
 
 

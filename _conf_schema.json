@@ -158,18 +158,18 @@
   },
   "codegraph": {
     "description": "codegraph MCP",
-    "hint": "需指定codegraph安装目录",
+    "hint": "按配置目录、tc_memory standalone、AstrBot external_tools 的优先级查找。",
     "type": "object",
     "items": {
       "codegraph_enabled": {
         "description": "启用 codegraph MCP 集成",
-        "hint": "需同时配置 install_dir 才会启动 MCP server。",
+        "hint": "找到可用的 codegraph 安装目录后自动启动 MCP server。",
         "type": "bool",
         "default": true
       },
       "codegraph_install_dir": {
         "description": "安装目录(含 node.exe)",
-        "hint": "留空时优先使用 AstrBot 根目录/external_tools/codegraph-win32-x64；该目录下需包含node.exe，以及lib/dist/bin/codegraph.js",
+        "hint": "优先检查配置目录；不可用时依次检查插件目录/astrbot_plugin_tc_memory/standalone/codegraph-win32-x64、AstrBot 根目录/external_tools/codegraph-win32-x64。目录需包含 node.exe（Unix 为 node）和 lib/dist/bin/codegraph.js（也可位于根目录）。",
         "type": "string",
         "default": ""
       },

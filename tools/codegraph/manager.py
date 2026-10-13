@@ -268,7 +268,7 @@ class CodegraphManager:
             return
 
         # 2. 找 codegraph CLI 启动器
-        # 优先用用户配置的 install_dir;若未配置(单次命令场景),fallback 到 auto-detect
+        # WHY: CLI 与 MCP 启动共用安装目录优先级,避免操作不同的 codegraph 安装。
         install_dir = (
             self._plugin._config.get("codegraph_install_dir") or ""
         ).strip() or None
@@ -276,7 +276,8 @@ class CodegraphManager:
         cli_launcher = build_cli_launcher(mcp_cfg)
         if not cli_launcher:
             yield event.plain_result(
-                "❌ 找不到 codegraph CLI,请先 `npm install -g @colbymchenry/codegraph`"
+                "❌ 找不到 codegraph CLI,请配置 codegraph_install_dir,"
+                "或在 tc_memory standalone / AstrBot external_tools 中部署 codegraph"
             )
             return
 

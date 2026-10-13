@@ -84,30 +84,37 @@ class TestStateModule:
 class TestBuildMcpCfg:
     """build_mcp_cfg 边界场景。"""
 
-    def test_returns_none_when_install_dir_empty(self) -> None:
+    @pytest.fixture(autouse=True)
+    def isolate_installations(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Keep tests independent of installed codegraph packages on the host."""
+        from tools import _external_tools
+
+        monkeypatch.setattr(_external_tools, "get_astrbot_root", lambda: tmp_path)
+        monkeypatch.setattr(
+            _external_tools, "get_astrbot_plugin_path", lambda: tmp_path / "plugins"
+        )
+
+    def test_returns_none_when_install_dir_empty_and_no_bundles(self) -> None:
         plugin = MagicMock()
         plugin._config = {"codegraph_install_dir": ""}
         assert build_mcp_cfg(plugin) is None
 
-    def test_returns_none_when_install_dir_whitespace(self) -> None:
+    def test_returns_none_when_install_dir_whitespace_and_no_bundles(self) -> None:
         plugin = MagicMock()
         plugin._config = {"codegraph_install_dir": "   "}
         assert build_mcp_cfg(plugin) is None
 
-    def test_returns_none_when_install_dir_not_in_config(self) -> None:
+    def test_returns_none_when_install_dir_not_in_config_and_no_bundles(self) -> None:
         plugin = MagicMock()
         plugin._config = {}
         assert build_mcp_cfg(plugin) is None
 
-    def test_returns_none_when_detect_returns_none(self) -> None:
+    def test_returns_none_when_detect_returns_none(self, tmp_path: Path) -> None:
         plugin = MagicMock()
-        plugin._config = {"codegraph_install_dir": "C:\\invalid\\path"}
-        # 真实 detect_codegraph_launcher 会返回 None(路径无效)
-        # 这里没 mock,因为要验证真实行为
-        result = build_mcp_cfg(plugin)
-        # 可能返回 None(invalid path)或 dict(偶然有效)
-        # 不强制 assert — 只确保不抛异常
-        assert result is None or isinstance(result, dict)
+        plugin._config = {"codegraph_install_dir": str(tmp_path / "missing")}
+        assert build_mcp_cfg(plugin) is None
 
 
 # ── CodegraphManager ───────────────────────────────
