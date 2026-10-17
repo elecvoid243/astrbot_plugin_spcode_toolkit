@@ -27,6 +27,7 @@ from tools.agentsmd import (  # noqa: E402
     build_output_constraints,
     build_project_context,
     collect_git_history,
+    fit_generated_content,
     generate_agents_md_via_llm,
     has_code_files,
     pick_init_template,
@@ -1057,3 +1058,97 @@ def test_truncate_note_longer_than_limit_degrades_to_plain_cut():
     out = truncate_at_section("A" * 500, 10)
     assert len(out) == 10
     assert "截断" not in out
+
+
+# ── 2026-10-17: fit_generated_content ──────────────
+
+
+def test_fit_passthrough_within_limit_does_not_call_llm():
+    provider = _provider_returning("should not be used")
+    content = "# 项目指南\n\n" + "A" * 50
+    out, action = asyncio.run(
+        fit_generated_content(provider, content, umo="u", max_chars=10000)
+    )
+    assert (out, action) == (content, "none")
+    provider.text_chat.assert_not_called()
+
+
+def test_fit_zero_means_unlimited():
+    provider = _provider_returning("should not be used")
+    content = "A" * 50000
+    out, action = asyncio.run(
+        fit_generated_content(provider, content, umo="u", max_chars=0)
+    )
+    assert out == content
+    assert action == "none"
+    provider.text_chat.assert_not_called()
+
+
+def test_fit_compresses_once_with_session_id():
+    provider = _provider_returning("# 压缩版\n\n短")
+    out, action = asyncio.run(
+        fit_generated_content(provider, "A" * 200, umo="umo-x", max_chars=100)
+    )
+    assert (out, action) == ("# 压缩版\n\n短", "compressed")
+    assert provider.text_chat.call_count == 1
+    kwargs = provider.text_chat.call_args.kwargs
+    assert kwargs["session_id"] == "umo-x"
+    assert kwargs["contexts"] == []
+    assert "100" in kwargs["prompt"]
+
+
+def test_fit_falls_back_to_original_when_still_too_long():
+    """压缩仍超限 → 截断**原文**,不采用压缩半成品。"""
+    provider = _provider_returning("B" * 500)
+    content = "A" * 300 + "\n## 二\n" + "A" * 300
+    out, action = asyncio.run(
+        fit_generated_content(provider, content, umo="u", max_chars=200)
+    )
+    assert action == "truncated"
+    assert len(out) <= 200
+    assert out.startswith("A")
+    assert "B" not in out
+
+
+def test_fit_truncates_original_when_provider_is_none():
+    out, action = asyncio.run(
+        fit_generated_content(None, "A" * 500, umo="u", max_chars=120)
+    )
+    assert action == "truncated"
+    assert len(out) <= 120
+
+
+def test_fit_truncates_original_when_provider_raises():
+    provider = MagicMock()
+    provider.text_chat = AsyncMock(side_effect=RuntimeError("boom"))
+    out, action = asyncio.run(
+        fit_generated_content(provider, "A" * 500, umo="u", max_chars=120)
+    )
+    assert action == "truncated"
+    assert len(out) <= 120
+
+
+def test_fit_truncates_original_when_compression_empty():
+    provider = _provider_returning("")
+    out, action = asyncio.run(
+        fit_generated_content(provider, "A" * 500, umo="u", max_chars=120)
+    )
+    assert action == "truncated"
+    assert len(out) <= 120
+
+
+def test_fit_rejects_longer_compression():
+    provider = _provider_returning("C" * 900)
+    out, action = asyncio.run(
+        fit_generated_content(provider, "A" * 500, umo="u", max_chars=120)
+    )
+    assert action == "truncated"
+    assert "C" not in out
+
+
+def test_fit_accepts_compression_exactly_at_limit():
+    provider = _provider_returning("D" * 100)
+    out, action = asyncio.run(
+        fit_generated_content(provider, "A" * 500, umo="u", max_chars=100)
+    )
+    assert (out, action) == ("D" * 100, "compressed")

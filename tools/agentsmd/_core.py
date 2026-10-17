@@ -572,6 +572,78 @@ def truncate_at_section(content: str, max_chars: int) -> str:
     return body + note
 
 
+# 压缩用的 system_prompt 与 init 保持一致(同一 persona,避免风格漂移)
+_COMPRESS_SYSTEM_PROMPT = (
+    "你是一名资深软件工程师,擅长为多种语言的项目编写规范文档。"
+)
+
+
+def _build_compress_prompt(max_chars: int, content: str) -> str:
+    """构造压缩 prompt。
+
+    WHY 不用 ``str.format``: 草稿正文里可能含 ``{}``(JSON 片段 / 代码块),
+    ``.format`` 会把它们当占位符抛 KeyError。f-string 只解释字面量部分。
+    """
+    return (
+        "下面是一份 AGENTS.md 草稿，长度超过上限。"
+        "请在保留全部事实信息与章节结构的前提下压缩它。\n\n"
+        "要求：\n"
+        f"- 目标长度不超过 {max_chars} 字\n"
+        "- 不新增原文没有的事实\n"
+        "- 保留命令、路径、文件名、配置键名等可执行细节\n"
+        "- 直接输出压缩后的 Markdown，不要任何额外说明，也不要用代码块包裹\n\n"
+        f"草稿：\n{content}"
+    )
+
+
+async def fit_generated_content(
+    provider,
+    content: str,
+    *,
+    umo: str,
+    max_chars: int,
+) -> tuple[str, str]:
+    """把自动生成的内容压到 ``max_chars`` 以内。
+
+    判定顺序(短路):
+        1. ``max_chars <= 0`` 或未超限 → ``(content, "none")``,**不调用 LLM**
+        2. ``provider is None`` → 直接截断原文
+        3. 压缩成功(非空 / 更短 / 落在上限内) → ``(new, "compressed")``
+        4. 其余(异常 / 空 / 更长 / 仍超限) → 截断**原文**
+
+    WHY 第 4 条用原文: 压缩失败的产物是不可信的半成品,拿它截断等于
+    把"压缩时被删掉的事实"和"截断丢掉的小节"叠加两次损失。
+
+    Returns:
+        ``(最终内容, "none" | "compressed" | "truncated")``
+    """
+    if max_chars <= 0 or len(content) <= max_chars:
+        return content, "none"
+    if provider is None:
+        return truncate_at_section(content, max_chars), "truncated"
+
+    try:
+        llm_resp = await provider.text_chat(
+            prompt=_build_compress_prompt(max_chars, content),
+            session_id=umo,
+            contexts=[],
+            system_prompt=_COMPRESS_SYSTEM_PROMPT,
+        )
+    except Exception as e:
+        logger.warning(f"[agentsmd] 压缩重写失败,回退截断: {e}")
+        return truncate_at_section(content, max_chars), "truncated"
+
+    candidate = (getattr(llm_resp, "completion_text", "") or "").strip()
+    candidate = strip_code_fence(candidate).strip()
+    if 0 < len(candidate) < len(content) and len(candidate) <= max_chars:
+        return candidate, "compressed"
+    logger.debug(
+        f"[agentsmd] 压缩结果不可用(长度 {len(candidate)} / 原文 {len(content)} "
+        f"/ 上限 {max_chars}),回退截断"
+    )
+    return truncate_at_section(content, max_chars), "truncated"
+
+
 # v2.22 (2026-07-27): PROJECT_PATH_PREFIX_TEMPLATE 已移除。
 # 路径注入与 agentsmd 解耦,改由 project 子系统负责
 # (tools/_guidance_text.py: PROJECT_PATH_GUIDANCE_TEMPLATE +
