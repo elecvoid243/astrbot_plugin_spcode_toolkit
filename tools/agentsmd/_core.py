@@ -519,6 +519,59 @@ async def generate_agents_md_via_llm(
     return content if content else DEFAULT_AGENTS_MD
 
 
+# ── 长度护栏(2026-10-17) ───────────────────────────
+# WHY: init / update 由 LLM 直接产出全文并原样写盘,一个跑偏的生成结果
+# 会永久留在磁盘上,并在之后每次 LLM 请求中注入 system_prompt。
+# 护栏只作用于自动生成;手工编辑的文件不受限制(用户显式意图优先)。
+DEFAULT_MAX_CHARS: int = 10000
+
+
+def resolve_max_chars(config: dict | None) -> int:
+    """从插件 config 解析 ``agentsmd_max_chars``。
+
+    返回值语义:
+        - ``> 0``: 硬性字符上限
+        - ``0``: 不限制(显式配置 0 或负数,均视为不限)
+        - 缺失 / ``None`` / 无法转 int: 回退 :data:`DEFAULT_MAX_CHARS`
+
+    WHY 负数归一成 0: 用户把开关"调过头"时按"不限"处理比按"极小值"
+    处理更符合直觉,也不会把文件切成几行。
+    """
+    raw = (config or {}).get("agentsmd_max_chars", DEFAULT_MAX_CHARS)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_CHARS
+    return 0 if value < 0 else value
+
+
+def truncate_at_section(content: str, max_chars: int) -> str:
+    """按 Markdown 边界截断,并追加一行截断标注。
+
+    切点优先级: 小节(``\\n## ``) > 段落(``\\n\\n``) > 行(``\\n``) > 硬切。
+    标注长度**计入预算**,保证返回值长度不超过 ``max_chars``;
+    若 ``max_chars`` 小到放不下标注,则退化为无标注硬切。
+    """
+    if max_chars <= 0 or len(content) <= max_chars:
+        return content
+
+    original = len(content)
+    note = f"\n\n> （已按 agentsmd_max_chars={max_chars} 截断，原文 {original} 字）"
+    budget = max_chars - len(note)
+    if budget <= 0:
+        return content[:max_chars]
+
+    head = content[:budget]
+    cut = -1
+    for sep in ("\n## ", "\n\n", "\n"):
+        idx = head.rfind(sep)
+        if idx > 0:
+            cut = idx
+            break
+    body = (head[:cut] if cut > 0 else head).rstrip()
+    return body + note
+
+
 # v2.22 (2026-07-27): PROJECT_PATH_PREFIX_TEMPLATE 已移除。
 # 路径注入与 agentsmd 解耦,改由 project 子系统负责
 # (tools/_guidance_text.py: PROJECT_PATH_GUIDANCE_TEMPLATE +

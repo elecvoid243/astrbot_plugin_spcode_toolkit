@@ -21,6 +21,7 @@ from tools.agentsmd import (  # noqa: E402
     DEFAULT_INIT_TEMPLATE,
     DEFAULT_INIT_TEMPLATE_GENERAL,
     DEFAULT_INJECTION_HEADER,
+    DEFAULT_MAX_CHARS,
     INJECTION_MARKER,
     build_injection,
     build_output_constraints,
@@ -30,8 +31,10 @@ from tools.agentsmd import (  # noqa: E402
     has_code_files,
     pick_init_template,
     resolve_init_template,
+    resolve_max_chars,
     scan_project_context,
     strip_code_fence,
+    truncate_at_section,
 )
 
 
@@ -988,3 +991,69 @@ def test_has_code_files_multilevel_skip_dirs(tmp_path):
     (nested / "x.py").write_text("x = 1")
     (tmp_path / "src" / "real.py").write_text("x = 1")
     assert has_code_files(tmp_path) is True, "src/real.py 应被识别"
+
+
+# ── 2026-10-17: 长度护栏(纯逻辑) ────────────────────
+
+
+def test_resolve_max_chars_defaults():
+    assert DEFAULT_MAX_CHARS == 10000
+    assert resolve_max_chars(None) == 10000
+    assert resolve_max_chars({}) == 10000
+    assert resolve_max_chars({"agentsmd_max_chars": 1234}) == 1234
+    assert resolve_max_chars({"agentsmd_max_chars": "2000"}) == 2000
+    assert resolve_max_chars({"agentsmd_max_chars": None}) == 10000
+    assert resolve_max_chars({"agentsmd_max_chars": "abc"}) == 10000
+
+
+def test_resolve_max_chars_negative_means_unlimited():
+    assert resolve_max_chars({"agentsmd_max_chars": -1}) == 0
+    assert resolve_max_chars({"agentsmd_max_chars": 0}) == 0
+
+
+def test_truncate_noop_within_limit_or_unlimited():
+    assert truncate_at_section("abc", 10) == "abc"
+    big = "A" * 500
+    assert truncate_at_section(big, 0) == big
+
+
+def test_truncate_prefers_section_boundary():
+    """优先在小节边界(\n## )切开,标注里写明原文长度。"""
+    content = "# 标题\n\n## 甲\n\n" + "A" * 40 + "\n## 乙\n\n" + "B" * 400
+    out = truncate_at_section(content, 120)
+    assert len(out) <= 120
+    assert "## 甲" in out
+    assert "## 乙" not in out
+    assert "截断" in out
+    assert str(len(content)) in out
+
+
+def test_truncate_falls_back_to_paragraph_boundary():
+    content = "A" * 40 + "\n\n" + "B" * 200
+    out = truncate_at_section(content, 100)
+    assert len(out) <= 100
+    assert "B" not in out
+    assert "截断" in out
+
+
+def test_truncate_falls_back_to_line_boundary():
+    # 填充字符用 "Z" 而非 "x": 标注文本含 agentsmd_ma**x**_chars,
+    # 用 "x" 会让 `"x" not in out` 命中标注本身(假失败)。
+    content = "line1\nline2\n" + "Z" * 300
+    out = truncate_at_section(content, 60)
+    assert len(out) <= 60
+    assert "Z" not in out
+    assert "line1" in out
+
+
+def test_truncate_hard_cut_when_no_boundary():
+    """无任何换行时硬切;标注长度计入预算,结果精确等于上限。"""
+    out = truncate_at_section("A" * 500, 60)
+    assert len(out) == 60
+
+
+def test_truncate_note_longer_than_limit_degrades_to_plain_cut():
+    """配置值极小、标注本身放不下时退化为无标注硬切,不允许越界。"""
+    out = truncate_at_section("A" * 500, 10)
+    assert len(out) == 10
+    assert "截断" not in out

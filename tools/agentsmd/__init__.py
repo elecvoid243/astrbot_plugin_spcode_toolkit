@@ -22,6 +22,7 @@ from ._core import (
     DEFAULT_INIT_TEMPLATE,
     DEFAULT_INIT_TEMPLATE_GENERAL,
     DEFAULT_INJECTION_HEADER,
+    DEFAULT_MAX_CHARS,
     INJECTION_MARKER,
     KEY_PROJECT_FILES,
     _SKIP_DIRS,  # noqa: F401  (向后兼容 — 老代码 from tools import agentsmd; a._SKIP_DIRS)
@@ -33,9 +34,11 @@ from ._core import (
     has_code_files,
     pick_init_template,
     resolve_init_template,
+    resolve_max_chars,
     scan_project_context,
     strip_code_fence,
     strip_surrounding_quotes,
+    truncate_at_section,
 )
 from ._handlers import AgentsmdHandlers
 from ._state import AgentsState, AgentsStateManager
@@ -48,6 +51,7 @@ __all__ = [
     "DEFAULT_INIT_TEMPLATE",
     "DEFAULT_INIT_TEMPLATE_GENERAL",
     "DEFAULT_INJECTION_HEADER",
+    "DEFAULT_MAX_CHARS",
     "INJECTION_MARKER",
     "KEY_PROJECT_FILES",
     # helpers
@@ -59,9 +63,11 @@ __all__ = [
     "has_code_files",
     "pick_init_template",
     "resolve_init_template",
+    "resolve_max_chars",
     "scan_project_context",
     "strip_code_fence",
     "strip_surrounding_quotes",
+    "truncate_at_section",
     # subsystem
     "AgentsmdSubsystem",
     "AgentsmdHandlers",
