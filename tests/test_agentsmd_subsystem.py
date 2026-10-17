@@ -735,6 +735,37 @@ async def test_init_message_unchanged_when_within_limit(tmp_path: Path):
     assert provider.text_chat.call_count == 1
 
 
+async def test_update_keeps_manual_content_when_llm_returns_empty(tmp_path: Path):
+    """LLM 空产出时,手工维护的内容必须逐字保留(护栏不得碰用户文件)。"""
+    proj = tmp_path / "proj6"
+    proj.mkdir()
+    manual = "# 项目指南\n\n" + "\n\n".join(
+        f"## 小节{i}\n\n" + "M" * 200 for i in range(15)
+    )
+    agents_md = proj / "AGENTS.md"
+    agents_md.write_text(manual, encoding="utf-8")
+    h, mgr, provider = _make_guarded_handlers([""], max_chars=200)
+    mgr.set(
+        "umo-1",
+        AgentsState(
+            path=str(agents_md),
+            directory=str(proj),
+            last_content=manual,
+            mtime=agents_md.stat().st_mtime,
+        ),
+    )
+
+    msgs = []
+    async for msg in h.update(_make_event("umo-1")):
+        msgs.append(msg)
+
+    assert len(manual) > 200  # 前提:确实超限,护栏若被调用必然动手
+    assert agents_md.read_text(encoding="utf-8") == manual
+    assert provider.text_chat.call_count == 1  # 空产出后不得再调压缩
+    assert "已截断" not in "".join(msgs)
+    assert "已压缩" not in "".join(msgs)
+
+
 # ── 导出符号完整性 ──────────────────────────────────
 
 

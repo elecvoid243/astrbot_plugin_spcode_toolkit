@@ -282,14 +282,23 @@ class AgentsmdHandlers:
             yield event.plain_result(f"LLM 调用失败: {e}")
             return
 
-        new_content = (getattr(llm_resp, "completion_text", "") or "").strip()
-        new_content = strip_code_fence(new_content)
-        new_content = new_content if new_content else existing_content
-        original_len = len(new_content)
-        # 2026-10-17: 与 init 同一护栏;写盘前压到上限内
-        new_content, fit_action = await fit_generated_content(
-            provider, new_content, umo=umo, max_chars=max_chars
-        )
+        generated = (getattr(llm_resp, "completion_text", "") or "").strip()
+        generated = strip_code_fence(generated)
+        if generated:
+            # 2026-10-17: 与 init 同一护栏;写盘前压到上限内
+            original_len = len(generated)
+            new_content, fit_action = await fit_generated_content(
+                provider, generated, umo=umo, max_chars=max_chars
+            )
+        else:
+            # LLM 空产出(内容过滤 / 超时静默)时必须原样保留手工内容。
+            # WHY: existing_content 是用户自己写的,spec 明示"手工编辑不受限制";
+            # 让它过护栏 = 用户数据被静默截断,且 write_text 无备份。
+            new_content, fit_action, original_len = (
+                existing_content,
+                "none",
+                len(existing_content),
+            )
         suffix = _fit_suffix(fit_action, len(new_content), original_len)
 
         try:

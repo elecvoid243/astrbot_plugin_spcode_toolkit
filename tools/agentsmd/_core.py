@@ -415,7 +415,7 @@ async def collect_git_history(
         line = raw.strip()
         if not line:
             continue
-        # 截的是"主题"(保留短哈希,否则哈希会被吃掉,详见 _GIT_HISTORY_MAX_SUBJECT 语义)
+        # 截的是"主题":短哈希单独保留、主题单独封顶,行宽因此可预期(≤ 208)
         sha, sep, subject = line.partition(" ")
         if sep and len(subject) > _GIT_HISTORY_MAX_SUBJECT:
             line = f"{sha} {subject[:_GIT_HISTORY_MAX_SUBJECT]}"
@@ -450,7 +450,7 @@ async def build_project_context(
 ) -> str:
     """构造完整的生成上下文:目录扫描 + (可选)最近提交历史。
 
-    WHY 单独一层包装: ``scan_project_context`` 是纯函数,既有 6 个 scan
+    WHY 单独一层包装: ``scan_project_context`` 是纯函数,既有 11 个 scan
     用例与第三方调用都依赖它的输出不变;历史采集是异步 / 有副作用(起子进程),
     只在包装层追加,不污染扫描函数。
     """
