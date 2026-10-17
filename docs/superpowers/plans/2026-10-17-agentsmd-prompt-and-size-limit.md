@@ -715,10 +715,12 @@ def test_truncate_falls_back_to_paragraph_boundary():
 
 
 def test_truncate_falls_back_to_line_boundary():
-    content = "line1\nline2\n" + "x" * 300
+    # 填充字符用 "Z" 而非 "x": 标注里含 agentsmd_ma**x**_chars,
+    # 用 "x" 会让 `"x" not in out` 命中标注本身(假失败)。
+    content = "line1\nline2\n" + "Z" * 300
     out = truncate_at_section(content, 60)
     assert len(out) <= 60
-    assert "x" not in out
+    assert "Z" not in out
     assert "line1" in out
 
 
