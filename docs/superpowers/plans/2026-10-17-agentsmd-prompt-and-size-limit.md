@@ -1059,7 +1059,7 @@ git commit -m "feat(agentsmd): 超限压缩一次,失败回退小节截断"
 
 - [ ] **Step 1: 写失败的配置测试**
 
-`tests/test_agentsmd.py` 顶部补 `import json`（若未导入），追加：
+`tests/test_agentsmd.py` 顶部补 `import json` 与 `import re`（若未导入），追加：
 
 ```python
 # ── 2026-10-17: 配置项 ─────────────────────────────
@@ -1076,15 +1076,15 @@ def test_conf_schema_declares_agentsmd_max_chars():
 
 
 def test_main_default_config_declares_agentsmd_max_chars():
-    """_DEFAULT_CONFIG 与 schema 默认值必须一致(两处事实源)。"""
-    pytest.importorskip("astrbot")
-    import importlib
+    """_DEFAULT_CONFIG 与 schema 默认值必须一致(两处事实源)。
 
-    try:
-        main = importlib.import_module("astrbot_plugin_spcode_toolkit.main")
-    except ImportError:
-        pytest.skip("插件包不在 sys.path(独立测试环境)")
-    assert main._DEFAULT_CONFIG["agentsmd_max_chars"] == DEFAULT_MAX_CHARS
+    刻意不 import main.py: 该模块会拉起整个 AstrBot 框架(~7s)且有副作用;
+    这条只需校验"字面量与 DEFAULT_MAX_CHARS 一致"。
+    """
+    src = (ROOT / "main.py").read_text(encoding="utf-8")
+    m = re.search(r'"agentsmd_max_chars":\s*(\d+)', src)
+    assert m, "main.py::_DEFAULT_CONFIG 缺少 agentsmd_max_chars"
+    assert int(m.group(1)) == DEFAULT_MAX_CHARS
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
