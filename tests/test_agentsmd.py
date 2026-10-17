@@ -37,6 +37,41 @@ def test_constants_not_empty():
     assert INJECTION_MARKER in DEFAULT_INJECTION_HEADER
 
 
+# ── 2026-10-17: Codex 风格模板(章节清单 + 反编造 + 篇幅) ──
+
+
+def test_code_template_has_section_checklist():
+    """代码目录模板必须列出可增删的章节清单(Codex prompt 的核心结构)。"""
+    for heading in (
+        "## 项目结构与模块组织",
+        "## 构建、测试与本地开发",
+        "## 代码风格与命名约定",
+        "## 测试规范",
+        "## 提交与 PR 规范",
+    ):
+        assert heading in DEFAULT_INIT_TEMPLATE, heading
+
+
+def test_code_template_states_language_length_and_no_fabrication():
+    assert "# 项目指南" in DEFAULT_INIT_TEMPLATE
+    assert "1200–2500" in DEFAULT_INIT_TEMPLATE
+    assert "不要编造" in DEFAULT_INIT_TEMPLATE
+    assert "提交历史" in DEFAULT_INIT_TEMPLATE  # 明确要求依据 git log 推断约定
+
+
+def test_general_template_has_section_checklist():
+    for heading in ("## 目录用途", "## 内容组织", "## 维护约定"):
+        assert heading in DEFAULT_INIT_TEMPLATE_GENERAL, heading
+    assert "# 目录指南" in DEFAULT_INIT_TEMPLATE_GENERAL
+    assert "800–2000" in DEFAULT_INIT_TEMPLATE_GENERAL
+    assert "不要编造" in DEFAULT_INIT_TEMPLATE_GENERAL
+
+
+def test_default_agents_md_first_line_matches_template_heading():
+    """兜底内容的一级标题与生成模板一致(都叫 项目指南)。"""
+    assert DEFAULT_AGENTS_MD.splitlines()[0] == "# 项目指南"
+
+
 # ── strip_code_fence ───────────────────────────────
 
 
