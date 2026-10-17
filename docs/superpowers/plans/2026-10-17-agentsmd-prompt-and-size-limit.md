@@ -391,8 +391,10 @@ async def collect_git_history(
         line = raw.strip()
         if not line:
             continue
-        if len(line) > _GIT_HISTORY_MAX_SUBJECT:
-            line = line[: _GIT_HISTORY_MAX_SUBJECT]
+        # 截的是"主题":短哈希必须完整保留,否则每行就定位不到提交了
+        sha, sep, subject = line.partition(" ")
+        if sep and len(subject) > _GIT_HISTORY_MAX_SUBJECT:
+            line = f"{sha} {subject[:_GIT_HISTORY_MAX_SUBJECT]}"
         # 按行边界截断,绝不切断半行
         if total + len(line) + 1 > _GIT_HISTORY_MAX_CHARS:
             break
