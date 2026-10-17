@@ -443,6 +443,8 @@ async def test_init_picks_template_by_dir_kind(tmp_path: Path):
         fake_plugin = MagicMock()
         fake_plugin._config = {"file_remove_blacklist": []}
         fake_plugin.context.get_using_provider = MagicMock(return_value=provider)
+        # 2026-10-17: handler 会把 git 二进制传给历史采集;MagicMock 会污染 argv
+        fake_plugin._git_binary = lambda: "git"
         mgr = AgentsStateManager()
         h = AgentsmdHandlers(
             state=mgr,
@@ -472,6 +474,8 @@ async def test_init_custom_template_overrides_dir_kind(tmp_path: Path):
     fake_plugin = MagicMock()
     fake_plugin._config = {"file_remove_blacklist": [], "init_template": "my tpl"}
     fake_plugin.context.get_using_provider = MagicMock(return_value=provider)
+    # 2026-10-17: handler 会把 git 二进制传给历史采集;MagicMock 会污染 argv
+    fake_plugin._git_binary = lambda: "git"
     mgr = AgentsStateManager()
     h = AgentsmdHandlers(
         state=mgr,
@@ -604,6 +608,131 @@ async def test_update_no_provider_yields_error(tmp_path: Path):
     async for msg in h.update(ev):
         msgs.append(msg)
     assert any("未配置 LLM Provider" in m for m in msgs)
+
+
+# ── 2026-10-17: handler 级长度护栏 ──────────────────
+
+
+def _resp(text: str) -> MagicMock:
+    r = MagicMock()
+    r.completion_text = text
+    return r
+
+
+def _make_guarded_handlers(responses: list[str], max_chars: int):
+    """构造 handler + 可编排 provider mock;返回 (handlers, state manager, provider)。"""
+    provider = MagicMock()
+    provider.text_chat = AsyncMock(side_effect=[_resp(text) for text in responses])
+    fake_plugin = MagicMock()
+    fake_plugin._config = {
+        "file_remove_blacklist": [],
+        "agentsmd_max_chars": max_chars,
+    }
+    fake_plugin.context.get_using_provider = MagicMock(return_value=provider)
+    fake_plugin._git_binary = lambda: "git"
+    mgr = AgentsStateManager()
+    h = AgentsmdHandlers(
+        state=mgr,
+        plugin_getter=lambda: fake_plugin,
+        is_path_safe=lambda *args, **kwargs: (True, ""),
+    )
+    return h, mgr, provider
+
+
+async def _collect_init(h, directory: Path) -> str:
+    msgs = []
+    async for msg in h.init(_make_event(), str(directory)):
+        msgs.append(msg)
+    return "".join(msgs)
+
+
+async def test_init_truncates_oversized_generation(tmp_path: Path):
+    """压缩一次仍超限 → 按小节截断 + 标注,写盘 ≤ 上限,消息写明截断。"""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "main.py").write_text("x = 1", encoding="utf-8")
+    big = "# 项目指南\n\n## 一\n\n" + "A" * 600
+    h, _mgr, provider = _make_guarded_handlers([big, big], max_chars=200)
+
+    text = await _collect_init(h, proj)
+
+    written = (proj / "AGENTS.md").read_text(encoding="utf-8")
+    assert len(written) <= 200
+    assert "已截断" in text
+    assert "原文" in text
+    assert provider.text_chat.call_count == 2  # 生成 + 压缩
+
+
+async def test_init_compresses_oversized_generation(tmp_path: Path):
+    proj = tmp_path / "proj2"
+    proj.mkdir()
+    (proj / "main.py").write_text("x = 1", encoding="utf-8")
+    big = "# 项目指南\n\n" + "A" * 600
+    small = "# 项目指南\n\n压缩后"
+    h, _mgr, provider = _make_guarded_handlers([big, small], max_chars=200)
+
+    text = await _collect_init(h, proj)
+
+    assert (proj / "AGENTS.md").read_text(encoding="utf-8") == small
+    assert "已压缩" in text
+    assert provider.text_chat.call_count == 2
+
+
+async def test_init_zero_max_chars_keeps_legacy_behavior(tmp_path: Path):
+    """0 = 不限制:不压缩、不截断,原文原样落盘。"""
+    proj = tmp_path / "proj3"
+    proj.mkdir()
+    (proj / "main.py").write_text("x = 1", encoding="utf-8")
+    big = "# 项目指南\n\n" + "A" * 600
+    h, _mgr, provider = _make_guarded_handlers([big], max_chars=0)
+
+    text = await _collect_init(h, proj)
+
+    assert (proj / "AGENTS.md").read_text(encoding="utf-8") == big
+    assert provider.text_chat.call_count == 1
+    assert "已截断" not in text and "已压缩" not in text
+
+
+async def test_update_truncates_and_refreshes_state(tmp_path: Path):
+    proj = tmp_path / "proj4"
+    proj.mkdir()
+    agents_md = proj / "AGENTS.md"
+    agents_md.write_text("OLD", encoding="utf-8")
+    big = "# 项目指南\n\n## 一\n\n" + "A" * 600
+    h, mgr, _provider = _make_guarded_handlers([big, big], max_chars=200)
+    mgr.set(
+        "umo-1",
+        AgentsState(
+            path=str(agents_md),
+            directory=str(proj),
+            last_content="OLD",
+            mtime=agents_md.stat().st_mtime,
+        ),
+    )
+
+    msgs = []
+    async for msg in h.update(_make_event("umo-1")):
+        msgs.append(msg)
+
+    written = agents_md.read_text(encoding="utf-8")
+    assert len(written) <= 200
+    assert mgr.get("umo-1").last_content == written
+    assert "已截断" in "".join(msgs)
+
+
+async def test_init_message_unchanged_when_within_limit(tmp_path: Path):
+    """未超限不给成功消息加后缀(保持既有文案)。"""
+    proj = tmp_path / "proj5"
+    proj.mkdir()
+    (proj / "main.py").write_text("x = 1", encoding="utf-8")
+    small = "# 项目指南\n\n短"
+    h, _mgr, provider = _make_guarded_handlers([small], max_chars=10000)
+
+    text = await _collect_init(h, proj)
+
+    assert "创建 AGENTS.md" in text
+    assert "已截断" not in text and "已压缩" not in text
+    assert provider.text_chat.call_count == 1
 
 
 # ── 导出符号完整性 ──────────────────────────────────

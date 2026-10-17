@@ -26,15 +26,27 @@ from .._branch_inherit import inherit_state
 from ._core import (
     INJECTION_MARKER,
     build_injection,
+    build_output_constraints,
+    build_project_context,
+    fit_generated_content,
     generate_agents_md_via_llm,
     pick_init_template,
-    scan_project_context,
+    resolve_max_chars,
     strip_code_fence,
     strip_surrounding_quotes,
 )
 from ._state import AgentsState, AgentsStateManager
 
 logger = logging.getLogger(__name__)
+
+
+def _fit_suffix(action: str, final_len: int, original_len: int) -> str:
+    """按护栏动作生成成功消息后缀;``"none"`` 返回空串(文案不变)。"""
+    if action == "compressed":
+        return f"（已压缩至 {final_len} 字）"
+    if action == "truncated":
+        return f"（已截断至 {final_len} 字，原文 {original_len} 字）"
+    return ""
 
 
 class AgentsmdHandlers:
@@ -102,17 +114,32 @@ class AgentsmdHandlers:
         umo = event.unified_msg_origin
         provider = plugin.context.get_using_provider(umo=umo)
         init_template = pick_init_template(plugin._config, target)
+        max_chars = resolve_max_chars(plugin._config)
 
         content = await generate_agents_md_via_llm(
-            provider, target, umo=umo, init_template=init_template
+            provider,
+            target,
+            umo=umo,
+            init_template=init_template,
+            max_chars=max_chars,
+            git_bin=plugin._git_binary(),
         )
+        # 2026-10-17: 不再重复 strip_code_fence(generate 内部已做,且兜底内容
+        # DEFAULT_AGENTS_MD 必须原样落盘 —— 尾换行也是既有契约的一部分)。
+        original_len = len(content)
+        # 2026-10-17: 自动生成的长度护栏(null provider / 未超限时是纯 no-op)
+        content, fit_action = await fit_generated_content(
+            provider, content, umo=umo, max_chars=max_chars
+        )
+        suffix = _fit_suffix(fit_action, len(content), original_len)
 
         try:
             await asyncio.to_thread(
                 agents_md_path.write_text, content, encoding="utf-8"
             )
             yield event.plain_result(
-                f"✅ 已在 `{directory}` 下创建 AGENTS.md({len(content)} 字符)。\n"
+                f"✅ 已在 `{directory}` 下创建 AGENTS.md"
+                f"({len(content)} 字符)。{suffix}\n"
                 f"路径: {agents_md_path}\n"
                 f"您可以使用 `/agentsmd load {directory}` "
                 "将其加载到当前会话的系统提示词中。"
@@ -228,15 +255,18 @@ class AgentsmdHandlers:
         # update 与 init 共用自适应模板选择:文档目录的已有内容 +
         # 目录结构应按通用目录模板重新生成,而非套代码项目模板。
         init_template = pick_init_template(plugin._config, dir_path)
+        max_chars = resolve_max_chars(plugin._config)
+        project_context = await build_project_context(
+            dir_path, git_bin=plugin._git_binary()
+        )
         prompt = (
             f"{init_template}\n\n"
             "以下是该项目的文件结构和关键文件内容摘要:\n\n"
-            f"{scan_project_context(dir_path)}\n\n"
+            f"{project_context}\n\n"
             "## 现有 AGENTS.md 内容\n\n"
             f"{existing_content}\n\n"
             "请比较现有实现和目录结构与 AGENTS.md 是否有差异,并更新 AGENTS.md\n\n"
-            "请直接输出 AGENTS.md 的完整内容(Markdown 格式),不要添加任何额外说明,"
-            "也不要使用 ```markdown 等代码块包裹整个内容。"
+            f"{build_output_constraints(max_chars)}"
         )
 
         try:
@@ -255,6 +285,12 @@ class AgentsmdHandlers:
         new_content = (getattr(llm_resp, "completion_text", "") or "").strip()
         new_content = strip_code_fence(new_content)
         new_content = new_content if new_content else existing_content
+        original_len = len(new_content)
+        # 2026-10-17: 与 init 同一护栏;写盘前压到上限内
+        new_content, fit_action = await fit_generated_content(
+            provider, new_content, umo=umo, max_chars=max_chars
+        )
+        suffix = _fit_suffix(fit_action, len(new_content), original_len)
 
         try:
             await asyncio.to_thread(
@@ -267,7 +303,7 @@ class AgentsmdHandlers:
         state.update_content(new_content, agents_md_path.stat().st_mtime)
 
         yield event.plain_result(
-            f"AGENTS.md 已更新 ({len(new_content)} 字符)。\n"
+            f"AGENTS.md 已更新 ({len(new_content)} 字符)。{suffix}\n"
             "后续 LLM 请求将自动使用新版本。"
         )
 
