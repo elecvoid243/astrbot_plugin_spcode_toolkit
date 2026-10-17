@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -19,6 +23,7 @@ from tools.agentsmd import (  # noqa: E402
     DEFAULT_INJECTION_HEADER,
     INJECTION_MARKER,
     build_injection,
+    collect_git_history,
     generate_agents_md_via_llm,
     has_code_files,
     pick_init_template,
@@ -243,6 +248,59 @@ def test_scan_code_dir_has_no_doc_excerpt_section(tmp_path):
 
     ctx = scan_project_context(tmp_path)
     assert "## 文档文件摘录" not in ctx
+
+
+# ── 2026-10-17: git 历史采集 ────────────────────────
+
+_GIT = shutil.which("git")
+requires_git = pytest.mark.skipif(_GIT is None, reason="git 未安装")
+
+
+def _init_repo(path: Path, subjects: list[str]) -> None:
+    """在 path 建一个真 git 仓库,按 subjects 顺序各提交一次。"""
+    subprocess.run([_GIT, "init", "-q"], cwd=path, check=True)
+    subprocess.run([_GIT, "config", "user.email", "t@example.com"], cwd=path, check=True)
+    subprocess.run([_GIT, "config", "user.name", "tester"], cwd=path, check=True)
+    for i, subject in enumerate(subjects):
+        (path / f"f{i}.txt").write_text(str(i), encoding="utf-8")
+        subprocess.run([_GIT, "add", "."], cwd=path, check=True)
+        subprocess.run([_GIT, "commit", "-qm", subject], cwd=path, check=True)
+
+
+@requires_git
+def test_collect_git_history_returns_short_hash_and_subject(tmp_path: Path):
+    """最新提交在前;每行形如 `<7 位短哈希> <主题>`。"""
+    _init_repo(tmp_path, ["feat(a): first", "fix(b): second"])
+    out = asyncio.run(collect_git_history(tmp_path))
+    lines = out.splitlines()
+    assert len(lines) == 2
+    assert lines[0].endswith("fix(b): second")
+    assert lines[1].endswith("feat(a): first")
+    assert all(len(line.split(" ", 1)[0]) == 7 for line in lines)
+
+
+@requires_git
+def test_collect_git_history_respects_limit(tmp_path: Path):
+    _init_repo(tmp_path, ["c1", "c2", "c3"])
+    out = asyncio.run(collect_git_history(tmp_path, limit=2))
+    assert len(out.splitlines()) == 2
+
+
+@requires_git
+def test_collect_git_history_truncates_long_subject(tmp_path: Path):
+    """单条主题截到 200 字符:短哈希 + 空格 + 200。"""
+    _init_repo(tmp_path, ["x" * 300])
+    out = asyncio.run(collect_git_history(tmp_path))
+    assert len(out.splitlines()[0]) == 7 + 1 + 200
+
+
+def test_collect_git_history_non_repo_returns_empty(tmp_path: Path):
+    assert asyncio.run(collect_git_history(tmp_path)) == ""
+
+
+def test_collect_git_history_missing_binary_returns_empty(tmp_path: Path):
+    """git_bin 不存在时静默返回 "",不抛异常。"""
+    assert asyncio.run(collect_git_history(tmp_path, git_bin="spcode-no-such-git")) == ""
 
 
 # ── generate_agents_md_via_llm ───────────────────────

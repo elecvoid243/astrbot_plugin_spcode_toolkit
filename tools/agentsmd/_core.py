@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import re
 from pathlib import Path
@@ -31,6 +33,10 @@ from .._code_detect import (  # noqa: F401  (re-exports)
     _SKIP_DIRS,
     has_code_files,
 )
+from .._helpers import _NO_WINDOW_KWARGS, safe_decode_bytes
+
+logger = logging.getLogger(__name__)
+
 
 # 默认的 AGENTS.md 生成 prompt 模板(代码项目目录)。
 # 2026-10-17: 按 Codex `/init` 风格重写 —— 章节清单 + 反编造 + 篇幅约束。
@@ -329,6 +335,96 @@ def _doc_excerpts_section(
     if len(candidates) > _DOC_EXCERPT_MAX_FILES:
         lines.append(f"\n(其余 {len(candidates) - _DOC_EXCERPT_MAX_FILES} 篇文档从略)")
     return lines
+
+
+# ── git 历史采集(2026-10-17) ─────────────────────────
+# 提交历史是"提交信息约定"的唯一事实依据;没有它,LLM 只能编造
+# `feat(scope): ...` 之类看起来合理但仓库里并不存在的约定。
+_GIT_HISTORY_MAX_SUBJECT = 200
+_GIT_HISTORY_MAX_CHARS = 4096
+
+
+async def collect_git_history(
+    dir_path: Path,
+    *,
+    git_bin: str = "git",
+    limit: int = 20,
+    timeout: float = 3.0,
+) -> str:
+    """采集目录所属仓库的最近提交(短哈希 + 主题),失败返回空串。
+
+    WHY 全静默: 生成 AGENTS.md 是主流程,git 只是"锦上添花"的事实来源。
+    目录不是仓库、机器没装 git、仓库损坏、磁盘慢 —— 任一情况都不该让
+    `/agentsmd init` 变成报错。
+
+    ``--no-merges``: 合并提交(`Merge pull request #123 from ...`)对推断
+    提交约定只有噪声。
+
+    Note:
+        采集范围是 ``git -C <dir> log`` 的语义,即该目录**所属仓库**。
+        目录是子目录时拿到的是整仓历史 —— Git 的固有行为,不是缺陷。
+
+    Args:
+        dir_path: 目标目录(不必是仓库根)。
+        git_bin: git 可执行文件路径(优先配置 ``git_path``)。
+        limit: 最多取多少条提交。
+        timeout: 子进程超时(秒),超时即 kill 并返回空串。
+
+    Returns:
+        逐行 ``"<短哈希> <主题>"``;无历史或失败时 ``""``。
+    """
+    cmd = [
+        git_bin,
+        "-C",
+        str(dir_path),
+        "log",
+        "--no-merges",
+        "--pretty=format:%h %s",
+        "-n",
+        str(limit),
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+            **_NO_WINDOW_KWARGS,
+        )
+    except OSError as e:
+        # FileNotFoundError(git 未安装/路径错) / WinError 2 / 权限问题
+        logger.debug(f"[agentsmd] git 不可用,跳过历史采集: {e}")
+        return ""
+
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except (asyncio.TimeoutError, TimeoutError):
+        proc.kill()
+        await proc.wait()
+        logger.debug(f"[agentsmd] git log 超时({timeout}s),跳过历史采集")
+        return ""
+
+    if proc.returncode != 0:
+        logger.debug(f"[agentsmd] git log 退出码 {proc.returncode},跳过历史采集")
+        return ""
+
+    text = safe_decode_bytes(stdout, preferred="utf-8")
+    lines: list[str] = []
+    total = 0
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        # 截的是"主题"(保留短哈希,否则哈希会被吃掉,详见 _GIT_HISTORY_MAX_SUBJECT 语义)
+        sha, sep, subject = line.partition(" ")
+        if sep and len(subject) > _GIT_HISTORY_MAX_SUBJECT:
+            line = f"{sha} {subject[:_GIT_HISTORY_MAX_SUBJECT]}"
+        # 按行边界截断,绝不切断半行
+        if total + len(line) + 1 > _GIT_HISTORY_MAX_CHARS:
+            break
+        lines.append(line)
+        total += len(line) + 1
+    return "\n".join(lines)
 
 
 async def generate_agents_md_via_llm(
