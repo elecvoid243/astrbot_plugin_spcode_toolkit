@@ -106,6 +106,8 @@ _DEFAULT_CONFIG = {
     "codegraph_install_dir": "",  # 优先使用配置目录,再查 tc_memory standalone 和 external_tools
     "codegraph_project": "",  # codegraph daemon 默认操作的工程根目录
     "agentsmd_enabled": True,  # 是否启用 AGENTS.md 管理
+    # 2026-10-17: /agentsmd init|update 自动生成长度上限(字符);0 = 不限制
+    "agentsmd_max_chars": 10000,
     "allowed_ids": "",  # 逗号分隔额外允许的用户 ID
     "enabled_tools": [],  # 启用的工具名列表；空 = 全部禁用（安全默认）
     "file_remove_blacklist": [],  # file_remove 用户自定义黑名单：绝对路径前缀列表

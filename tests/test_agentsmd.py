@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 import shutil
 import subprocess
 import sys
@@ -1152,3 +1154,26 @@ def test_fit_accepts_compression_exactly_at_limit():
         fit_generated_content(provider, "A" * 500, umo="u", max_chars=100)
     )
     assert (out, action) == ("D" * 100, "compressed")
+
+
+# ── 2026-10-17: 配置项 ─────────────────────────────
+
+
+def test_conf_schema_declares_agentsmd_max_chars():
+    schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+    item = schema["agentsmd"]["items"]["agentsmd_max_chars"]
+    assert item["type"] == "int"
+    assert item["default"] == DEFAULT_MAX_CHARS
+    assert "0 = 不限制" in item["hint"]
+
+
+def test_main_default_config_declares_agentsmd_max_chars():
+    """_DEFAULT_CONFIG 与 schema 默认值必须一致(两处事实源)。
+
+    刻意不 import main.py: 该模块会拉起整个 AstrBot 框架(~7s)且有副作用;
+    这条只需校验"字面量与 DEFAULT_MAX_CHARS 一致"。
+    """
+    src = (ROOT / "main.py").read_text(encoding="utf-8")
+    m = re.search(r'"agentsmd_max_chars":\s*(\d+)', src)
+    assert m, "main.py::_DEFAULT_CONFIG 缺少 agentsmd_max_chars"
+    assert int(m.group(1)) == DEFAULT_MAX_CHARS

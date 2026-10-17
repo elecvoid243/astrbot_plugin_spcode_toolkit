@@ -302,6 +302,12 @@
         "hint": "用于 /agentsmd init 时调 LLM 的 prompt。留空用默认模板。",
         "type": "text",
         "default": ""
+      },
+      "agentsmd_max_chars": {
+        "description": "AGENTS.md 自动生成长度上限（字符数）",
+        "hint": "仅约束 /agentsmd init 与 update 的自动生成；手工编辑的文件不受限制。0 = 不限制。",
+        "type": "int",
+        "default": 10000
       }
     }
   },
