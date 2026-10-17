@@ -1347,7 +1347,8 @@ def _fit_suffix(action: str, final_len: int, original_len: int) -> str:
             max_chars=max_chars,
             git_bin=plugin._git_binary(),
         )
-        content = strip_code_fence(content).strip()
+        # 不在这里重复 strip_code_fence: generate 内部已做,且兜底内容
+        # DEFAULT_AGENTS_MD 必须原样落盘(尾换行属既有契约,max_chars=0 时行为不变)。
         original_len = len(content)
         # 2026-10-17: 自动生成的长度护栏(null provider / 未超限时是纯 no-op)
         content, fit_action = await fit_generated_content(
