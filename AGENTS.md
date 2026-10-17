@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.31.0** · Author: elecvoid243 · 最后更新: 2026-10-06
+> **当前版本: v2.31.3** · Author: elecvoid243 · 最后更新: 2026-10-17
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -99,6 +99,7 @@ pytest tests/test_llm_inject.py
 pytest tests/test_no_window_kwargs.py
 pytest tests/test_path_safety.py
 pytest tests/test_plan_mode.py
+pytest tests/test_plugin_release.py
 pytest tests/test_project_cmd.py
 pytest tests/test_project_status.py
 pytest tests/test_project_subcommand.py
@@ -154,6 +155,7 @@ astrbot_plugin_spcode_toolkit/
 ├── _conf_schema.json             # 配置 schema（分组结构，_flatten_config 拍平）
 ├── requirements.txt              # lint + 运行时依赖：ruff, clang-format, crap4py, lizard, send2trash
 ├── README.md                     # 项目说明（面向用户/社区）
+├── CHANGELOG.md                  # 更新日志（Dashboard 插件页「更新日志」读取）
 ├── AGENTS.md                     # 本文件（面向 coding agent）
 │
 ├── data/                         # 数据/资源（随插件分发）
@@ -404,6 +406,23 @@ AstrBot 主仓库（`all` 分支）已内置 `astrbot_file_remove` 工具（`loc
   （须知第 9 条：不改字段名以免破坏既有用户配置）；新核心用户改用
   `provider_settings.file_remove_blacklist`。
 
+## AGENTS.md 生成护栏 (2026-10-17, v2.31.3)
+
+`/agentsmd init` 与 `/agentsmd update` 的自动生成现在有提示词与长度两层约束，**注入侧零改动**：
+
+- **提示词**：`tools/agentsmd/_core.py` 的 `DEFAULT_INIT_TEMPLATE` / `DEFAULT_INIT_TEMPLATE_GENERAL`
+  按 Codex `/init` 风格重写（章节清单 + 篇幅区间 + 反编造）。上下文由 `build_project_context()`
+  统一装配（`scan_project_context()` + 可选 git 历史），输出约束由 `build_output_constraints(max_chars)`
+  统一生成；**不要**在 `_handlers.py` 里另写一份 prompt 尾巴。
+- **git 历史**：`collect_git_history()` 取最近 20 条 `--no-merges` 提交，3s 超时、单条主题 200 字、
+  总量 4096 字；任何失败静默返回 `""`（**不要**改成抛异常或 ERROR 日志）。
+- **长度护栏**：配置 `agentsmd_max_chars`（默认 10000，`0`/负数 = 不限制）。
+  `fit_generated_content()` 判定顺序：未超限不调 LLM → provider 缺失直接截断 → 压缩一次 →
+  失败/空/更长/仍超限则**回退原始草稿**按小节截断。`truncate_at_section()` 必须把截断标注长度
+  计入预算，保证返回值 ≤ 上限。
+- **不变量**：手工编辑的 AGENTS.md 不受限制；`update` 在 LLM 空产出时必须原样保留现有内容
+  （`tests/test_agentsmd_subsystem.py::test_update_keeps_manual_content_when_llm_returns_empty` 锁定）。
+
 ## 代码风格指南
 
 ### 导入 (Imports)
@@ -492,7 +511,7 @@ AstrBot 主仓库（`all` 分支）已内置 `astrbot_file_remove` 工具（`loc
 10. **路径安全**：任何涉及用户输入路径的代码，先调用 `_path_safety` 校验，**不要**自己实现路径判断
 11. **Web API 参数安全**：`?worktree=` 等用户控制的路径参数，必须经过 `_validate_worktree_param`（位于 `tools/_helpers.py`）的 6 步防御链：**关键不变量 - git-common-dir 不匹配 = 直接拒绝**
 12. **配置拍平**：`_conf_schema.json` 是分组结构，`main.py._flatten_config()` 会把嵌套分组拍平为顶层键（如 `codegraph.codegraph_enabled` -> `codegraph_enabled`）。新增配置项时保持此约定
-13. **版本号统一**：当前版本统一为 **v2.31.0**。发布时同步更新 `metadata.yaml` 的 `version` 字段
+13. **版本号统一**：当前版本统一为 **v2.31.3**。发布时同步更新 `metadata.yaml` 的 `version` 字段，并在 `CHANGELOG.md` 补一条对应版本的记录（Dashboard 插件页的「更新日志」直接读该文件）
 
 ## Project 加载 — 静默变体 (2026-07-28)
 
@@ -737,4 +756,4 @@ pytest tests/ --cov=tools                    # 覆盖率
 
 ---
 
-> Author: elecvoid243 · 本文档同步至 v2.28.0 (2026-09-09)
+> Author: elecvoid243 · 本文档同步至 v2.31.3 (2026-10-17)

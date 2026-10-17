@@ -1,7 +1,7 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: v2.31.2
+version: v2.31.3
 description: |
   ## 主要能力
 
@@ -61,8 +61,10 @@ description: |
   | codegraph_* | `@colbymchenry/codegraph` (npm) + 配置 `codegraph_install_dir` | 8 个工具均不出现 |
   | vivado-mcp (v2.21+) | `pip install vivado-mcp` + Vivado IDE 安装 | 21 个工具均不出现；`/vivado` 与 `/spcode/vivado-status` 提示缺失 |
 
-  ## 版本历程（最近 8 个）
+  ## 版本历程（按时间倒序）
 
+  - **v2.31.3** (2026-10-17) AGENTS.md 自动生成质量改造：两套生成模板按 Codex `/init` 风格重写（章节清单 + 篇幅区间 + 反编造约束）；`init` / `update` 生成前采集该目录所属仓库最近 20 条 git 提交（`--no-merges`、单条主题 200 字、总量 4096 字、3s 超时、失败静默跳过）作为「提交与 PR 规范」的事实依据；新增配置项 `agentsmd_max_chars`（默认 10000，`0` = 不限制）为自动生成加长度护栏——超限先压缩重写一次，仍超限按小节边界截断并标注（`> （已按 agentsmd_max_chars=N 截断，原文 M 字）`），成功消息提示「已压缩/已截断」；修复 `/agentsmd update` 在 LLM 空产出时把用户手工维护的 AGENTS.md 送进护栏导致静默截断的问题。手工编辑的文件与注入侧不受任何限制
+  - **v2.31.2** (2026-10-07) 注入指引文本统一英文（项目路径 / 激活 worktree / vivado）；codegraph 安装目录查找优先使用配置目录；`git-file-export` 临时导出改放 `plugin_data`；Web API 读取 git blob 保留原始字节并支持 index 基线
   - **v2.31.0** (2026-10-06) `POST /spcode/git-file-export`：把 `<ref>:<path>` 的 blob 字节导出到 `<astrbot data>/plugin_data/astrbot_plugin_spcode_toolkit/temp/git-history/<sha7>/<repo-relative path>`（与 todo 存储同一 `StarTools.get_data_dir` 真源；同目标覆盖不堆垃圾），返回宿主机绝对路径，前端复用核心 `POST /api/v1/chat/open-file` 用系统默认应用打开；供 Git 历史页「导出此版本并打开」（历史版=临时文件，最新版=仓库原文件）
   - **v2.30.0** (2026-10-06) `GET /spcode/git-file-diff`：单文件任意两版本比较端点——一次请求返回 `from→to` unified patch + `from` 侧完整 blob（叠加视图材料），name-status 状态探测（added/deleted/renamed+old_path/unchanged）、rename 时基准 blob 按 `old_path` 取、blob 字节级保真（`_run_git_async_bytes`）、patch/base 双截断语义分离（`truncated` / `base_truncated`）、二进制 NUL 探测；ETag 基于解析后 SHA 内容寻址，双 40-hex 输入标记 `immutable`；配套 dashboard 历史面板「全文件 + diff 叠加」任意两版本比较
   - **v2.29.3** (2026-10-05) `astrbot_file_remove` 上移核心 + shim 兼容：AstrBot 主仓库内置同名工具（local runtime）与 `provider_settings.file_remove_blacklist`；插件启动时经 `astrbot.core.tools.registry.get_builtin_tool_class` 探测，核心已提供则让位不重复注册（`_CORE_PROVIDES_FILE_REMOVE`），旧核心 ImportError 视为未提供、照常注册。插件配置 `file_remove_blacklist` 标注 deprecated（字段名保留以兼容既有用户配置）；`POST /spcode/file-remove/restore`、`tools/file_remove_restore.py`、`_file_remove_inject_guidance` 钩子保留为旧核心回退路径，新核心由 `POST /chat/file-changes/restore-removed` 接管
@@ -90,6 +92,7 @@ description: |
 
   ## 文档
 
+  - `CHANGELOG.md` — 更新日志（Dashboard 插件页「更新日志」按钮直接读取此文件）
   - `README.md` — 完整功能说明 + 工具详解 + 端点列表
   - `AGENTS.md` — 给 coding agent 看的项目规范（架构、命令、约束）
   - `docs/superpowers/specs/` — 各端点的设计 spec
