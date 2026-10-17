@@ -427,12 +427,49 @@ async def collect_git_history(
     return "\n".join(lines)
 
 
+def build_output_constraints(max_chars: int) -> str:
+    """构造 prompt 尾部的输出约束(init / update 共用,消除两份尾巴漂移)。
+
+    ``max_chars <= 0`` 时只保留"直接输出 + 不要代码块包裹"两条,
+    不出现任何数字 —— 这是"不限制"的显式语义。
+    """
+    parts = [
+        "请直接输出 AGENTS.md 的完整内容(Markdown 格式),不要添加任何额外说明,"
+        "也不要使用 markdown 代码块包裹整个内容。",
+    ]
+    if max_chars > 0:
+        parts.append(f"全文硬性上限 {max_chars} 字,超出部分会被截断。")
+    return "\n".join(parts)
+
+
+async def build_project_context(
+    dir_path: Path,
+    *,
+    git_bin: str = "git",
+    history_limit: int = 20,
+) -> str:
+    """构造完整的生成上下文:目录扫描 + (可选)最近提交历史。
+
+    WHY 单独一层包装: ``scan_project_context`` 是纯函数,既有 6 个 scan
+    用例与第三方调用都依赖它的输出不变;历史采集是异步 / 有副作用(起子进程),
+    只在包装层追加,不污染扫描函数。
+    """
+    context = scan_project_context(dir_path)
+    history = await collect_git_history(dir_path, git_bin=git_bin, limit=history_limit)
+    if not history:
+        return context
+    header = f"## 最近提交历史（最多 {history_limit} 条，用于推断提交信息约定）"
+    return f"{context}\n\n{header}\n\n{history}"
+
+
 async def generate_agents_md_via_llm(
     provider,
     dir_path: Path,
     *,
     umo: str,
     init_template: str = "",
+    max_chars: int = 0,
+    git_bin: str = "git",
 ) -> str:
     """通过 AstrBot LLM Provider 自动生成 AGENTS.md 内容。
 
@@ -441,11 +478,17 @@ async def generate_agents_md_via_llm(
         dir_path: 目标项目目录
         umo: unified_msg_origin(用于 session_id 隔离)
         init_template: 用户自定义模板;为空则用默认
+        max_chars: 全文硬性上限(字符数);``<= 0`` 表示不追加数字约束。
+            注意默认值是 0(不限制),由 handler 传入配置解析结果 ——
+            这样旧调用方(含测试)不传该参数时行为完全不变。
+        git_bin: git 可执行文件路径(配置 ``git_path`` > ``"git"``)
 
     Returns:
         生成的 AGENTS.md 文本;若 LLM 调用失败,返回 DEFAULT_AGENTS_MD
     """
     if provider is None:
+        # WHY 排在 git 采集之前: provider 缺失时无需付子进程代价,
+        # 也让既有用例可以安全传入不存在的目录。
         return DEFAULT_AGENTS_MD
 
     template = (
@@ -453,13 +496,12 @@ async def generate_agents_md_via_llm(
         if init_template and init_template.strip()
         else DEFAULT_INIT_TEMPLATE
     )
-    project_context = scan_project_context(dir_path)
+    project_context = await build_project_context(dir_path, git_bin=git_bin)
     prompt = (
         f"{template}\n\n"
         f"以下是该目录的文件结构、文件类型统计和关键文件内容摘要:\n\n"
         f"{project_context}\n\n"
-        f"请直接输出 AGENTS.md 的完整内容(Markdown 格式),不要添加任何额外说明,"
-        f"也不要使用 ```markdown 等代码块包裹整个内容。"
+        f"{build_output_constraints(max_chars)}"
     )
 
     try:

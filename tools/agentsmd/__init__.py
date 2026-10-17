@@ -26,6 +26,8 @@ from ._core import (
     KEY_PROJECT_FILES,
     _SKIP_DIRS,  # noqa: F401  (向后兼容 — 老代码 from tools import agentsmd; a._SKIP_DIRS)
     build_injection,
+    build_output_constraints,
+    build_project_context,
     collect_git_history,
     generate_agents_md_via_llm,
     has_code_files,
@@ -50,6 +52,8 @@ __all__ = [
     "KEY_PROJECT_FILES",
     # helpers
     "build_injection",
+    "build_output_constraints",
+    "build_project_context",
     "collect_git_history",
     "generate_agents_md_via_llm",
     "has_code_files",

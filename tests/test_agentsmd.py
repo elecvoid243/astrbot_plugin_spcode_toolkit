@@ -23,6 +23,8 @@ from tools.agentsmd import (  # noqa: E402
     DEFAULT_INJECTION_HEADER,
     INJECTION_MARKER,
     build_injection,
+    build_output_constraints,
+    build_project_context,
     collect_git_history,
     generate_agents_md_via_llm,
     has_code_files,
@@ -301,6 +303,78 @@ def test_collect_git_history_non_repo_returns_empty(tmp_path: Path):
 def test_collect_git_history_missing_binary_returns_empty(tmp_path: Path):
     """git_bin 不存在时静默返回 "",不抛异常。"""
     assert asyncio.run(collect_git_history(tmp_path, git_bin="spcode-no-such-git")) == ""
+
+
+# ── 2026-10-17: prompt 装配 ────────────────────────
+
+
+def test_build_output_constraints_includes_limit():
+    text = build_output_constraints(5000)
+    assert "5000" in text
+    assert "不要添加任何额外说明" in text
+    assert "代码块" in text  # 明确禁止用代码块包裹全文
+
+
+def test_build_output_constraints_zero_omits_number():
+    """max_chars=0 = 不限制:只保留"直接输出 / 不要包裹"两条。"""
+    text = build_output_constraints(0)
+    assert "上限" not in text
+    assert "不要添加任何额外说明" in text
+
+
+@requires_git
+def test_build_project_context_appends_history(tmp_path: Path):
+    _init_repo(tmp_path, ["chore: seed"])
+    ctx = asyncio.run(build_project_context(tmp_path))
+    assert "## 目录结构" in ctx
+    assert "## 最近提交历史" in ctx
+    assert "chore: seed" in ctx
+
+
+def test_build_project_context_without_history_has_no_section(tmp_path: Path):
+    """非仓库目录:上下文就是 scan 的输出,不追加空小节。"""
+    ctx = asyncio.run(build_project_context(tmp_path))
+    assert "## 最近提交历史" not in ctx
+    assert "## 目录结构" in ctx
+
+
+def _provider_returning(text: str):
+    """构造一个 provider mock,text_chat 恒返回 text。"""
+    provider = MagicMock()
+    resp = MagicMock()
+    resp.completion_text = text
+    provider.text_chat = AsyncMock(return_value=resp)
+    return provider
+
+
+def test_generate_prompt_carries_max_chars(tmp_path: Path):
+    provider = _provider_returning("# generated")
+    asyncio.run(
+        generate_agents_md_via_llm(
+            provider, tmp_path, umo="u1", init_template="TPL", max_chars=4321
+        )
+    )
+    prompt = provider.text_chat.call_args.kwargs["prompt"]
+    assert "TPL" in prompt
+    assert "4321" in prompt
+
+
+def test_generate_prompt_without_max_chars_has_no_number(tmp_path: Path):
+    """默认 max_chars=0:prompt 不出现数字上限(旧调用行为不变)。"""
+    provider = _provider_returning("# generated")
+    asyncio.run(generate_agents_md_via_llm(provider, tmp_path, umo="u1"))
+    prompt = provider.text_chat.call_args.kwargs["prompt"]
+    assert "硬性上限" not in prompt
+
+
+@requires_git
+def test_generate_prompt_includes_commit_history(tmp_path: Path):
+    _init_repo(tmp_path, ["feat(git): add graph"])
+    provider = _provider_returning("# generated")
+    asyncio.run(generate_agents_md_via_llm(provider, tmp_path, umo="u1"))
+    prompt = provider.text_chat.call_args.kwargs["prompt"]
+    assert "## 最近提交历史" in prompt
+    assert "feat(git): add graph" in prompt
 
 
 # ── generate_agents_md_via_llm ───────────────────────
