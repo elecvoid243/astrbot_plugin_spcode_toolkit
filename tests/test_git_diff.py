@@ -113,9 +113,12 @@ async def test_handle_git_diff_returns_clean_when_no_changes(plugin, tmp_path):
     result = await _gd.handle(plugin)
     data = result["data"]
     assert data["loaded"] is True
-    assert data["diff"] == ""
+    # v2.32.0 渐进式加载:元数据端点不再携带 patch 文本
+    assert "diff" not in data
     assert data["files_changed"] == []
-    assert data["truncated"] is False
+    assert data["total_files"] == 0
+    assert data["has_more"] is False
+    assert data["etag"]
     assert data["reason"] is None
 
 
@@ -166,23 +169,6 @@ async def test_handle_git_diff_returns_renamed_file(plugin, tmp_path):
     assert any(f["path"] == "new.py" and f["status"] == "R" for f in fc), fc
 
 
-async def test_handle_git_diff_truncates_large_output(plugin, tmp_path):
-    _init_git_repo(tmp_path)
-    bigger = "x" * (1024 * 1024 + 100_000)  # ~1.1 MB
-    (tmp_path / "big.txt").write_text(bigger, encoding="utf-8")
-    # 必须 git add -N 让 git 把 big.txt 视作意图添加(tracked),否则作为 untracked
-    # 不会出现在 `git diff` 输出里,truncated 永远 False
-    subprocess.run(["git", "add", "-N", "big.txt"], cwd=tmp_path, check=True)
-    _load_project(plugin, "test:umo", str(tmp_path))
-    result = await _gd.handle(plugin)
-    data = result["data"]
-    assert data["truncated"] is True
-    assert data["truncated_at_bytes"] == 1024 * 1024
-    assert len(data["diff"].encode("utf-8")) <= 1024 * 1024
-    # sanity: 原始 diff 输入确实 > 1 MB
-    assert len(bigger.encode("utf-8")) > 1024 * 1024
-
-
 # --- T7-T11: gating (no project, umo mismatch, fallback, feature flag) -
 
 
@@ -192,7 +178,6 @@ async def test_handle_git_diff_no_project_loaded(plugin):
     data = result["data"]
     assert data["loaded"] is False
     assert data["reason"] == "no_project_loaded"
-    assert data["diff"] is None
 
 
 async def test_handle_git_diff_umo_not_in_loaded(plugin, tmp_path):
@@ -300,16 +285,23 @@ async def test_handle_git_diff_response_envelope_shape(plugin, tmp_path):
         "loaded",
         "directory",
         "umo",
-        "diff",
-        "stat",
+        "scope",
+        "etag",
         "files_changed",
-        "truncated",
-        "truncated_at_bytes",
-        "max_bytes",
+        "stat",
+        "total_files",
+        "total_additions",
+        "total_deletions",
+        "offset",
+        "limit",
+        "has_more",
         "elapsed_ms",
         "reason",
     }
     assert expected_keys.issubset(data.keys())
+    # v2.32.0 渐进式加载:patch 文本不再出现在元数据端点
+    assert "diff" not in data
+    assert "truncated" not in data
 
 
 async def test_handle_git_diff_umo_query_param_hits_loaded_umo(
@@ -330,11 +322,16 @@ async def test_handle_git_diff_umo_query_param_hits_loaded_umo(
     assert result["data"]["umo"] == "target:umo"
 
 
-async def test_handle_git_diff_max_bytes_constant(plugin, tmp_path):
+async def test_handle_git_diff_paging_defaults(plugin, tmp_path):
+    """v2.32.0: 不传 offset/limit 时默认 offset=0, limit=200, has_more=False。"""
     _init_git_repo(tmp_path)
     _load_project(plugin, "test:umo", str(tmp_path))
     result = await _gd.handle(plugin)
-    assert result["data"]["max_bytes"] == 1024 * 1024
+    data = result["data"]
+    assert data["offset"] == 0
+    assert data["limit"] == 200
+    assert data["has_more"] is False
+    assert data["total_files"] == 0
 
 
 async def test_handle_git_diff_git_calls_run_serial(plugin, tmp_path, monkeypatch):
@@ -347,11 +344,13 @@ async def test_handle_git_diff_git_calls_run_serial(plugin, tmp_path, monkeypatc
     v3.5 (2026-06-30) ETag 修复后,git 调用数从 3 (probe + diff + numstat) 增到
     7 (4 ETag 探测 + 1 probe + 1 diff + 1 numstat),全部按既定顺序串行。
 
+    v2.32.0 (2026-10-25) 渐进式加载:完整 patch 渲染从轮询路径移除,
+    git 调用从 7 降到 6 (4 ETag + probe + numstat)。
+
     新测试目标:
-      - 顺序:Etag 4 个 → probe → diff → numstat
-      - 计数:7 个 _run_git_async 调用
-      - 每个调用都有真实 git 路径特征(rev-parse / diff-files / diff-index /
-        ls-files / --is-inside-work-tree / diff / diff --numstat)
+      - 顺序:Etag 4 个 → probe → numstat
+      - 计数:6 个 _run_git_async 调用
+      - 全量 patch 渲染调用(``diff`` 无 --numstat)不再出现
     """
     from tools.webapi import git_diff as main_mod
     from tools.webapi import _helpers as _h
@@ -371,9 +370,9 @@ async def test_handle_git_diff_git_calls_run_serial(plugin, tmp_path, monkeypatc
 
     await _gd.handle(plugin)
 
-    # 验证调用顺序:ETag 4 个 → probe → diff → numstat
-    assert len(call_log) == 7, (
-        f"Expected 7 git calls (4 ETag + probe + diff + numstat), got {len(call_log)}"
+    # 验证调用顺序:ETag 4 个 → probe → numstat
+    assert len(call_log) == 6, (
+        f"Expected 6 git calls (4 ETag + probe + numstat), got {len(call_log)}"
     )
 
     # ETag 4 个:rev-parse HEAD + diff-files + diff-index + ls-files
@@ -391,88 +390,84 @@ async def test_handle_git_diff_git_calls_run_serial(plugin, tmp_path, monkeypatc
         f"Fourth ETag call should be ls-files --others, got {etag_cmds[3]}"
     )
 
-    # 后续 3 个:probe + diff + numstat
+    # 后续 2 个:probe + numstat(raw diff 渲染已从轮询路径移除)
     assert "--is-inside-work-tree" in call_log[4], (
         f"Fifth call should be probe, got {call_log[4]}"
     )
-    assert "diff" in call_log[5] and "--numstat" not in call_log[5], (
-        f"Sixth call should be raw diff, got {call_log[5]}"
+    assert "diff" in call_log[5] and "--numstat" in call_log[5], (
+        f"Sixth call should be diff --numstat, got {call_log[5]}"
     )
-    assert "diff" in call_log[6] and "--numstat" in call_log[6], (
-        f"Seventh call should be diff --numstat, got {call_log[6]}"
+    raw_diff_calls = [
+        c for c in call_log if "diff" in c and "--numstat" not in c and "raw" not in c
+        and "diff-files" not in c and "diff-index" not in c
+    ]
+    assert len(raw_diff_calls) == 0, (
+        f"metadata endpoint must NOT render the full patch; got {raw_diff_calls}"
     )
 
 
 # ── v3.4 (2026-06-21) P2 perf: git diff / numstat 串行 ──
 
 
-async def test_handle_git_diff_diff_runs_before_numstat(plugin, tmp_path, monkeypatch):
-    """P2 perf 修复:diff 完成后才跑 numstat(走 page cache),而不是 gather 并发。
+async def test_handle_git_diff_metadata_cache_skips_numstat(
+    plugin, tmp_path, monkeypatch
+):
+    """v2.32.0 渐进式加载:同一工作区状态下的第二次请求(etag 未变)
+    从元数据缓存取记录,不再重跑 numstat——分页翻页请求因此廉价。
 
-    旧实现 ``asyncio.gather(diff, numstat)`` → 两路并发,CPU 2 路。
-    新实现串行:diff 跑完填满 page cache → numstat 几乎瞬时。
-    总 wall-clock 持平(numstat 极快),但 CPU 占用从 2 路降到 1 路。
-
-    测试方法:mock ``_run_git_async``,记录每个调用的 args 和时间戳,
-    断言 diff 调用在 numstat 之前完成(按完成时间)。
+    注意:ETag 有自己的 1.5s TTL 缓存,第二次调用的 4 个 ETag 探测也
+    全部命中缓存;probe(rev-parse --is-inside-work-tree)始终执行。
     """
-    import time as _t
-
     _init_git_repo(tmp_path)
-    (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
-    subprocess.run(["git", "add", "a.txt"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
     (tmp_path / "a.txt").write_text("hello world", encoding="utf-8")
     _load_project(plugin, "test:umo", str(tmp_path))
 
     from tools.webapi import git_diff as main_mod
 
-    # 真实 ``_run_git_async``(避免完全 mock 掉,改用 wrapper 记录调用顺序)
+    # 清空两级缓存,确保第一次请求真实执行
+    main_mod._DIFF_ETAG_CACHE.clear()
+    main_mod._META_CACHE.clear()
+
     real_run = main_mod._run_git_async
-    call_log: list[tuple[float, tuple, dict]] = []  # (completed_at, args, kwargs)
+    call_log: list[list[str]] = []
 
-    async def _instrumented(*args, **kwargs):
-        result = await real_run(*args, **kwargs)
-        call_log.append((_t.time(), args, kwargs))
-        return result
+    async def _recording_run(cmd_args, *args, **kwargs):
+        call_log.append(list(cmd_args))
+        return await real_run(cmd_args, *args, **kwargs)
 
-    monkeypatch.setattr(main_mod, "_run_git_async", _instrumented)
+    monkeypatch.setattr(main_mod, "_run_git_async", _recording_run)
+
+    await _gd.handle(plugin)
+    numstat_after_first = len(
+        [c for c in call_log if "diff" in c and "--numstat" in c]
+    )
+    calls_after_first = len(call_log)
 
     await _gd.handle(plugin)
 
-    # 找到 raw diff 调用和 numstat 调用的完成时间
-    def _is_raw_diff_call(args: tuple, kwargs: dict) -> bool:
-        # git_prefix + ["diff"] + scope_args,没有 "--numstat"
-        cmd = args[0]
-        return "diff" in cmd and "--numstat" not in cmd
-
-    def _is_numstat_call(args: tuple, kwargs: dict) -> bool:
-        cmd = args[0]
-        return "diff" in cmd and "--numstat" in cmd
-
-    raw_diff_completed = next(
-        (t for t, a, kw in call_log if _is_raw_diff_call(a, kw)), None
+    numstat_after_second = len(
+        [c for c in call_log if "diff" in c and "--numstat" in c]
     )
-    numstat_completed = next(
-        (t for t, a, kw in call_log if _is_numstat_call(a, kw)), None
+    assert numstat_after_first == 1, (
+        f"first request should run numstat once, got {numstat_after_first}"
     )
-
-    assert raw_diff_completed is not None, "raw diff invocation not recorded"
-    assert numstat_completed is not None, "numstat invocation not recorded"
-    assert raw_diff_completed <= numstat_completed, (
-        f"raw diff must complete before numstat starts "
-        f"(diff_completed={raw_diff_completed}, numstat_completed={numstat_completed}); "
-        f"if diff >= numstat, the handler is still using asyncio.gather"
+    assert numstat_after_second == 1, (
+        f"second request must reuse the metadata cache "
+        f"(numstat ran {numstat_after_second} times total)"
+    )
+    # 第二次只有 probe 一个 git 调用(ETag 缓存 + 元数据缓存全部命中)
+    assert len(call_log) - calls_after_first == 1, (
+        f"second request should run exactly 1 git call (probe), "
+        f"ran {len(call_log) - calls_after_first}"
     )
 
 
-async def test_handle_git_diff_skips_numstat_on_raw_failure(
+async def test_handle_git_diff_numstat_failure_maps_to_git_error(
     plugin, tmp_path, monkeypatch
 ):
-    """P2 perf 修复:raw diff 失败时不跑 numstat(节省 1 个 git 调用)。
+    """v2.32.0: numstat 调用失败 → loaded=False, reason=git_error。
 
-    旧实现 ``asyncio.gather(diff, numstat)`` 两路并发 — raw 失败时 numstat
-    仍跑,浪费 1 个 git 调用。新实现串行 — raw 失败直接返回,numstat 跳过。
+    元数据端点唯一的 diff 调用就是 numstat;失败时直接返回错误信封。
     """
     _init_git_repo(tmp_path)
     (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
@@ -481,13 +476,10 @@ async def test_handle_git_diff_skips_numstat_on_raw_failure(
     from tools.webapi import git_diff as main_mod
 
     real_run = main_mod._run_git_async
-    call_log: list[tuple] = []
 
     async def _fake_run(*args, **kwargs):
         cmd = args[0]
-        call_log.append(cmd)
-        # 只让 raw diff 返回 ok=False;其他调用走真实实现
-        if "diff" in cmd and "--numstat" not in cmd:
+        if "diff" in cmd and "--numstat" in cmd:
             return {
                 "ok": False,
                 "stdout": "",
@@ -502,15 +494,6 @@ async def test_handle_git_diff_skips_numstat_on_raw_failure(
     data = result["data"]
     assert data["loaded"] is False
     assert data["reason"] == "git_error"
-
-    # 验证 raw diff 跑了,但 numstat 没跑
-    raw_diff_calls = [c for c in call_log if "diff" in c and "--numstat" not in c]
-    numstat_calls = [c for c in call_log if "diff" in c and "--numstat" in c]
-    assert len(raw_diff_calls) >= 1, f"raw diff should have been called: {call_log!r}"
-    assert len(numstat_calls) == 0, (
-        f"numstat must NOT run when raw diff fails "
-        f"(saves 1 git call); got numstat_calls={numstat_calls!r}"
-    )
 
 
 # --- T19: git_path config --------------------------------------------
@@ -569,7 +552,8 @@ async def test_handle_git_diff_default_scope_is_unstaged(plugin, tmp_path, monke
     data = result["data"]
     assert data["loaded"] is True
     assert data["scope"] == "unstaged"  # 默认值回显
-    assert "README.md" in data["diff"]  # unstaged 改动出现在 diff 中
+    # unstaged 改动出现在文件列表中(元数据端点不再携带 patch)
+    assert any(f["path"] == "README.md" for f in data["files_changed"])
 
 
 async def test_handle_git_diff_scope_staged_returns_staged_diff(
@@ -590,8 +574,9 @@ async def test_handle_git_diff_scope_staged_returns_staged_diff(
     data = result["data"]
     assert data["loaded"] is True
     assert data["scope"] == "staged"
-    # staged diff 显示原始 staged 内容(staged change),不含后续 edit
-    assert "staged change" in data["diff"]
+    # staged 范围只含该文件;内容级断言(staged change vs extra edit)
+    # 移到 /spcode/git-diff/full 的测试(patch 文本在 full 端点)
+    assert any(f["path"] == "README.md" for f in data["files_changed"])
 
 
 async def test_handle_git_diff_scope_all_returns_combined_diff(
@@ -615,8 +600,8 @@ async def test_handle_git_diff_scope_all_returns_combined_diff(
     data = result["data"]
     assert data["loaded"] is True
     assert data["scope"] == "all"
-    # HEAD diff 包含 working tree 完整内容(对照 init vs modified+unstaged)
-    assert "modified+unstaged" in data["diff"]
+    # HEAD 范围含 working tree 文件(内容级断言移到 /full 测试)
+    assert any(f["path"] == "README.md" for f in data["files_changed"])
 
 
 async def test_handle_git_diff_scope_staged_empty_when_no_staged_changes(
@@ -635,8 +620,8 @@ async def test_handle_git_diff_scope_staged_empty_when_no_staged_changes(
     data = result["data"]
     assert data["loaded"] is True
     assert data["scope"] == "staged"
-    assert data["diff"] == ""
     assert data["files_changed"] == []
+    assert data["total_files"] == 0
 
 
 async def test_handle_git_diff_scope_all_with_only_staged_changes(
@@ -654,8 +639,8 @@ async def test_handle_git_diff_scope_all_with_only_staged_changes(
     result = await _gd.handle(plugin)
     data = result["data"]
     assert data["scope"] == "all"
-    # staged 改动在工作区 + staged 之和中仍是相同内容
-    assert "only staged" in data["diff"]
+    # staged 改动在 all 范围内仍出现在文件列表(内容级断言移到 /full)
+    assert any(f["path"] == "README.md" for f in data["files_changed"])
 
 
 async def test_handle_git_diff_scope_all_with_only_unstaged_changes(
@@ -673,7 +658,7 @@ async def test_handle_git_diff_scope_all_with_only_unstaged_changes(
     result = await _gd.handle(plugin)
     data = result["data"]
     assert data["scope"] == "all"
-    assert "only unstaged" in data["diff"]
+    assert any(f["path"] == "README.md" for f in data["files_changed"])
 
 
 async def test_handle_git_diff_scope_invalid_value_returns_invalid_scope(
@@ -720,137 +705,10 @@ async def test_handle_git_diff_scope_case_insensitive(plugin, tmp_path, monkeypa
     result = await _gd.handle(plugin)
     data = result["data"]
     assert data["scope"] == "staged"  # 规整为小写
-    assert "staged" in data["diff"]
+    assert any(f["path"] == "README.md" for f in data["files_changed"])
 
 
-# ── v3.3 (2026-06-21): git-diff 4 合 1 重构单测 ──
-# 验证新 helper 的纯函数行为 + handler 现在只跑 2 个 git 调用(从 4 个减半)。
-
-
-# ── 纯函数: _parse_diff_status_map ──
-
-
-async def test_parse_diff_status_map_modified():
-    """modify 的 `git diff` 输出 → 状态 'M'。"""
-    diff = (
-        "diff --git a/file.txt b/file.txt\n"
-        "index abc..def 100644\n"
-        "--- a/file.txt\n"
-        "+++ b/file.txt\n"
-        "@@ -1,3 +1,3 @@\n"
-        " line1\n"
-        "-line2\n"
-        "+line2_mod\n"
-    )
-    assert _gd._parse_diff_status_map(diff) == {"file.txt": "M"}
-
-
-async def test_parse_diff_status_map_added():
-    """add(intent-to-add)的 `git diff` 输出 → 状态 'A'。"""
-    diff = (
-        "diff --git a/new.py b/new.py\n"
-        "new file mode 100644\n"
-        "index 0000000..123 100644\n"
-        "--- /dev/null\n"
-        "+++ b/new.py\n"
-        "@@ -0,0 +1,2 @@\n"
-        "+a\n"
-        "+b\n"
-    )
-    assert _gd._parse_diff_status_map(diff) == {"new.py": "A"}
-
-
-async def test_parse_diff_status_map_deleted():
-    """delete 的 `git diff` 输出 → 状态 'D'。"""
-    diff = (
-        "diff --git a/old.py b/old.py\n"
-        "deleted file mode 100644\n"
-        "index abc..0000000\n"
-        "--- a/old.py\n"
-        "+++ /dev/null\n"
-        "@@ -1 +0,0 @@\n"
-        "-content\n"
-    )
-    assert _gd._parse_diff_status_map(diff) == {"old.py": "D"}
-
-
-async def test_parse_diff_status_map_renamed():
-    """rename 的 `git diff` 输出 → 状态 'R',key 是新路径。"""
-    diff = (
-        "diff --git a/old.py b/new.py\n"
-        "similarity index 100%\n"
-        "rename from old.py\n"
-        "rename to new.py\n"
-    )
-    assert _gd._parse_diff_status_map(diff) == {"new.py": "R"}
-
-
-async def test_parse_diff_status_map_skips_hunk_body():
-    """hunk body 内的 +/- 行不影响 status(只检查 header 区域)。"""
-    # 即使 hunk body 有"new file mode"字面文本(极端情况),也不会误判
-    diff = (
-        "diff --git a/x b/x\n"
-        "new file mode 100644\n"  # 唯一一处真正影响 status
-        "--- /dev/null\n"
-        "+++ b/x\n"
-        "@@ -0,0 +1,1 @@\n"
-        "+new file mode 100644\n"  # 文本里出现但不影响 status
-    )
-    assert _gd._parse_diff_status_map(diff) == {"x": "A"}
-
-
-async def test_parse_diff_status_map_multiple_files():
-    """多文件的 status 映射按 diff 顺序。"""
-    diff = (
-        "diff --git a/a.txt b/a.txt\n"
-        "new file mode 100644\n"
-        "--- /dev/null\n"
-        "+++ b/a.txt\n"
-        "@@ -0,0 +1 @@\n"
-        "+a\n"
-        "diff --git a/b.txt b/b.txt\n"
-        "deleted file mode 100644\n"
-        "--- a/b.txt\n"
-        "+++ /dev/null\n"
-        "@@ -1 +0,0 @@\n"
-        "-b\n"
-    )
-    result = _gd._parse_diff_status_map(diff)
-    assert result == {"a.txt": "A", "b.txt": "D"}
-
-
-# ── 纯函数: _parse_numstat_counts ──
-
-
-async def test_parse_numstat_counts_simple():
-    """基本 add/modify 的 numstat 解析。"""
-    out = "5\t2\tfile.txt\n3\t0\tnew.py\n"
-    assert _gd._parse_numstat_counts(out) == {
-        "file.txt": (5, 2),
-        "new.py": (3, 0),
-    }
-
-
-async def test_parse_numstat_counts_binary():
-    """Binary 文件的 numstat 是 `-` `-` → (0, 0)。"""
-    out = "-\t-\tbinary.dat\n"
-    assert _gd._parse_numstat_counts(out) == {"binary.dat": (0, 0)}
-
-
-async def test_parse_numstat_counts_rename_arrow():
-    """rename/copy 的 numstat 格式 `<old> => <new>`,用 new path 作 key。
-
-    旧实现有 bug:用整个 `<old> => <new>` 串作 key,导致 join 时永远 miss,
-    rename 文件的 additions/deletions 错误为 0。v3.3 修正。
-    """
-    out = "0\t0\told.py => new.py\n"
-    assert _gd._parse_numstat_counts(out) == {"new.py": (0, 0)}
-
-
-async def test_parse_numstat_counts_skips_blank():
-    """空行 / 少于 3 字段的行 → 跳过。"""
-    out = "\n5\t2\tfile.txt\nbad_line\n1\t2\n"
-    assert _gd._parse_numstat_counts(out) == {"file.txt": (5, 2)}
+# ── v2.32.0 (2026-10-25): 渐进式加载后 handler 只跑 1 个 diff 调用 ──
 
 
 # ── 纯函数: _parse_raw_numstat_z (v2.21 canonical-paths) ──
@@ -879,18 +737,21 @@ async def test_parse_raw_numstat_z_regular_and_rename():
             "status": "M",
             "additions": 3,
             "deletions": 1,
+            "is_binary": False,
         },
         {
             "path": "deleted.txt",
             "status": "D",
             "additions": 0,
             "deletions": 2,
+            "is_binary": False,
         },
         {
             "path": "新 名称.txt",
             "status": "R",
             "additions": 4,
             "deletions": 5,
+            "is_binary": False,
         },
     ]
 
@@ -905,6 +766,7 @@ async def test_parse_raw_numstat_z_binary():
             "status": "M",
             "additions": 0,
             "deletions": 0,
+            "is_binary": True,
         }
     ]
 
@@ -972,11 +834,11 @@ async def test_build_stat_text_multiple_files():
 # ── 集成: handler 现在只跑 2 个 git 调用(从 4 减半) ──
 
 
-async def test_handle_git_diff_runs_two_git_invocations(plugin, tmp_path, monkeypatch):
-    """v3.3 重构后,handler 一次请求应只跑 2 个 git diff 调用(从 4 减半)。
+async def test_handle_git_diff_runs_one_diff_invocation(plugin, tmp_path, monkeypatch):
+    """v2.32.0 渐进式加载后,handler 一次请求只跑 1 个 diff 调用(numstat)。
 
-    v3.4 (2026-06-21) P1 perf: P1-5 把 run_sync(run_cmd, ...) 换成 _run_git_async,
-    所以 mock 目标改为 _run_git_async(计数其内部 create_subprocess_exec 调用)。
+    完整 patch 渲染调用已从轮询路径移除(v2.32.0);etag 探测是另外 4 个
+    调用,不归本测试计数。
     """
     from tools.webapi import git_diff as _m
 
@@ -1001,14 +863,12 @@ async def test_handle_git_diff_runs_two_git_invocations(plugin, tmp_path, monkey
     result = await _gd.handle(plugin)
     assert result["data"]["loaded"] is True
 
-    # 期望:1 个 rev-parse (probe) + 1 个 rev-parse (ETag) + 2 个 diff = 4 个调用
+    # 期望:numstat 1 个 diff 调用(完整 patch 渲染已移除)
     diff_calls = [c for c in git_cmd_args if "diff" in c]
-    assert len(diff_calls) == 2, (
-        f"expected 2 git diff invocations, got {len(diff_calls)}: {diff_calls}"
+    assert len(diff_calls) == 1, (
+        f"expected 1 git diff invocation (numstat), got {len(diff_calls)}: {diff_calls}"
     )
-    # 第一个应是 raw diff,第二个应是 numstat
-    assert "diff" in diff_calls[0] and "--numstat" not in diff_calls[0]
-    assert "--numstat" in diff_calls[1]
+    assert "--numstat" in diff_calls[0]
 
 
 # ── v3.3 (2026-06-21): HTTP 缓存 ETag/304 集成测试 ──
@@ -1540,7 +1400,7 @@ async def test_handle_git_diff_scope_empty_string_defaults_to_unstaged(
     result = await _gd.handle(plugin)
     data = result["data"]
     assert data["scope"] == "unstaged"
-    assert "unstaged" in data["diff"]
+    assert any(f["path"] == "README.md" for f in data["files_changed"])
 
 
 async def test_handle_git_diff_scope_field_echoed_in_success_response(

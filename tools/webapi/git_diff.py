@@ -1,7 +1,16 @@
 # tools/webapi/git_diff.py
-"""GET /spcode/git-diff — 工作区/暂存区/HEAD 三段 diff。
+"""GET /spcode/git-diff* — 渐进式 git diff 三端点。
 
 Spec: docs/superpowers/specs/2026-06-18-git-worktree-switcher-design.md §2.1
+v2.32.0 (2026-10-25): 渐进式加载改造(与 dashboard 配套部署):
+  - GET /spcode/git-diff        → 元数据端点(分页): 文件名/状态/增减行数
+    + 全量汇总(stat/total), **不再携带 patch 文本**。原完整 patch 渲染是
+    轮询路径上最贵的 git 操作,而 patch 只有在用户展开某个文件时才会被
+    消费——现在改为按需拉取。
+  - GET /spcode/git-diff/file   → 新增: 单文件 patch(≤256KB,scope 感知),
+    path 必须出现在当前 diff 的文件列表中(防任意文件探测)。
+  - GET /spcode/git-diff/full   → 新增: 旧行为的全量 patch(1MB 上限),
+    唯一消费方是提交对话框的 AI commit message(scoped staged)。
 v3.4: ETag in-memory 缓存 + HTTP 缓存头(304 短路)
 v3.1: scope 参数(un-staged/staged/all)
 v3.3: 4-in-1 git call(优化性能)
@@ -33,8 +42,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# git-diff 端点专用常量(也用于 __init__ 启动期探测)
-MAX_GIT_DIFF_BYTES = 1 * 1024 * 1024  # 1 MB 硬上限
+# ── 容量常量 ──
+# full 端点(提交对话框)的 patch 硬上限,与 v1 的 git-diff 一致。
+MAX_GIT_DIFF_BYTES = 1 * 1024 * 1024  # 1 MB
+# file 端点(单文件按需)的 patch 硬上限。单文件 256KB 已远超常规源码
+# diff;超出即截断,前端沿用"显示全部 N 行"的溢出降级链路。
+MAX_FILE_DIFF_BYTES = 256 * 1024
+
+# ── 分页常量(元数据端点) ──
+DEFAULT_PAGE_LIMIT = 200
+MAX_PAGE_LIMIT = 1000
+
 _GIT_DIFF_ENCODING = detect_console_encoding()  # 进程内一次探测
 
 # ── git-diff ETag in-memory 缓存(v3.4, 2026-06-21, P0 perf) ──
@@ -47,6 +65,16 @@ _GIT_DIFF_ENCODING = detect_console_encoding()  # 进程内一次探测
 _DIFF_ETAG_TTL: float = 1.5  # seconds
 _DIFF_ETAG_CACHE_MAX = 64
 _DIFF_ETAG_CACHE: OrderedDict[str, tuple[str, float]] = OrderedDict()
+
+# ── 元数据解析缓存(v2.32.0 渐进式改造配套) ──
+# WHY: 列表端点分页后,同一工作区状态下的翻页请求(offset=200/400/…)
+# 不应各自重跑 numstat。key = (directory, scope, etag):etag 未变 ⇒ 状态
+# 未变 ⇒ 解析结果复用是安全的(与 304 短路同一信任级别);etag 变化 ⇒
+# key miss ⇒ 重跑。LRU 64 容量与 ETag 缓存对齐。
+_META_CACHE_MAX = 64
+_META_CACHE: OrderedDict[
+    tuple[str, str, str], tuple[list[dict], str, dict[str, int]]
+] = OrderedDict()
 
 # ── git-diff scope 映射(v3.1) ──
 # 单一真相源:scope 名 → 传给 `git diff [args]` 的位置参数列表。
@@ -62,98 +90,6 @@ _SCOPE_GIT_ARGS: dict[str, list[str]] = {
 }
 DEFAULT_SCOPE: str = "unstaged"  # 与 v1 行为严格兼容
 
-# ── file-browser 端点常量(v3.2) ──
-# 单一真相源,handler 与测试共享;详情见
-# docs/superpowers/specs/2026-06-20-file-browser-endpoint-design.md §5
-
-
-def _parse_diff_status_map(diff_output: str) -> dict[str, str]:
-    """从 ``git diff`` 原始输出解析 ``{path: status}`` 映射。
-
-    性能优化 (v3.3,2026-06-21,git-diff 4 合 1 配套):
-    替代原来的 ``git diff --name-status`` 单独调用。仅检查每个文件
-    header 部分(第一个 hunk 之前的 ~10 行),跳过 hunk body 加速。
-
-    支持的状态:
-    - M (modify,默认)
-    - A (add,``new file mode``)
-    - D (delete,``deleted file mode``)
-    - R (rename,``rename from/to`` 对;使用新路径作为 key)
-    - C (copy,``copy from/to`` 对;使用新路径作为 key)
-
-    已知限制(无测试覆盖,与 v1 行为一致):
-    - 纯 mode change(``old mode`` / ``new mode``,无 content 改动)→ "M"
-    - submodule 改动 → "M"
-    - ``T``(type change)目前归为 "M",旧实现也是 "T" → 略退
-    """
-    status_by_path: dict[str, str] = {}
-    current_path: str | None = None
-    current_status: str = "M"
-    in_hunk = False
-
-    for line in diff_output.splitlines():
-        if line.startswith("diff --git "):
-            if current_path is not None:
-                status_by_path[current_path] = current_status
-            parts = line.split(" ")
-            b_path = parts[3] if len(parts) >= 4 else ""
-            current_path = b_path[2:] if b_path.startswith("b/") else b_path
-            current_status = "M"
-            in_hunk = False
-            continue
-
-        if current_path is None or in_hunk:
-            continue
-
-        if line.startswith("new file mode"):
-            current_status = "A"
-        elif line.startswith("deleted file mode"):
-            current_status = "D"
-        elif line.startswith("rename from "):
-            current_status = "R"
-        elif line.startswith("rename to "):
-            current_path = line[len("rename to ") :]
-        elif line.startswith("copy from "):
-            current_status = "C"
-        elif line.startswith("copy to "):
-            current_path = line[len("copy to ") :]
-        elif line.startswith("@@"):
-            in_hunk = True
-        # index / similarity / file header (--- / +++) / Binary files 等行:忽略
-
-    if current_path is not None:
-        status_by_path[current_path] = current_status
-
-    return status_by_path
-
-
-def _parse_numstat_counts(numstat_output: str) -> dict[str, tuple[int, int]]:
-    """从 ``git diff --numstat`` 解析 ``{path: (add, del)}`` 映射。
-
-    性能优化 (v3.3,2026-06-21,git-diff 4 合 1 配套):
-    替代原 ``_parse_files_changed`` 中的 numstat 解析块,并修复了 rename/copy
-    的 path 解析 bug(旧版用 ``old_path => new_path`` 整个串作 key,导致
-    counts_by_path.get(new_path) 永远 miss,rename 文件的 additions/deletions
-    错误地为 0)。此处用 new_path 作 key,与 _parse_diff_status_map 对齐。
-
-    Binary 文件的 numstat 是 ``-`` ``-`` → ``(0, 0)``。
-    """
-    counts: dict[str, tuple[int, int]] = {}
-    for line in numstat_output.splitlines():
-        if not line:
-            continue
-        parts = line.split("\t")
-        if len(parts) < 3:
-            continue
-        add_raw, del_raw, path = parts[0], parts[1], parts[2]
-        # rename/copy: numstat 输出 "<old> => <new>",取 new 部分作 key
-        if " => " in path:
-            path = path.split(" => ", 1)[1]
-        add = 0 if add_raw == "-" else int(add_raw)
-        delete = 0 if del_raw == "-" else int(del_raw)
-        counts[path] = (add, delete)
-    return counts
-
 
 def _parse_raw_numstat_z(metadata_output: str) -> list[dict]:
     """Parse combined ``git diff --raw --numstat -z`` output.
@@ -161,6 +97,10 @@ def _parse_raw_numstat_z(metadata_output: str) -> list[dict]:
     Raw records provide status and canonical paths. Numstat records provide
     line counts. Rename and copy records carry source and destination paths
     in separate NUL-delimited fields (v2.21 canonical-paths fix).
+
+    v2.32.0: 每条记录新增 ``is_binary``——numstat 对二进制文件输出
+    ``-\\t-\\t<path>``,替代旧流程从 patch 文本探测 "Binary files" 的方式
+    (元数据端点不再携带 patch)。
 
     Args:
         metadata_output: Decoded NUL-delimited Git output.
@@ -207,6 +147,7 @@ def _parse_raw_numstat_z(metadata_output: str) -> list[dict]:
         raw_files.append({"path": path, "status": status})
 
     counts_by_path: dict[str, tuple[int, int]] = {}
+    binary_by_path: dict[str, bool] = {}
 
     while cursor < len(tokens):
         record = tokens[cursor]
@@ -235,6 +176,7 @@ def _parse_raw_numstat_z(metadata_output: str) -> list[dict]:
             raise ValueError(f"Invalid numstat counts: {record!r}") from exc
 
         counts_by_path[path] = (additions, deletions)
+        binary_by_path[path] = add_raw == "-" and delete_raw == "-"
 
     return [
         {
@@ -242,6 +184,7 @@ def _parse_raw_numstat_z(metadata_output: str) -> list[dict]:
             "status": item["status"],
             "additions": counts_by_path.get(item["path"], (0, 0))[0],
             "deletions": counts_by_path.get(item["path"], (0, 0))[1],
+            "is_binary": binary_by_path.get(item["path"], False),
         }
         for item in raw_files
     ]
@@ -296,10 +239,6 @@ async def _compute_diff_etag(git_bin: str, directory: str) -> str:
     porcelain 探测解决 ETag staleness。详见
     ``tools/webapi/_helpers.py:_compute_git_etag`` docstring。
 
-    旧 v3.4 算法只用 HEAD SHA + wt_mtime + idx_mtime,用户在 worktree 内
-    编辑文件 (不 git add) 时 3 个信号都不变 → ETag 不变 → 304 stale。
-    新算法额外包含 3 路 git 探测的 SHA-1 哈希,文件级真实变化立刻体现。
-
     v3.4 P0 perf: 1.5s TTL in-memory 缓存保留(LRU 64 容量),让 dashboard
     5-10s polling 时 N 个请求共享 1 个 ETag 计算。
     """
@@ -321,6 +260,65 @@ async def _compute_diff_etag(git_bin: str, directory: str) -> str:
     return etag
 
 
+async def _load_diff_metadata(
+    git_bin: str,
+    directory: str,
+    scope: str,
+    etag: str,
+    scope_args: list[str],
+) -> tuple[list[dict], str, dict[str, int]] | None:
+    """Load (records, stat, totals) for a (directory, scope, etag) state.
+
+    Cache-first: a (directory, scope, etag) hit skips the numstat git
+    call entirely — the etag already proves the worktree state is
+    unchanged, so the parsed metadata is still valid. A miss runs
+    ``git diff --raw --numstat -z`` once and fills the cache.
+
+    Args:
+        git_bin: Git binary path.
+        directory: Repository directory (already worktree-validated).
+        scope: Resolved diff scope.
+        etag: Current worktree ETag (cache key component).
+        scope_args: Positional args for the scope (from _SCOPE_GIT_ARGS).
+
+    Returns:
+        ``(records, stat, totals)`` where totals =
+        ``{"files", "additions", "deletions"}`` over ALL records, or
+        None when the git call fails (caller maps to its own envelope).
+    """
+    key = (directory, scope, etag)
+    cached = _META_CACHE.get(key)
+    if cached is not None:
+        _META_CACHE.move_to_end(key)
+        return cached
+
+    git_prefix = [git_bin, "-C", directory, "-c", "color.ui=never"]
+    metadata_result = await _run_git_async(
+        git_prefix + ["diff", "--raw", "--numstat", "-z"] + scope_args,
+        encoding="utf-8",
+    )
+    if not metadata_result["ok"]:
+        return None
+
+    try:
+        records = _parse_raw_numstat_z(metadata_result.get("stdout", ""))
+    except ValueError as exc:
+        logger.warning("git-diff metadata parse failed: %s", exc)
+        return None
+
+    stat = _build_stat_text(records)
+    totals = {
+        "files": len(records),
+        "additions": sum(r["additions"] for r in records),
+        "deletions": sum(r["deletions"] for r in records),
+    }
+
+    _META_CACHE[key] = (records, stat, totals)
+    while len(_META_CACHE) > _META_CACHE_MAX:
+        _META_CACHE.popitem(last=False)
+    return records, stat, totals
+
+
 def _make_git_diff_empty_envelope(
     umo: str | None,
     reason: str,
@@ -336,21 +334,204 @@ def _make_git_diff_empty_envelope(
             "directory": directory,
             "umo": umo,
             "reason": reason,
-            "diff": None,
-            "stat": None,
             "files_changed": [],
-            "truncated": False,
-            "truncated_at_bytes": 0,
-            "max_bytes": MAX_GIT_DIFF_BYTES,
             "elapsed_ms": elapsed_ms,
         },
+    }
+
+
+def _parse_page_params() -> tuple[int, int]:
+    """解析并夹取列表端点的分页参数(offset / limit)。
+
+    Returns:
+        ``(offset, limit)``;offset 非负,limit 夹取在
+        [1, MAX_PAGE_LIMIT]。非法输入回退默认值(与 scope 的宽容解析
+        同风格——dashboard 是唯一调用方,不存在恶意分页)。
+    """
+    offset = 0
+    limit = DEFAULT_PAGE_LIMIT
+    try:
+        from astrbot.api import web
+
+        raw_offset = web.request.query.get("offset")
+        raw_limit = web.request.query.get("limit")
+        if raw_offset is not None:
+            offset = max(0, int(raw_offset))
+        if raw_limit is not None:
+            limit = min(MAX_PAGE_LIMIT, max(1, int(raw_limit)))
+    except Exception:
+        offset = 0
+        limit = DEFAULT_PAGE_LIMIT
+    return offset, limit
+
+
+async def _run_git_diff_query(
+    plugin: SPCodeToolkit,
+    umo: str | None,
+    worktree_param: str | None,
+    scope: str,
+    *,
+    http_cache: bool = True,
+) -> tuple[dict | None, dict]:
+    """git-diff 系列端点共用的前置检查 + 元数据装载。
+
+    Steps mirror the legacy handle() flow: feature flags → umo 解析与
+    回退 → worktree 6 步防御 → 目录存在性 → ETag/304 → repo probe →
+    元数据(缓存优先)。
+
+    Args:
+        plugin: SPCodeToolkit instance.
+        umo: Requested umo (may be None → most-recent fallback).
+        worktree_param: Raw ?worktree= value (None/empty = primary).
+        scope: Resolved diff scope.
+        http_cache: False 时跳过 If-None-Match 304 短路(按需的 file
+            端点必须真正执行——它携带自己的 payload,不能复用列表的
+            304 语义)。
+
+    Returns:
+        ``(error_envelope, None)`` on any preflight / git failure —
+        the envelope is ready to return as-is. On success
+        ``(None, ctx)`` with ctx = {"directory", "umo", "git_bin",
+        "records", "stat", "totals", "etag", "cache_headers"}.
+        When ``http_cache`` is True and If-None-Match matches, returns
+        ``(None, {"not_modified": True, ...})`` instead.
+    """
+
+    def _elapsed(t0: float) -> int:
+        return int((_time.time() - t0) * 1000)
+
+    t0 = _time.time()
+    git_bin = plugin._git_binary()
+
+    # 1. Feature flag 校验
+    if not (
+        plugin._config.get("agentsmd_enabled", True)
+        and plugin._config.get("codegraph_enabled", True)
+    ):
+        return _make_git_diff_empty_envelope(
+            umo=umo, reason="feature_disabled", elapsed_ms=_elapsed(t0)
+        ), {}
+
+    # 2. umo 解析与回退
+    if umo:
+        info = plugin.get_loaded_project(umo)
+    else:
+        all_items = _proj_state.items()
+        if not all_items:
+            info = None
+        else:
+            _, info = max(
+                all_items.items(),
+                key=lambda kv: kv[1].get("loaded_at", 0),
+            )
+
+    if info is None:
+        return _make_git_diff_empty_envelope(
+            umo=umo, reason="no_project_loaded", elapsed_ms=_elapsed(t0)
+        ), {}
+
+    directory = info.get("directory", "")
+
+    # 2.5 ?worktree= 参数校验(6-step defense;spec §2.3)
+    if worktree_param is not None and worktree_param.strip():
+        validated_wt, wt_err = _validate_worktree_param(
+            git_bin, directory, worktree_param
+        )
+        if wt_err is not None:
+            logger.warning(
+                f"[git-diff] rejected ?worktree={worktree_param!r} "
+                f"(loaded={directory!r})"
+            )
+            return _make_git_diff_empty_envelope(
+                umo=umo,
+                reason=wt_err,
+                directory=directory,
+                elapsed_ms=_elapsed(t0),
+            ), {}
+        directory = validated_wt  # use the validated worktree path
+
+    # 3. 目录存在性
+    if not Path(directory).is_dir():
+        return _make_git_diff_empty_envelope(
+            umo=umo,
+            reason="directory_missing",
+            directory=directory,
+            elapsed_ms=_elapsed(t0),
+        ), {}
+
+    # 3.5 HTTP 缓存(v3.3,2026-06-21): 在跑 git probe / diff 之前
+    # 先算 ETag 并检查 If-None-Match,命中直接 304 短路。
+    etag = await _compute_diff_etag(git_bin, directory)
+    cache_headers = _common_cache_headers(etag)
+    if http_cache and _get_if_none_match() == etag:
+        return None, {"not_modified": True, "etag": etag,
+                      "cache_headers": cache_headers}
+
+    # 4. Git repository probe — git outputs UTF-8 on every platform,
+    # so we always decode with utf-8 regardless of the Windows console
+    # codepage.
+    probe = await _run_git_async(
+        [git_bin, "-C", directory, "rev-parse", "--is-inside-work-tree"],
+        encoding="utf-8",
+    )
+    if not probe["ok"]:
+        combined = (probe.get("stderr", "") + probe.get("error", "")).lower()
+        if "not a git repository" in combined:
+            return _make_git_diff_empty_envelope(
+                umo=umo,
+                reason="not_a_git_repo",
+                directory=directory,
+                elapsed_ms=_elapsed(t0),
+            ), {}
+        if "未安装" in probe.get("error", ""):
+            return _make_git_diff_empty_envelope(
+                umo=umo,
+                reason="git_unavailable",
+                directory=directory,
+                elapsed_ms=_elapsed(t0),
+            ), {}
+        return _make_git_diff_empty_envelope(
+            umo=umo,
+            reason="git_error",
+            directory=directory,
+            stderr=probe.get("stderr", "") or probe.get("error", ""),
+            elapsed_ms=_elapsed(t0),
+        ), {}
+
+    loaded = await _load_diff_metadata(
+        git_bin, directory, scope, etag, _SCOPE_GIT_ARGS[scope]
+    )
+    if loaded is None:
+        return _make_git_diff_empty_envelope(
+            umo=umo,
+            reason="git_error",
+            directory=directory,
+            elapsed_ms=_elapsed(t0),
+        ), {}
+
+    records, stat, totals = loaded
+    return None, {
+        "directory": directory,
+        "umo": umo,
+        "git_bin": git_bin,
+        "records": records,
+        "stat": stat,
+        "totals": totals,
+        "etag": etag,
+        "cache_headers": cache_headers,
+        "t0": t0,
     }
 
 
 async def handle(
     plugin: SPCodeToolkit,
 ) -> dict:
-    """Web API handler for ``GET /spcode/git-diff``.
+    """Web API handler for ``GET /spcode/git-diff`` — 元数据分页端点。
+
+    v2.32.0 渐进式改造:响应不再携带 patch 文本;文件列表分页;新增
+    is_binary / etag / total_* / has_more 字段。patch 按需走
+    ``GET /spcode/git-diff/file``;全量 patch(提交对话框)走
+    ``GET /spcode/git-diff/full``。
 
     Returns a JSON envelope of the form::
 
@@ -360,12 +541,18 @@ async def handle(
                 "loaded": bool,
                 "directory": str | None,
                 "umo": str | None,
-                "diff": str | None,
-                "stat": str | None,
-                "files_changed": [{"path", "status", "additions", "deletions"}],
-                "truncated": bool,
-                "truncated_at_bytes": int,
-                "max_bytes": int,
+                "scope": str,
+                "etag": str,
+                "files_changed": [  # 单页(offset..offset+limit)
+                    {"path", "status", "additions", "deletions", "is_binary"}
+                ],
+                "stat": str,
+                "total_files": int,        # 全量(跨页)统计
+                "total_additions": int,
+                "total_deletions": int,
+                "offset": int,
+                "limit": int,
+                "has_more": bool,
                 "elapsed_ms": int,
                 "reason": str | None
             }
@@ -377,7 +564,6 @@ async def handle(
       - The loaded directory still exists and is a git repository
     Otherwise returns ``loaded=False`` with a structured ``reason`` code.
     """
-    t0 = _time.time()
     from astrbot.api import web
 
     umo: str | None = None
@@ -393,217 +579,296 @@ async def handle(
         worktree_param = None
 
     # ── scope 解析(v3.1,Q1-OOR:在 feature flag 校验之前) ──
-    # 默认 "unstaged" 与 v1 行为严格一致;非法值 → invalid_scope;
-    # 大小写不敏感;空字符串视同缺省(避免误报)。
     scope: str = DEFAULT_SCOPE
     try:
         scope_raw = web.request.query.get("scope")
         if scope_raw is not None:
             candidate = scope_raw.strip().lower()
             if candidate and candidate not in _VALID_SCOPES:
-                # _elapsed() 尚未定义,inline 计算 elapsed_ms
                 return _make_git_diff_empty_envelope(
                     umo=None,
                     reason="invalid_scope",
-                    elapsed_ms=int((_time.time() - t0) * 1000),
+                    elapsed_ms=0,
                 )
             scope = candidate or DEFAULT_SCOPE
     except Exception:
         scope = DEFAULT_SCOPE
 
-    git_bin = plugin._git_binary()
+    offset, limit = _parse_page_params()
 
-    def _elapsed() -> int:
-        return int((_time.time() - t0) * 1000)
+    error, ctx = await _run_git_diff_query(plugin, umo, worktree_param, scope)
+    if error is not None:
+        return error
+    if ctx.get("not_modified"):
+        return _make_304_response(ctx["cache_headers"])
 
-    # 1. Feature flag 校验
-    if not (
-        plugin._config.get("agentsmd_enabled", True)
-        and plugin._config.get("codegraph_enabled", True)
-    ):
-        return _make_git_diff_empty_envelope(
-            umo=umo, reason="feature_disabled", elapsed_ms=_elapsed()
-        )
-
-    # 2. umo 解析与回退
-    # PR-7 (2026-06-23): 数据源从 ``plugin._loaded_projects`` 迁移到
-    # ``tools.project.state`` 模块级单例 + ``plugin.get_loaded_project()``。
-    if umo:
-        info = plugin.get_loaded_project(umo)
-    else:
-        all_items = _proj_state.items()
-        if not all_items:
-            info = None
-        else:
-            _, info = max(
-                all_items.items(),
-                key=lambda kv: kv[1].get("loaded_at", 0),
-            )
-
-    if info is None:
-        return _make_git_diff_empty_envelope(
-            umo=umo, reason="no_project_loaded", elapsed_ms=_elapsed()
-        )
-
-    directory = info.get("directory", "")
-
-    # 2.5 ?worktree= 参数校验(6-step defense;spec §2.3)
-    # Spec: trim 后空 → 视同缺省(向后兼容 v1)。
-    # 其他任何值都必须通过 6 步校验,否则返回 worktree_invalid。
-    if worktree_param is not None and worktree_param.strip():
-        validated_wt, wt_err = _validate_worktree_param(
-            git_bin, directory, worktree_param
-        )
-        if wt_err is not None:
-            logger.warning(
-                f"[git-diff] rejected ?worktree={worktree_param!r} "
-                f"(loaded={directory!r})"
-            )
-            return _make_git_diff_empty_envelope(
-                umo=umo,
-                reason=wt_err,
-                directory=directory,
-                elapsed_ms=_elapsed(),
-            )
-        directory = validated_wt  # use the validated worktree path
-
-    # 3. 目录存在性
-    if not Path(directory).is_dir():
-        return _make_git_diff_empty_envelope(
-            umo=umo,
-            reason="directory_missing",
-            directory=directory,
-            elapsed_ms=_elapsed(),
-        )
-
-    # 3.5 HTTP 缓存(v3.3,2026-06-21): 在跑 git probe / diff 之前
-    # 先算 ETag 并检查 If-None-Match,命中直接 304 短路。Dashboard 5-10s
-    # polling 时大多数请求命中缓存(无 commit/无 git add/无 add-delete),
-    # 跳过 3 个 git 调用(probe + diff + numstat)从 ~1-2s 降到 ~12ms。
-    etag = await _compute_diff_etag(git_bin, directory)
-    cache_headers = _common_cache_headers(etag)
-    if _get_if_none_match() == etag:
-        return _make_304_response(cache_headers)
-
-    # 4. Git repository probe — git outputs UTF-8 on every platform,
-    # so we always decode with utf-8 regardless of the Windows console
-    # codepage (cp936/GBK on zh-CN systems would otherwise mojibake
-    # non-ASCII characters in subsequent diff output).
-    # P1 perf (v3.4, 2026-06-21): 改用 _run_git_async 释放 worker 线程。
-    probe = await _run_git_async(
-        [git_bin, "-C", directory, "rev-parse", "--is-inside-work-tree"],
-        encoding="utf-8",
-    )
-    if not probe["ok"]:
-        combined = (probe.get("stderr", "") + probe.get("error", "")).lower()
-        if "not a git repository" in combined:
-            return _make_git_diff_empty_envelope(
-                umo=umo,
-                reason="not_a_git_repo",
-                directory=directory,
-                elapsed_ms=_elapsed(),
-            )
-        if "未安装" in probe.get("error", ""):
-            return _make_git_diff_empty_envelope(
-                umo=umo,
-                reason="git_unavailable",
-                directory=directory,
-                elapsed_ms=_elapsed(),
-            )
-        return _make_git_diff_empty_envelope(
-            umo=umo,
-            reason="git_error",
-            directory=directory,
-            stderr=probe.get("stderr", "") or probe.get("error", ""),
-            elapsed_ms=_elapsed(),
-        )
-
-    # 5. Serially collect raw diff + numstat.
-    # P2 perf (v3.4, 2026-06-21): 串行 — diff 完成后跑 numstat,走 page cache。
-    # 旧版 (v3.3) 2 路 ``asyncio.gather(diff, numstat)`` 并发:
-    # - CPU 占用 2 路(2 个 git 子进程同时跑)
-    # - 2 个 git 进程互相竞争 work tree I/O
-    # - raw diff 失败时 numstat 也跑(浪费 1 个 git 调用)
-    # 新版串行:
-    # - raw diff 跑完 → 内核 page cache 填满 → numstat 紧接着跑,几乎瞬时
-    #   (numstat 不读 file body,只 walk tree;走 page cache 时 < 5ms)
-    # - 总 wall-clock 持平(因为 page cache 命中)
-    # - CPU 占用从 2 路降到 1 路
-    # - raw diff 失败时直接返回,**numstat 跳过**(省 1 个 git 调用)
-    # All git invocations output UTF-8, so we decode with utf-8 to avoid
-    # mojibake on cp936 Windows hosts.
-    git_prefix = [git_bin, "-C", directory, "-c", "color.ui=never"]
-    scope_args = _SCOPE_GIT_ARGS[scope]
-    # P1 perf (v3.4, 2026-06-21): diff / numstat 改用 _run_git_async,
-    # 事件循环直接管理两个 git 子进程,worker 占用从 2 → 0。
-    # P2 perf (v3.4, 2026-06-21): 改为串行(await 而非 asyncio.gather)。
-    raw_result = await _run_git_async(
-        git_prefix + ["diff"] + scope_args, encoding="utf-8"
-    )
-
-    if not raw_result["ok"]:
-        return _make_git_diff_empty_envelope(
-            umo=umo,
-            reason="git_error",
-            directory=directory,
-            stderr=raw_result.get("stderr", ""),
-            elapsed_ms=_elapsed(),
-        )
-
-    # Files-metadata stream is collected in a second pass so raw diff
-    # syntax (``diff --git`` headers, hunks) can be parsed with the
-    # existing v3.3 helper without coupling. The metadata call uses
-    # machine-readable output to keep paths with spaces, quotes,
-    # backslashes, Unicode text, and embedded newlines intact
-    # (v2.21 canonical-paths fix).
-    metadata_result = await _run_git_async(
-        git_prefix + ["diff", "--raw", "--numstat", "-z"] + scope_args,
-        encoding="utf-8",
-    )
-    if not metadata_result["ok"]:
-        return _make_git_diff_empty_envelope(
-            umo=umo,
-            reason="git_error",
-            directory=directory,
-            stderr=metadata_result.get("stderr", ""),
-            elapsed_ms=_elapsed(),
-        )
-
-    # 6. 截断与解析(single raw diff → 3 views in Python)
-    raw = raw_result["stdout"]
-    truncated = len(raw) > MAX_GIT_DIFF_BYTES
-    diff = raw[:MAX_GIT_DIFF_BYTES]
-    try:
-        files_changed = _parse_raw_numstat_z(metadata_result.get("stdout", ""))
-    except ValueError as exc:
-        logger.warning("git-diff metadata parse failed: %s", exc)
-        return _make_git_diff_empty_envelope(
-            umo=umo,
-            reason="git_error",
-            directory=directory,
-            stderr=str(exc),
-            elapsed_ms=_elapsed(),
-        )
-    stat = _build_stat_text(files_changed)
+    records = ctx["records"]
+    page = records[offset : offset + limit]
+    t0 = ctx["t0"]
 
     return _JSONResponseCompat(
         {
             "status": "ok",
             "data": {
                 "loaded": True,
-                "directory": directory,
-                "umo": umo,
-                "scope": scope,  # ← 新增 v3.1:回显 scope 解析结果
-                "diff": diff,
-                "stat": stat,
-                "files_changed": files_changed,
+                "directory": ctx["directory"],
+                "umo": ctx["umo"],
+                "scope": scope,
+                "etag": ctx["etag"],
+                "files_changed": page,
+                "stat": ctx["stat"],
+                "total_files": ctx["totals"]["files"],
+                "total_additions": ctx["totals"]["additions"],
+                "total_deletions": ctx["totals"]["deletions"],
+                "offset": offset,
+                "limit": limit,
+                "has_more": offset + limit < len(records),
+                "elapsed_ms": int((_time.time() - t0) * 1000),
+                "reason": None,
+            },
+        },
+        status_code=200,
+        headers=ctx["cache_headers"],
+    )
+
+
+async def handle_file(
+    plugin: SPCodeToolkit,
+) -> dict:
+    """Web API handler for ``GET /spcode/git-diff/file`` — 单文件按需 patch。
+
+    v2.32.0 渐进式改造新增。path 必须出现在当前 diff 的文件列表中
+    (防任意文件探测);二进制文件直接标记返回,不渲染 patch。
+
+    Returns::
+
+        {
+            "status": "ok",
+            "data": {
+                "loaded": bool,
+                "path": str,
+                "scope": str,
+                "is_binary": bool,
+                "diff": str | None,     # unified patch(≤256KB)
+                "truncated": bool,
+                "truncated_at_bytes": int,
+                "max_bytes": int,
+                "elapsed_ms": int,
+                "reason": str | None
+            }
+        }
+    """
+    from astrbot.api import web
+
+    t0 = _time.time()
+
+    def _elapsed() -> int:
+        return int((_time.time() - t0) * 1000)
+
+    umo: str | None = None
+    worktree_param: str | None = None
+    file_path = ""
+    try:
+        umo_raw = web.request.query.get("umo")
+        umo = umo_raw if umo_raw else None
+        wt_raw = web.request.query.get("worktree")
+        worktree_param = wt_raw if wt_raw is not None else None
+        file_path = (web.request.query.get("path") or "").strip()
+    except Exception:
+        umo = None
+        worktree_param = None
+        file_path = ""
+
+    scope: str = DEFAULT_SCOPE
+    try:
+        scope_raw = web.request.query.get("scope")
+        if scope_raw is not None:
+            candidate = scope_raw.strip().lower()
+            if candidate and candidate not in _VALID_SCOPES:
+                return _make_git_diff_empty_envelope(
+                    umo=None,
+                    reason="invalid_scope",
+                    elapsed_ms=_elapsed(),
+                )
+            scope = candidate or DEFAULT_SCOPE
+    except Exception:
+        scope = DEFAULT_SCOPE
+
+    if not file_path:
+        return _make_git_diff_empty_envelope(
+            umo=umo, reason="path_required", elapsed_ms=_elapsed()
+        )
+
+    error, ctx = await _run_git_diff_query(
+        plugin, umo, worktree_param, scope, http_cache=False
+    )
+    if error is not None:
+        return error
+    if ctx.get("not_modified"):  # pragma: no cover - http_cache=False
+        return _make_git_diff_empty_envelope(
+            umo=ctx.get("umo"),
+            reason="git_error",
+            elapsed_ms=_elapsed(),
+        )
+
+    records: list[dict] = ctx["records"]
+    match = next((r for r in records if r["path"] == file_path), None)
+    if match is None:
+        return _make_git_diff_empty_envelope(
+            umo=ctx["umo"],
+            reason="path_not_in_diff",
+            directory=ctx["directory"],
+            elapsed_ms=_elapsed(),
+        )
+
+    if match.get("is_binary"):
+        return _JSONResponseCompat(
+            {
+                "status": "ok",
+                "data": {
+                    "loaded": True,
+                    "path": file_path,
+                    "scope": scope,
+                    "is_binary": True,
+                    "diff": None,
+                    "truncated": False,
+                    "truncated_at_bytes": 0,
+                    "max_bytes": MAX_FILE_DIFF_BYTES,
+                    "elapsed_ms": _elapsed(),
+                    "reason": None,
+                },
+            },
+            status_code=200,
+        )
+
+    patch_result = await _run_git_async(
+        [
+            ctx["git_bin"],
+            "-C",
+            ctx["directory"],
+            "-c",
+            "color.ui=never",
+            "diff",
+        ]
+        + _SCOPE_GIT_ARGS[scope]
+        + ["--", file_path],
+        encoding="utf-8",
+    )
+    if not patch_result["ok"]:
+        return _make_git_diff_empty_envelope(
+            umo=ctx["umo"],
+            reason="git_error",
+            directory=ctx["directory"],
+            stderr=patch_result.get("stderr", ""),
+            elapsed_ms=_elapsed(),
+        )
+
+    raw = patch_result["stdout"]
+    truncated = len(raw) > MAX_FILE_DIFF_BYTES
+    patch = raw[:MAX_FILE_DIFF_BYTES]
+
+    return _JSONResponseCompat(
+        {
+            "status": "ok",
+            "data": {
+                "loaded": True,
+                "path": file_path,
+                "scope": scope,
+                "is_binary": False,
+                "diff": patch,
                 "truncated": truncated,
-                "truncated_at_bytes": MAX_GIT_DIFF_BYTES if truncated else 0,
-                "max_bytes": MAX_GIT_DIFF_BYTES,
+                "truncated_at_bytes": MAX_FILE_DIFF_BYTES if truncated else 0,
+                "max_bytes": MAX_FILE_DIFF_BYTES,
                 "elapsed_ms": _elapsed(),
                 "reason": None,
             },
         },
         status_code=200,
-        headers=cache_headers,
+    )
+
+
+async def handle_full(
+    plugin: SPCodeToolkit,
+) -> dict:
+    """Web API handler for ``GET /spcode/git-diff/full`` — 旧式全量 patch。
+
+    v2.32.0 渐进式改造新增:保留 v1 ``GET /spcode/git-diff`` 的完整行为
+    (full patch 1MB 上限 + files_changed + stat),供**提交对话框的 AI
+    commit message**使用(scope=staged)。侧栏轮询永远不调本端点。
+
+    Response shape == 旧 git-diff 响应(diff/stat/files_changed/truncated
+    /truncated_at_bytes/max_bytes),外加 is_binary 字段与 scope 回显。
+    """
+    from astrbot.api import web
+
+    umo: str | None = None
+    worktree_param: str | None = None
+    try:
+        umo_raw = web.request.query.get("umo")
+        umo = umo_raw if umo_raw else None
+        wt_raw = web.request.query.get("worktree")
+        worktree_param = wt_raw if wt_raw is not None else None
+    except Exception:
+        umo = None
+        worktree_param = None
+
+    scope: str = DEFAULT_SCOPE
+    try:
+        scope_raw = web.request.query.get("scope")
+        if scope_raw is not None:
+            candidate = scope_raw.strip().lower()
+            if candidate and candidate not in _VALID_SCOPES:
+                return _make_git_diff_empty_envelope(
+                    umo=None,
+                    reason="invalid_scope",
+                    elapsed_ms=0,
+                )
+            scope = candidate or DEFAULT_SCOPE
+    except Exception:
+        scope = DEFAULT_SCOPE
+
+    error, ctx = await _run_git_diff_query(plugin, umo, worktree_param, scope)
+    if error is not None:
+        return error
+    if ctx.get("not_modified"):
+        return _make_304_response(ctx["cache_headers"])
+
+    t0 = ctx["t0"]
+    git_prefix = [ctx["git_bin"], "-C", ctx["directory"], "-c", "color.ui=never"]
+    raw_result = await _run_git_async(
+        git_prefix + ["diff"] + _SCOPE_GIT_ARGS[scope], encoding="utf-8"
+    )
+    if not raw_result["ok"]:
+        return _make_git_diff_empty_envelope(
+            umo=ctx["umo"],
+            reason="git_error",
+            directory=ctx["directory"],
+            stderr=raw_result.get("stderr", ""),
+            elapsed_ms=int((_time.time() - t0) * 1000),
+        )
+
+    raw = raw_result["stdout"]
+    truncated = len(raw) > MAX_GIT_DIFF_BYTES
+    diff = raw[:MAX_GIT_DIFF_BYTES]
+
+    return _JSONResponseCompat(
+        {
+            "status": "ok",
+            "data": {
+                "loaded": True,
+                "directory": ctx["directory"],
+                "umo": ctx["umo"],
+                "scope": scope,
+                "diff": diff,
+                "stat": ctx["stat"],
+                "files_changed": ctx["records"],
+                "truncated": truncated,
+                "truncated_at_bytes": MAX_GIT_DIFF_BYTES if truncated else 0,
+                "max_bytes": MAX_GIT_DIFF_BYTES,
+                "elapsed_ms": int((_time.time() - t0) * 1000),
+                "reason": None,
+            },
+        },
+        status_code=200,
+        headers=ctx["cache_headers"],
     )

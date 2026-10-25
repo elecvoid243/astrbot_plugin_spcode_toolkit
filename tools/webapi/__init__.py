@@ -200,7 +200,19 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "/spcode/git-diff",
         ["GET"],
         git_diff.handle,
-        "获取已加载项目的未暂存 git diff",
+        "获取已加载项目的 git 变更元数据(分页,含状态/增减行数,不含 patch)",
+    ),
+    (
+        "/spcode/git-diff/file",  # v2.32.0 (2026-10-25) 渐进式加载
+        ["GET"],
+        git_diff.handle_file,
+        "按需获取单个变更文件的 git diff patch(≤256KB,scope 感知)",
+    ),
+    (
+        "/spcode/git-diff/full",  # v2.32.0 (2026-10-25) 提交对话框用
+        ["GET"],
+        git_diff.handle_full,
+        "获取完整 git diff patch(1MB 上限,提交对话框 AI commit message 用)",
     ),
     (
         "/spcode/git-status",  # v2.13 (2026-06-24)
@@ -614,6 +626,8 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_plan_mode": plan_mode.handle_set,  # v2.22.0 (2026-07-27)
     "handle_get_git_worktrees": git_worktrees.handle,
     "handle_get_git_diff": git_diff.handle,
+    "handle_get_git_diff_file": git_diff.handle_file,  # v2.32.0 渐进式加载
+    "handle_get_git_diff_full": git_diff.handle_full,  # v2.32.0 渐进式加载
     "handle_get_git_status": git_status.handle,  # v2.13 (2026-06-24)
     "handle_get_git_branches": git_branches.handle,  # v2.17.0 (2026-07-16)
     "handle_post_git_branch_create": git_branch_create.handle,  # v2.17.0 (2026-07-16)
@@ -802,6 +816,9 @@ def register_webapi_routes(plugin: SPCodeToolkit) -> None:
     2026-09-08: 71 -> 72 (+codegraph-init POST /spcode/codegraph-init)
     2026-09-09: 72 -> 73 (+git-reset POST /spcode/git-reset)
     2026-09-14: 73 -> 74 (+file-remove-restore POST /spcode/file-remove/restore)
+    2026-10-25: 74 -> 79 (+git-diff/file GET +git-diff/full GET,
+                渐进式加载配套;git-diff 改元数据分页端点;计数含此前
+                v2.30/v2.31 新增但未入账的 git-file-diff / git_file_export)
     """
     for route, methods, handler, desc in ROUTES:
         try:

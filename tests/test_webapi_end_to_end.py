@@ -139,6 +139,8 @@ def test_routes_table_covers_all_endpoints() -> None:
       → 51 entries (17 GET + 32 POST + 1 PATCH + 1 DELETE)
     - 2026-10-06: +1 GET (git-file-diff 任意两版本单文件比较,v2.30.0)
     - 2026-10-06: +1 POST (git-file-export 历史版本导出并打开,v2.31.0)
+    - 2026-10-25: +2 GET (git-diff/file 单文件按需 patch + git-diff/full
+      全量 patch,渐进式加载配套;git-diff 改元数据分页端点,v2.32.0)
     """
     routes = {entry[0] for entry in ROUTES}
     assert routes == {
@@ -147,6 +149,8 @@ def test_routes_table_covers_all_endpoints() -> None:
         "/spcode/plan-mode",
         "/spcode/git-worktrees",
         "/spcode/git-diff",
+        "/spcode/git-diff/file",  # v2.32.0 渐进式加载(单文件按需 patch)
+        "/spcode/git-diff/full",  # v2.32.0 渐进式加载(提交对话框全量)
         "/spcode/git-status",  # v2.13 (2026-06-24)
         "/spcode/git-log",  # PR-2 (2026-06-24)
         "/spcode/git-show",  # v3.8 (2026-06-25)
@@ -246,11 +250,11 @@ def test_routes_table_covers_all_endpoints() -> None:
     # 2026-09-14: +1 POST (file-remove/restore 回收站恢复,be03cc7)
     # 2026-10-06: +1 GET (git-file-diff 任意两版本单文件比较,v2.30.0)
     # 2026-10-06: +1 POST (git-file-export 历史版本导出,v2.31.0)
-    # 73 unique paths total: 24 GET + 51 POST + 1 PATCH + 1 DELETE
+    # v2.32.0: 79 route entries total: 26 GET + 51 POST + 1 PATCH + 1 DELETE
     methods = [m for entry in ROUTES for m in entry[1]]
     assert (
-        methods.count("GET") == 24
-    )  # +operation-progress +home-directory +drives +git-remotes +terminal/stream+status +git-file-diff
+        methods.count("GET") == 26
+    )  # +git-diff/file +git-diff/full (渐进式加载,v2.32.0)
     assert (
         methods.count("POST") == 51
     )  # +terminal 4 +codegraph-init +git-reset +git-tag-create +file-remove/restore +git-file-export
@@ -575,7 +579,7 @@ def test_register_webapi_routes_calls_context_fifty_three_times() -> None:
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    assert plugin.context.register_web_api.call_count == 77
+    assert plugin.context.register_web_api.call_count == 79
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -599,7 +603,7 @@ def test_register_webapi_routes_continues_on_failure() -> None:
     # 2026-09-01 terminal 6 端点;2026-09-08 codegraph-init;2026-09-09
     # git-reset;2026-09-12 git-tag-create;2026-09-14 file-remove/restore)。
     register_webapi_routes(plugin)
-    assert call_count == 77
+    assert call_count == 79
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

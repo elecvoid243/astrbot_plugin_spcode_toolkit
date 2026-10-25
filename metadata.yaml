@@ -1,7 +1,7 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: v2.31.2
+version: v2.32.0
 description: |
   ## 主要能力
 
@@ -22,7 +22,7 @@ description: |
     含 11 个写工具（受 plan 模式保护，需 `/build` 切换后才能调用）
   - **6 个 chat 命令入口**：4 个命令组 `/codegraph`（别名 `/cg`）、`/agentsmd`、`/project`、`/vivado`
     + 2 个独立命令 `/plan`、`/build`（plan/build 模式切换）
-  - **39 条 Web API 路由**（`/spcode/*`）：git 工作区状态 / git 历史 / 文件浏览器 /
+  - **79 条 Web API 路由**（`/spcode/*`）：git 工作区状态 / git 历史 / 文件浏览器 /
     git worktree 管理 / docs CRUD / btw 一次性 LLM 请求 / vivado-status 快照 /
     plan-mode 查询与切换
 
