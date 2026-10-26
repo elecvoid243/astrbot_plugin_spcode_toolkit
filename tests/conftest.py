@@ -247,6 +247,8 @@ def _make_plugin() -> Any:
     # Permissive default config so feature-flag checks pass.
     plugin._config = {
         "agentsmd_enabled": True,
+        # 2026-10-17: handler 读写此键;显式给出让 handler 用例可预测
+        "agentsmd_max_chars": 10000,
         "codegraph_enabled": True,
         "codegraph_project": "",
         "file_remove_blacklist": None,

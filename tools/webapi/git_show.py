@@ -14,17 +14,18 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ._helpers import (
+    ReasonCode,
+    _git_endpoint_preflight,
+    _JSONResponseCompat,
+    _make_envelope,
+    _run_git_async,
+    _run_git_async_bytes,
+)
 from .file_browser import (
     _common_cache_headers,
     _get_if_none_match,
     _make_304_response,
-)
-from ._helpers import (
-    _JSONResponseCompat,
-    _git_endpoint_preflight,
-    _make_envelope,
-    _run_git_async,
-    ReasonCode,
 )
 
 if TYPE_CHECKING:
@@ -38,6 +39,10 @@ MAX_PARAM_LENGTH = 512
 MAX_SHOW_BYTES = 1 * 1024 * 1024  # 1 MB 硬上限(numstat)
 # v3.9 (2026-06-25): 单文件 patch 视图(?path=)硬上限,防极端大文件
 MAX_SHOW_FILE_BYTES = 256 * 1024  # 256 KB 单文件 patch 字节上限
+# 2026-10-18 (elecvoid243): history overlay base. The parent-side blob is
+# shipped alongside the single-file patch so the UI can lay the diff over
+# the historical original. Same cap as /spcode/git-file-diff.
+MAX_BASE_BLOB_BYTES = 1 * 1024 * 1024  # 1 MB
 # 2026-08-09 (elecvoid243): full-commit patch view (?full_patch=1) for
 # changelog generation. Truncate-not-fail: a single huge commit must
 # not block the whole changelog flow.
@@ -387,7 +392,7 @@ async def _compute_show_etag(git_bin: str, directory: str) -> str:
 
 
 async def handle(
-    plugin: "SPCodeToolkit",
+    plugin: SPCodeToolkit,
     *,
     umo: str | None = None,
     worktree: str | None = None,
@@ -660,6 +665,17 @@ async def handle(
         entry["additions"] = add
         entry["deletions"] = delete
 
+    # 2026-10-18 (elecvoid243): remember the target's name-status entry
+    # BEFORE max_files truncates the list. The single-file view is fetched
+    # with max_files=1, so looking it up after truncation would miss a
+    # rename whose row is not first (and then `git show -- <new>` degrades
+    # to an add diff).
+    target_ns_entry = (
+        next((entry for entry in files if entry["path"] == target_path), None)
+        if target_path is not None
+        else None
+    )
+
     # ── 8. 应用 max_files 截断 ──
     truncated = len(files) > max_files
     if truncated:
@@ -673,13 +689,26 @@ async def handle(
     # 不会让整个 commit 元数据请求失败(与 git show name-status 解耦)。
     file_view: dict | None = None
     if target_path is not None:
+        # 2026-10-18 (elecvoid243): rename/copy rows need BOTH paths in
+        # the pathspec. `git show <ref> -- <new>` treats a pure rename as
+        # an add (the source is outside the pathspec), which would also
+        # break the history overlay. target_ns_entry was captured before
+        # max_files truncation, so it is available even for max_files=1.
+        patch_paths = [target_path]
+        if (
+            target_ns_entry is not None
+            and target_ns_entry["status"] in ("R", "C")
+            and target_ns_entry.get("old_path")
+        ):
+            patch_paths.append(target_ns_entry["old_path"])
         patch_args = list(git_prefix) + [
             "show",
+            "-M",
             "--no-color",
             "--no-ext-diff",
             ref,
             "--",
-            target_path,
+            *patch_paths,
         ]
         patch_result = await _run_git_async(patch_args, encoding="utf-8")
         if patch_result["ok"]:
@@ -699,6 +728,15 @@ async def handle(
                     ),
                 )
             file_view = _parse_single_file_patch(stdout_p, target_path)
+            if target_ns_entry is not None and target_ns_entry["status"] in (
+                "R",
+                "C",
+            ):
+                # The pathspec now lets git emit the rename diff; pin the
+                # status/old_path from name-status anyway so an older git
+                # (or diff.renames=false) cannot regress the base lookup.
+                file_view["status"] = target_ns_entry["status"]
+                file_view["old_path"] = target_ns_entry["old_path"]
         else:
             # 单文件 git show 失败(可能 ref 与 path 不匹配):不阻塞整个 commit
             # 视图,记 warning 并让 file_view=None,前端渲染占位。
@@ -709,6 +747,47 @@ async def handle(
                 patch_result.get("stderr", ""),
             )
             file_view = None
+
+        # 2026-10-18 (elecvoid243): history overlay base. The displayed
+        # patch is the commit's diff against its first parent, so the UI
+        # needs that parent-side blob — never the working-tree file. Added
+        # files, root commits and merge commits have no single parent-side
+        # text; they omit the fields and the UI disables the overlay slot.
+        if (
+            file_view is not None
+            and len(commit_meta["parents"]) == 1
+            and file_view["status"] in ("M", "D", "R", "C")
+        ):
+            parent_sha = commit_meta["parents"][0]
+            base_path = file_view.get("old_path") or file_view["path"]
+            base_result = await _run_git_async_bytes(
+                list(git_prefix) + ["show", f"{parent_sha}:{base_path}"]
+            )
+            if base_result["ok"]:
+                raw_base = base_result["stdout"]
+                base_size = len(raw_base)
+                base_binary = b"\x00" in raw_base[:8192]
+                base_truncated = base_size > MAX_BASE_BLOB_BYTES
+                file_view["base_size"] = base_size
+                file_view["base_binary"] = base_binary
+                file_view["base_truncated"] = base_truncated
+                # Binary / oversized blobs are not shipped: the UI only
+                # needs to know there is nothing to overlay. An empty
+                # string also covers a legitimately empty text file.
+                file_view["base_content"] = (
+                    ""
+                    if base_binary or base_truncated
+                    else raw_base.decode("utf-8", errors="replace")
+                )
+            else:
+                # Missing path in the parent (e.g. an odd rename) must not
+                # break the patch view; omit the base fields instead.
+                logger.warning(
+                    "git show %s:%s (history base) 失败: %s",
+                    parent_sha,
+                    base_path,
+                    base_result.get("stderr", "") or base_result.get("error", ""),
+                )
 
     # ── 8c. 可选:整提交 patch 视图(?full_patch=1 时, 2026-08-09) ──
     # --pretty=format: 空格式 → stdout 为纯 diff(无 commit header),

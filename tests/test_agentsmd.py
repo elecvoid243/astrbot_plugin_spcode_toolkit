@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -17,14 +23,21 @@ from tools.agentsmd import (  # noqa: E402
     DEFAULT_INIT_TEMPLATE,
     DEFAULT_INIT_TEMPLATE_GENERAL,
     DEFAULT_INJECTION_HEADER,
+    DEFAULT_MAX_CHARS,
     INJECTION_MARKER,
     build_injection,
+    build_output_constraints,
+    build_project_context,
+    collect_git_history,
+    fit_generated_content,
     generate_agents_md_via_llm,
     has_code_files,
     pick_init_template,
     resolve_init_template,
+    resolve_max_chars,
     scan_project_context,
     strip_code_fence,
+    truncate_at_section,
 )
 
 
@@ -35,6 +48,41 @@ def test_constants_not_empty():
     assert len(DEFAULT_INIT_TEMPLATE) > 50
     assert len(DEFAULT_AGENTS_MD) > 50
     assert INJECTION_MARKER in DEFAULT_INJECTION_HEADER
+
+
+# ── 2026-10-17: Codex 风格模板(章节清单 + 反编造 + 篇幅) ──
+
+
+def test_code_template_has_section_checklist():
+    """代码目录模板必须列出可增删的章节清单(Codex prompt 的核心结构)。"""
+    for heading in (
+        "## 项目结构与模块组织",
+        "## 构建、测试与本地开发",
+        "## 代码风格与命名约定",
+        "## 测试规范",
+        "## 提交与 PR 规范",
+    ):
+        assert heading in DEFAULT_INIT_TEMPLATE, heading
+
+
+def test_code_template_states_language_length_and_no_fabrication():
+    assert "# 项目指南" in DEFAULT_INIT_TEMPLATE
+    assert "1200–2500" in DEFAULT_INIT_TEMPLATE
+    assert "不要编造" in DEFAULT_INIT_TEMPLATE
+    assert "提交历史" in DEFAULT_INIT_TEMPLATE  # 明确要求依据 git log 推断约定
+
+
+def test_general_template_has_section_checklist():
+    for heading in ("## 目录用途", "## 内容组织", "## 维护约定"):
+        assert heading in DEFAULT_INIT_TEMPLATE_GENERAL, heading
+    assert "# 目录指南" in DEFAULT_INIT_TEMPLATE_GENERAL
+    assert "800–2000" in DEFAULT_INIT_TEMPLATE_GENERAL
+    assert "不要编造" in DEFAULT_INIT_TEMPLATE_GENERAL
+
+
+def test_default_agents_md_first_line_matches_template_heading():
+    """兜底内容的一级标题与生成模板一致(都叫 项目指南)。"""
+    assert DEFAULT_AGENTS_MD.splitlines()[0] == "# 项目指南"
 
 
 # ── strip_code_fence ───────────────────────────────
@@ -208,6 +256,131 @@ def test_scan_code_dir_has_no_doc_excerpt_section(tmp_path):
 
     ctx = scan_project_context(tmp_path)
     assert "## 文档文件摘录" not in ctx
+
+
+# ── 2026-10-17: git 历史采集 ────────────────────────
+
+_GIT = shutil.which("git")
+requires_git = pytest.mark.skipif(_GIT is None, reason="git 未安装")
+
+
+def _init_repo(path: Path, subjects: list[str]) -> None:
+    """在 path 建一个真 git 仓库,按 subjects 顺序各提交一次。"""
+    subprocess.run([_GIT, "init", "-q"], cwd=path, check=True)
+    subprocess.run([_GIT, "config", "user.email", "t@example.com"], cwd=path, check=True)
+    subprocess.run([_GIT, "config", "user.name", "tester"], cwd=path, check=True)
+    for i, subject in enumerate(subjects):
+        (path / f"f{i}.txt").write_text(str(i), encoding="utf-8")
+        subprocess.run([_GIT, "add", "."], cwd=path, check=True)
+        subprocess.run([_GIT, "commit", "-qm", subject], cwd=path, check=True)
+
+
+@requires_git
+def test_collect_git_history_returns_short_hash_and_subject(tmp_path: Path):
+    """最新提交在前;每行形如 `<7 位短哈希> <主题>`。"""
+    _init_repo(tmp_path, ["feat(a): first", "fix(b): second"])
+    out = asyncio.run(collect_git_history(tmp_path))
+    lines = out.splitlines()
+    assert len(lines) == 2
+    assert lines[0].endswith("fix(b): second")
+    assert lines[1].endswith("feat(a): first")
+    assert all(len(line.split(" ", 1)[0]) == 7 for line in lines)
+
+
+@requires_git
+def test_collect_git_history_respects_limit(tmp_path: Path):
+    _init_repo(tmp_path, ["c1", "c2", "c3"])
+    out = asyncio.run(collect_git_history(tmp_path, limit=2))
+    assert len(out.splitlines()) == 2
+
+
+@requires_git
+def test_collect_git_history_truncates_long_subject(tmp_path: Path):
+    """单条主题截到 200 字符:短哈希 + 空格 + 200。"""
+    _init_repo(tmp_path, ["x" * 300])
+    out = asyncio.run(collect_git_history(tmp_path))
+    assert len(out.splitlines()[0]) == 7 + 1 + 200
+
+
+def test_collect_git_history_non_repo_returns_empty(tmp_path: Path):
+    assert asyncio.run(collect_git_history(tmp_path)) == ""
+
+
+def test_collect_git_history_missing_binary_returns_empty(tmp_path: Path):
+    """git_bin 不存在时静默返回 "",不抛异常。"""
+    assert asyncio.run(collect_git_history(tmp_path, git_bin="spcode-no-such-git")) == ""
+
+
+# ── 2026-10-17: prompt 装配 ────────────────────────
+
+
+def test_build_output_constraints_includes_limit():
+    text = build_output_constraints(5000)
+    assert "5000" in text
+    assert "不要添加任何额外说明" in text
+    assert "代码块" in text  # 明确禁止用代码块包裹全文
+
+
+def test_build_output_constraints_zero_omits_number():
+    """max_chars=0 = 不限制:只保留"直接输出 / 不要包裹"两条。"""
+    text = build_output_constraints(0)
+    assert "上限" not in text
+    assert "不要添加任何额外说明" in text
+
+
+@requires_git
+def test_build_project_context_appends_history(tmp_path: Path):
+    _init_repo(tmp_path, ["chore: seed"])
+    ctx = asyncio.run(build_project_context(tmp_path))
+    assert "## 目录结构" in ctx
+    assert "## 最近提交历史" in ctx
+    assert "chore: seed" in ctx
+
+
+def test_build_project_context_without_history_has_no_section(tmp_path: Path):
+    """非仓库目录:上下文就是 scan 的输出,不追加空小节。"""
+    ctx = asyncio.run(build_project_context(tmp_path))
+    assert "## 最近提交历史" not in ctx
+    assert "## 目录结构" in ctx
+
+
+def _provider_returning(text: str):
+    """构造一个 provider mock,text_chat 恒返回 text。"""
+    provider = MagicMock()
+    resp = MagicMock()
+    resp.completion_text = text
+    provider.text_chat = AsyncMock(return_value=resp)
+    return provider
+
+
+def test_generate_prompt_carries_max_chars(tmp_path: Path):
+    provider = _provider_returning("# generated")
+    asyncio.run(
+        generate_agents_md_via_llm(
+            provider, tmp_path, umo="u1", init_template="TPL", max_chars=4321
+        )
+    )
+    prompt = provider.text_chat.call_args.kwargs["prompt"]
+    assert "TPL" in prompt
+    assert "4321" in prompt
+
+
+def test_generate_prompt_without_max_chars_has_no_number(tmp_path: Path):
+    """默认 max_chars=0:prompt 不出现数字上限(旧调用行为不变)。"""
+    provider = _provider_returning("# generated")
+    asyncio.run(generate_agents_md_via_llm(provider, tmp_path, umo="u1"))
+    prompt = provider.text_chat.call_args.kwargs["prompt"]
+    assert "硬性上限" not in prompt
+
+
+@requires_git
+def test_generate_prompt_includes_commit_history(tmp_path: Path):
+    _init_repo(tmp_path, ["feat(git): add graph"])
+    provider = _provider_returning("# generated")
+    asyncio.run(generate_agents_md_via_llm(provider, tmp_path, umo="u1"))
+    prompt = provider.text_chat.call_args.kwargs["prompt"]
+    assert "## 最近提交历史" in prompt
+    assert "feat(git): add graph" in prompt
 
 
 # ── generate_agents_md_via_llm ───────────────────────
@@ -821,3 +994,186 @@ def test_has_code_files_multilevel_skip_dirs(tmp_path):
     (nested / "x.py").write_text("x = 1")
     (tmp_path / "src" / "real.py").write_text("x = 1")
     assert has_code_files(tmp_path) is True, "src/real.py 应被识别"
+
+
+# ── 2026-10-17: 长度护栏(纯逻辑) ────────────────────
+
+
+def test_resolve_max_chars_defaults():
+    assert DEFAULT_MAX_CHARS == 10000
+    assert resolve_max_chars(None) == 10000
+    assert resolve_max_chars({}) == 10000
+    assert resolve_max_chars({"agentsmd_max_chars": 1234}) == 1234
+    assert resolve_max_chars({"agentsmd_max_chars": "2000"}) == 2000
+    assert resolve_max_chars({"agentsmd_max_chars": None}) == 10000
+    assert resolve_max_chars({"agentsmd_max_chars": "abc"}) == 10000
+
+
+def test_resolve_max_chars_negative_means_unlimited():
+    assert resolve_max_chars({"agentsmd_max_chars": -1}) == 0
+    assert resolve_max_chars({"agentsmd_max_chars": 0}) == 0
+
+
+def test_truncate_noop_within_limit_or_unlimited():
+    assert truncate_at_section("abc", 10) == "abc"
+    big = "A" * 500
+    assert truncate_at_section(big, 0) == big
+
+
+def test_truncate_prefers_section_boundary():
+    """优先在小节边界(\n## )切开,标注里写明原文长度。"""
+    content = "# 标题\n\n## 甲\n\n" + "A" * 40 + "\n## 乙\n\n" + "B" * 400
+    out = truncate_at_section(content, 120)
+    assert len(out) <= 120
+    assert "## 甲" in out
+    assert "## 乙" not in out
+    assert "截断" in out
+    assert str(len(content)) in out
+
+
+def test_truncate_falls_back_to_paragraph_boundary():
+    content = "A" * 40 + "\n\n" + "B" * 200
+    out = truncate_at_section(content, 100)
+    assert len(out) <= 100
+    assert "B" not in out
+    assert "截断" in out
+
+
+def test_truncate_falls_back_to_line_boundary():
+    # 填充字符用 "Z" 而非 "x": 标注文本含 agentsmd_ma**x**_chars,
+    # 用 "x" 会让 `"x" not in out` 命中标注本身(假失败)。
+    content = "line1\nline2\n" + "Z" * 300
+    out = truncate_at_section(content, 60)
+    assert len(out) <= 60
+    assert "Z" not in out
+    assert "line1" in out
+
+
+def test_truncate_hard_cut_when_no_boundary():
+    """无任何换行时硬切;标注长度计入预算,结果精确等于上限。"""
+    out = truncate_at_section("A" * 500, 60)
+    assert len(out) == 60
+
+
+def test_truncate_note_longer_than_limit_degrades_to_plain_cut():
+    """配置值极小、标注本身放不下时退化为无标注硬切,不允许越界。"""
+    out = truncate_at_section("A" * 500, 10)
+    assert len(out) == 10
+    assert "截断" not in out
+
+
+# ── 2026-10-17: fit_generated_content ──────────────
+
+
+def test_fit_passthrough_within_limit_does_not_call_llm():
+    provider = _provider_returning("should not be used")
+    content = "# 项目指南\n\n" + "A" * 50
+    out, action = asyncio.run(
+        fit_generated_content(provider, content, umo="u", max_chars=10000)
+    )
+    assert (out, action) == (content, "none")
+    provider.text_chat.assert_not_called()
+
+
+def test_fit_zero_means_unlimited():
+    provider = _provider_returning("should not be used")
+    content = "A" * 50000
+    out, action = asyncio.run(
+        fit_generated_content(provider, content, umo="u", max_chars=0)
+    )
+    assert out == content
+    assert action == "none"
+    provider.text_chat.assert_not_called()
+
+
+def test_fit_compresses_once_with_session_id():
+    provider = _provider_returning("# 压缩版\n\n短")
+    out, action = asyncio.run(
+        fit_generated_content(provider, "A" * 200, umo="umo-x", max_chars=100)
+    )
+    assert (out, action) == ("# 压缩版\n\n短", "compressed")
+    assert provider.text_chat.call_count == 1
+    kwargs = provider.text_chat.call_args.kwargs
+    assert kwargs["session_id"] == "umo-x"
+    assert kwargs["contexts"] == []
+    assert "100" in kwargs["prompt"]
+
+
+def test_fit_falls_back_to_original_when_still_too_long():
+    """压缩仍超限 → 截断**原文**,不采用压缩半成品。"""
+    provider = _provider_returning("B" * 500)
+    content = "A" * 300 + "\n## 二\n" + "A" * 300
+    out, action = asyncio.run(
+        fit_generated_content(provider, content, umo="u", max_chars=200)
+    )
+    assert action == "truncated"
+    assert len(out) <= 200
+    assert out.startswith("A")
+    assert "B" not in out
+
+
+def test_fit_truncates_original_when_provider_is_none():
+    out, action = asyncio.run(
+        fit_generated_content(None, "A" * 500, umo="u", max_chars=120)
+    )
+    assert action == "truncated"
+    assert len(out) <= 120
+
+
+def test_fit_truncates_original_when_provider_raises():
+    provider = MagicMock()
+    provider.text_chat = AsyncMock(side_effect=RuntimeError("boom"))
+    out, action = asyncio.run(
+        fit_generated_content(provider, "A" * 500, umo="u", max_chars=120)
+    )
+    assert action == "truncated"
+    assert len(out) <= 120
+
+
+def test_fit_truncates_original_when_compression_empty():
+    provider = _provider_returning("")
+    out, action = asyncio.run(
+        fit_generated_content(provider, "A" * 500, umo="u", max_chars=120)
+    )
+    assert action == "truncated"
+    assert len(out) <= 120
+
+
+def test_fit_rejects_longer_compression():
+    provider = _provider_returning("C" * 900)
+    out, action = asyncio.run(
+        fit_generated_content(provider, "A" * 500, umo="u", max_chars=120)
+    )
+    assert action == "truncated"
+    assert "C" not in out
+
+
+def test_fit_accepts_compression_exactly_at_limit():
+    provider = _provider_returning("D" * 100)
+    out, action = asyncio.run(
+        fit_generated_content(provider, "A" * 500, umo="u", max_chars=100)
+    )
+    assert (out, action) == ("D" * 100, "compressed")
+
+
+# ── 2026-10-17: 配置项 ─────────────────────────────
+
+
+def test_conf_schema_declares_agentsmd_max_chars():
+    schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+    item = schema["agentsmd"]["items"]["agentsmd_max_chars"]
+    assert item["type"] == "int"
+    assert item["default"] == DEFAULT_MAX_CHARS
+    assert "0 = 不限制" in item["hint"]
+
+
+def test_main_default_config_declares_agentsmd_max_chars():
+    """_DEFAULT_CONFIG 与 schema 默认值必须一致(两处事实源)。
+
+    刻意不 import main.py: 该模块会拉起整个 AstrBot 框架(~7s)且有副作用;
+    这条只需校验"字面量与 DEFAULT_MAX_CHARS 一致"。
+    """
+    src = (ROOT / "main.py").read_text(encoding="utf-8")
+    m = re.search(r'"agentsmd_max_chars":\s*(\d+)', src)
+    assert m, "main.py::_DEFAULT_CONFIG 缺少 agentsmd_max_chars"
+    assert int(m.group(1)) == DEFAULT_MAX_CHARS

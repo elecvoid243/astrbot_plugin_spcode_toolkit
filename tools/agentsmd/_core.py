@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import re
 from pathlib import Path
@@ -31,31 +33,66 @@ from .._code_detect import (  # noqa: F401  (re-exports)
     _SKIP_DIRS,
     has_code_files,
 )
+from .._helpers import _NO_WINDOW_KWARGS, safe_decode_bytes
 
-# 默认的 AGENTS.md 生成 prompt 模板(代码项目目录)
-DEFAULT_INIT_TEMPLATE = """请分析此代码库并创建一个 AGENTS.md 文件,包含:
-- 构建/lint/测试命令——特别是运行单个测试的命令。如果使用msbuild进行构建,只输出错误信息和警告信息
-- 代码风格指南,包括导入、格式化、类型、命名约定、错误处理等
-- 该文件将被提供给在此仓库中工作的编程代理
-– 文件使用与用户相同的语言，默认中文
+logger = logging.getLogger(__name__)
+
+
+# 默认的 AGENTS.md 生成 prompt 模板(代码项目目录)。
+# 2026-10-17: 按 Codex `/init` 风格重写 —— 章节清单 + 反编造 + 篇幅约束。
+# 有意不抄 Codex 的"检查文件是否已存在":handler 已硬性拒绝覆盖,写进 prompt 只会浪费一次判断。
+DEFAULT_INIT_TEMPLATE = """请分析当前代码库，并生成一份 AGENTS.md，作为在此仓库中工作的贡献者指南。
+
+写作要求：
+- 首行使用一级标题「# 项目指南」
+- 使用 Markdown 标题分层，全文控制在 1200–2500 字
+- 每条说明都要具体、可执行，避免"保持代码整洁"这类空泛表述
+- 只写你在仓库中实际看到的事实；不要编造不存在的命令、脚本或目录
+- 文件使用与用户相同的语言，默认中文
+- 直接输出文件内容，不要额外说明，也不要用 markdown 代码块包裹全文
+
+建议章节（按实际情况增删，不适用的直接省略）：
+## 项目结构与模块组织
+## 构建、测试与本地开发
+- 构建、运行、跑测试的命令；特别是"只跑单个测试"的命令
+## 代码风格与命名约定
+- 缩进、导入顺序、格式化与 lint 工具、命名习惯、错误处理约定
+## 测试规范
+- 测试框架、用例命名、新增代码的测试要求
+## 提交与 PR 规范
+- 依据下方提供的提交历史，总结真实的提交信息约定（例如是否有 type(scope) 前缀）
+- 若历史中看不出约定，写"无明确约定"，不要虚构
+## 其他（可选）
+- 安全与配置注意事项、架构要点、容易踩的坑
 """
 
 # 非代码目录(文档库/资料库/笔记库等)的生成 prompt 模板。
 # WHY: init 不再要求目录含代码文件,纯文档目录走代码模板会让 LLM
 # 编造不存在的构建命令;改用面向内容组织的指令集。
-DEFAULT_INIT_TEMPLATE_GENERAL = """请分析此目录并创建一个 AGENTS.md 文件,包含:
-- 该目录的用途——存放什么内容、面向什么读者、解决什么问题
-- 内容组织方式——各子目录与关键文件分别承担什么职责、命名有何规律
-- 维护约定——文档的写作语言、格式规范、新增内容应放置的位置
-- 如果目录中存在任何脚本或自动化工具,说明其用途与用法
-- 请勿编造不存在的构建/测试命令
-- 该文件将被提供给在此目录中工作的编程代理
-- 文件使用与用户相同的语言,默认中文
+# 2026-10-17: 同上按 Codex 风格重写,篇幅上限低于代码模板。
+DEFAULT_INIT_TEMPLATE_GENERAL = """请分析当前目录，并生成一份 AGENTS.md，作为在此目录中工作的代理指南。
+
+写作要求：
+- 首行使用一级标题「# 目录指南」
+- 使用 Markdown 标题分层，全文控制在 800–2000 字
+- 只描述目录中真实存在的内容；不要编造不存在的构建/测试命令
+- 文件使用与用户相同的语言，默认中文
+- 直接输出文件内容，不要额外说明，也不要用 markdown 代码块包裹全文
+
+建议章节（按实际情况增删）：
+## 目录用途
+## 内容组织
+- 各子目录与关键文件分别承担什么职责、命名有何规律
+## 维护约定
+- 写作语言、格式规范、新增内容应放在哪里
+## 工具与脚本（若有）
+## 其他（可选）
 """
 
 # AGENTS.md 默认内容(当目录为空或无法调用 LLM 时的兜底内容)。
 # 措辞保持目录类型中立(代码/文档目录都适用),条目按"若适用"理解。
-DEFAULT_AGENTS_MD = """# AGENTS.md
+# 2026-10-17: 首行与生成模板的一级标题统一为「# 项目指南」。
+DEFAULT_AGENTS_MD = """# 项目指南
 
 ## 项目上下文
 
@@ -300,12 +337,140 @@ def _doc_excerpts_section(
     return lines
 
 
+# ── git 历史采集(2026-10-17) ─────────────────────────
+# 提交历史是"提交信息约定"的唯一事实依据;没有它,LLM 只能编造
+# `feat(scope): ...` 之类看起来合理但仓库里并不存在的约定。
+_GIT_HISTORY_MAX_SUBJECT = 200
+_GIT_HISTORY_MAX_CHARS = 4096
+
+
+async def collect_git_history(
+    dir_path: Path,
+    *,
+    git_bin: str = "git",
+    limit: int = 20,
+    timeout: float = 3.0,
+) -> str:
+    """采集目录所属仓库的最近提交(短哈希 + 主题),失败返回空串。
+
+    WHY 全静默: 生成 AGENTS.md 是主流程,git 只是"锦上添花"的事实来源。
+    目录不是仓库、机器没装 git、仓库损坏、磁盘慢 —— 任一情况都不该让
+    `/agentsmd init` 变成报错。
+
+    ``--no-merges``: 合并提交(`Merge pull request #123 from ...`)对推断
+    提交约定只有噪声。
+
+    Note:
+        采集范围是 ``git -C <dir> log`` 的语义,即该目录**所属仓库**。
+        目录是子目录时拿到的是整仓历史 —— Git 的固有行为,不是缺陷。
+
+    Args:
+        dir_path: 目标目录(不必是仓库根)。
+        git_bin: git 可执行文件路径(优先配置 ``git_path``)。
+        limit: 最多取多少条提交。
+        timeout: 子进程超时(秒),超时即 kill 并返回空串。
+
+    Returns:
+        逐行 ``"<短哈希> <主题>"``;无历史或失败时 ``""``。
+    """
+    cmd = [
+        git_bin,
+        "-C",
+        str(dir_path),
+        "log",
+        "--no-merges",
+        "--pretty=format:%h %s",
+        "-n",
+        str(limit),
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
+            **_NO_WINDOW_KWARGS,
+        )
+    except OSError as e:
+        # FileNotFoundError(git 未安装/路径错) / WinError 2 / 权限问题
+        logger.debug(f"[agentsmd] git 不可用,跳过历史采集: {e}")
+        return ""
+
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except (asyncio.TimeoutError, TimeoutError):
+        proc.kill()
+        await proc.wait()
+        logger.debug(f"[agentsmd] git log 超时({timeout}s),跳过历史采集")
+        return ""
+
+    if proc.returncode != 0:
+        logger.debug(f"[agentsmd] git log 退出码 {proc.returncode},跳过历史采集")
+        return ""
+
+    text = safe_decode_bytes(stdout, preferred="utf-8")
+    lines: list[str] = []
+    total = 0
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        # 截的是"主题":短哈希单独保留、主题单独封顶,
+        # 行宽 = 短哈希 + 1 + 200(哈希位数由 git 的 core.abbrev 决定)
+        sha, sep, subject = line.partition(" ")
+        if sep and len(subject) > _GIT_HISTORY_MAX_SUBJECT:
+            line = f"{sha} {subject[:_GIT_HISTORY_MAX_SUBJECT]}"
+        # 按行边界截断,绝不切断半行
+        if total + len(line) + 1 > _GIT_HISTORY_MAX_CHARS:
+            break
+        lines.append(line)
+        total += len(line) + 1
+    return "\n".join(lines)
+
+
+def build_output_constraints(max_chars: int) -> str:
+    """构造 prompt 尾部的输出约束(init / update 共用,消除两份尾巴漂移)。
+
+    ``max_chars <= 0`` 时只保留"直接输出 + 不要代码块包裹"两条,
+    不出现任何数字 —— 这是"不限制"的显式语义。
+    """
+    parts = [
+        "请直接输出 AGENTS.md 的完整内容(Markdown 格式),不要添加任何额外说明,"
+        "也不要使用 markdown 代码块包裹整个内容。",
+    ]
+    if max_chars > 0:
+        parts.append(f"全文硬性上限 {max_chars} 字,超出部分会被截断。")
+    return "\n".join(parts)
+
+
+async def build_project_context(
+    dir_path: Path,
+    *,
+    git_bin: str = "git",
+    history_limit: int = 20,
+) -> str:
+    """构造完整的生成上下文:目录扫描 + (可选)最近提交历史。
+
+    WHY 单独一层包装: ``scan_project_context`` 是纯函数,既有 scan 用例与
+    第三方调用都依赖它的输出不变;历史采集是异步 / 有副作用(起子进程),
+    只在包装层追加,不污染扫描函数。
+    """
+    context = scan_project_context(dir_path)
+    history = await collect_git_history(dir_path, git_bin=git_bin, limit=history_limit)
+    if not history:
+        return context
+    header = f"## 最近提交历史（最多 {history_limit} 条，用于推断提交信息约定）"
+    return f"{context}\n\n{header}\n\n{history}"
+
+
 async def generate_agents_md_via_llm(
     provider,
     dir_path: Path,
     *,
     umo: str,
     init_template: str = "",
+    max_chars: int = 0,
+    git_bin: str = "git",
 ) -> str:
     """通过 AstrBot LLM Provider 自动生成 AGENTS.md 内容。
 
@@ -314,11 +479,17 @@ async def generate_agents_md_via_llm(
         dir_path: 目标项目目录
         umo: unified_msg_origin(用于 session_id 隔离)
         init_template: 用户自定义模板;为空则用默认
+        max_chars: 全文硬性上限(字符数);``<= 0`` 表示不追加数字约束。
+            注意默认值是 0(不限制),由 handler 传入配置解析结果 ——
+            这样旧调用方(含测试)不传该参数时行为完全不变。
+        git_bin: git 可执行文件路径(配置 ``git_path`` > ``"git"``)
 
     Returns:
         生成的 AGENTS.md 文本;若 LLM 调用失败,返回 DEFAULT_AGENTS_MD
     """
     if provider is None:
+        # WHY 排在 git 采集之前: provider 缺失时无需付子进程代价,
+        # 也让既有用例可以安全传入不存在的目录。
         return DEFAULT_AGENTS_MD
 
     template = (
@@ -326,13 +497,12 @@ async def generate_agents_md_via_llm(
         if init_template and init_template.strip()
         else DEFAULT_INIT_TEMPLATE
     )
-    project_context = scan_project_context(dir_path)
+    project_context = await build_project_context(dir_path, git_bin=git_bin)
     prompt = (
         f"{template}\n\n"
         f"以下是该目录的文件结构、文件类型统计和关键文件内容摘要:\n\n"
         f"{project_context}\n\n"
-        f"请直接输出 AGENTS.md 的完整内容(Markdown 格式),不要添加任何额外说明,"
-        f"也不要使用 ```markdown 等代码块包裹整个内容。"
+        f"{build_output_constraints(max_chars)}"
     )
 
     try:
@@ -348,6 +518,131 @@ async def generate_agents_md_via_llm(
     content = (getattr(llm_resp, "completion_text", "") or "").strip()
     content = strip_code_fence(content)
     return content if content else DEFAULT_AGENTS_MD
+
+
+# ── 长度护栏(2026-10-17) ───────────────────────────
+# WHY: init / update 由 LLM 直接产出全文并原样写盘,一个跑偏的生成结果
+# 会永久留在磁盘上,并在之后每次 LLM 请求中注入 system_prompt。
+# 护栏只作用于自动生成;手工编辑的文件不受限制(用户显式意图优先)。
+DEFAULT_MAX_CHARS: int = 10000
+
+
+def resolve_max_chars(config: dict | None) -> int:
+    """从插件 config 解析 ``agentsmd_max_chars``。
+
+    返回值语义:
+        - ``> 0``: 硬性字符上限
+        - ``0``: 不限制(显式配置 0 或负数,均视为不限)
+        - 缺失 / ``None`` / 无法转 int: 回退 :data:`DEFAULT_MAX_CHARS`
+
+    WHY 负数归一成 0: 用户把开关"调过头"时按"不限"处理比按"极小值"
+    处理更符合直觉,也不会把文件切成几行。
+    """
+    raw = (config or {}).get("agentsmd_max_chars", DEFAULT_MAX_CHARS)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_CHARS
+    return 0 if value < 0 else value
+
+
+def truncate_at_section(content: str, max_chars: int) -> str:
+    """按 Markdown 边界截断,并追加一行截断标注。
+
+    切点优先级: 小节(``\\n## ``) > 段落(``\\n\\n``) > 行(``\\n``) > 硬切。
+    标注长度**计入预算**,保证返回值长度不超过 ``max_chars``;
+    若 ``max_chars`` 小到放不下标注,则退化为无标注硬切。
+    """
+    if max_chars <= 0 or len(content) <= max_chars:
+        return content
+
+    original = len(content)
+    note = f"\n\n> （已按 agentsmd_max_chars={max_chars} 截断，原文 {original} 字）"
+    budget = max_chars - len(note)
+    if budget <= 0:
+        return content[:max_chars]
+
+    head = content[:budget]
+    cut = -1
+    for sep in ("\n## ", "\n\n", "\n"):
+        idx = head.rfind(sep)
+        if idx > 0:
+            cut = idx
+            break
+    body = (head[:cut] if cut > 0 else head).rstrip()
+    return body + note
+
+
+# 压缩用的 system_prompt 与 init 保持一致(同一 persona,避免风格漂移)
+_COMPRESS_SYSTEM_PROMPT = (
+    "你是一名资深软件工程师,擅长为多种语言的项目编写规范文档。"
+)
+
+
+def _build_compress_prompt(max_chars: int, content: str) -> str:
+    """构造压缩 prompt。
+
+    WHY 不用 ``str.format``: 草稿正文里可能含 ``{}``(JSON 片段 / 代码块),
+    ``.format`` 会把它们当占位符抛 KeyError。f-string 只解释字面量部分。
+    """
+    return (
+        "下面是一份 AGENTS.md 草稿，长度超过上限。"
+        "请在保留全部事实信息与章节结构的前提下压缩它。\n\n"
+        "要求：\n"
+        f"- 目标长度不超过 {max_chars} 字\n"
+        "- 不新增原文没有的事实\n"
+        "- 保留命令、路径、文件名、配置键名等可执行细节\n"
+        "- 直接输出压缩后的 Markdown，不要任何额外说明，也不要用代码块包裹\n\n"
+        f"草稿：\n{content}"
+    )
+
+
+async def fit_generated_content(
+    provider,
+    content: str,
+    *,
+    umo: str,
+    max_chars: int,
+) -> tuple[str, str]:
+    """把自动生成的内容压到 ``max_chars`` 以内。
+
+    判定顺序(短路):
+        1. ``max_chars <= 0`` 或未超限 → ``(content, "none")``,**不调用 LLM**
+        2. ``provider is None`` → 直接截断原文
+        3. 压缩成功(非空 / 更短 / 落在上限内) → ``(new, "compressed")``
+        4. 其余(异常 / 空 / 更长 / 仍超限) → 截断**原文**
+
+    WHY 第 4 条用原文: 压缩失败的产物是不可信的半成品,拿它截断等于
+    把"压缩时被删掉的事实"和"截断丢掉的小节"叠加两次损失。
+
+    Returns:
+        ``(最终内容, "none" | "compressed" | "truncated")``
+    """
+    if max_chars <= 0 or len(content) <= max_chars:
+        return content, "none"
+    if provider is None:
+        return truncate_at_section(content, max_chars), "truncated"
+
+    try:
+        llm_resp = await provider.text_chat(
+            prompt=_build_compress_prompt(max_chars, content),
+            session_id=umo,
+            contexts=[],
+            system_prompt=_COMPRESS_SYSTEM_PROMPT,
+        )
+    except Exception as e:
+        logger.warning(f"[agentsmd] 压缩重写失败,回退截断: {e}")
+        return truncate_at_section(content, max_chars), "truncated"
+
+    candidate = (getattr(llm_resp, "completion_text", "") or "").strip()
+    candidate = strip_code_fence(candidate).strip()
+    if 0 < len(candidate) < len(content) and len(candidate) <= max_chars:
+        return candidate, "compressed"
+    logger.debug(
+        f"[agentsmd] 压缩结果不可用(长度 {len(candidate)} / 原文 {len(content)} "
+        f"/ 上限 {max_chars}),回退截断"
+    )
+    return truncate_at_section(content, max_chars), "truncated"
 
 
 # v2.22 (2026-07-27): PROJECT_PATH_PREFIX_TEMPLATE 已移除。

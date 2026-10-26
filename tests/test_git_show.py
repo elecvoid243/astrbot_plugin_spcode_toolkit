@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from tests.conftest import _make_plugin, make_web_request_mock
 from tools.project import state as _proj_state
 from tools.webapi import git_show as _gs
 from tools.webapi._helpers import ReasonCode
+
+from tests.conftest import _make_plugin, make_web_request_mock
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -175,7 +175,7 @@ async def test_show_ref_branch_name(monkeypatch, plugin, tmp_path: Path):
     _load_project(plugin, "u:m", str(tmp_path))
 
     # 推断 default branch(main / master)
-    initial_branch = subprocess.run(
+    initial_branch = subprocess.run(  # noqa: ASYNC221
         ["git", "symbolic-ref", "--short", "HEAD"],
         cwd=tmp_path,
         capture_output=True,
@@ -792,7 +792,7 @@ async def test_show_path_query_returns_single_file_patch(
     _init_repo_simple(tmp_path, n=2)
     _load_project(plugin, "u:m", str(tmp_path))
 
-    head_sha = subprocess.run(
+    head_sha = subprocess.run(  # noqa: ASYNC221
         ["git", "rev-parse", "HEAD"],
         cwd=tmp_path,
         capture_output=True,
@@ -817,6 +817,139 @@ async def test_show_path_query_returns_single_file_patch(
     assert "diff --git a/file1.txt b/file1.txt" in fv["patch"]
     assert "@@ -" in fv["patch"]
     assert "new file mode" in fv["patch"]
+
+
+async def test_show_path_query_returns_parent_base_content(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """?path= 的 file 视图附带父提交全文(history overlay 的原文)。
+
+    2026-10-18 (elecvoid243): 叠加必须使用该 commit 的父版本,而不是
+    当前磁盘上的工作区文件。
+    """
+    shas = _init_repo_with_complex_commit(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(
+        monkeypatch, plugin, ref=shas["commit_1_sha"], path="init.txt"
+    )
+    fv = result["data"]["file"]
+    assert fv["status"] == "M"
+    assert fv["base_content"] == "init"
+    assert fv["base_size"] == 4
+    assert fv["base_binary"] is False
+    assert fv["base_truncated"] is False
+
+
+async def test_show_path_query_added_file_omits_base(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """新增文件在父提交中没有旧侧,响应不附带 base_content。"""
+    shas = _init_repo_with_complex_commit(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(
+        monkeypatch, plugin, ref=shas["commit_1_sha"], path="file1.txt"
+    )
+    fv = result["data"]["file"]
+    assert fv["status"] == "A"
+    assert "base_content" not in fv
+
+
+async def test_show_path_query_root_commit_omits_base(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """root commit 没有父提交,file 视图不附带 base_content。"""
+    shas = _init_repo_with_complex_commit(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(
+        monkeypatch, plugin, ref=shas["root_sha"], path="init.txt"
+    )
+    fv = result["data"]["file"]
+    assert fv["status"] == "A"
+    assert "base_content" not in fv
+
+
+async def test_show_path_query_deleted_file_keeps_base(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """删除文件也要给旧侧全文,叠加才能展示被删内容。"""
+    shas = _init_repo_with_complex_commit(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(
+        monkeypatch, plugin, ref=shas["commit_2_sha"], path="init.txt"
+    )
+    fv = result["data"]["file"]
+    assert fv["status"] == "D"
+    assert fv["base_content"] == "init v2\n"
+    assert fv["base_size"] == len(b"init v2\n")
+
+
+async def test_show_path_query_renamed_file_reads_old_path(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """R/C 的旧侧在 old_path,不能拿新路径去父提交里找。"""
+    shas = _init_repo_with_complex_commit(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(
+        monkeypatch, plugin, ref=shas["commit_2_sha"], path="file1_renamed.txt"
+    )
+    fv = result["data"]["file"]
+    assert fv["status"] == "R"
+    assert fv["old_path"] == "file1.txt"
+    assert fv["base_content"] == "hello\nworld\n"
+
+
+async def test_show_path_query_rename_survives_max_files_truncation(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """前端单文件请求带 max_files=1;rename 信息要在截断前捕获。
+
+    commit 同时修改 a.txt 并重命名 z.txt → z2.txt。按路径排序时
+    a.txt 在第一位,响应 files 被截到 1 条,但 z2.txt 的 file 视图仍
+    必须认出 R + old_path,否则会退化成新增 diff。
+    """
+    _run(["git", "init", "-q"], tmp_path)
+    _run(["git", "config", "user.email", "t@t"], tmp_path)
+    _run(["git", "config", "user.name", "t"], tmp_path)
+    (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
+    (tmp_path / "z.txt").write_text("z\n", encoding="utf-8")
+    _run(["git", "add", "."], tmp_path)
+    _run(["git", "commit", "-q", "-m", "root"], tmp_path)
+    (tmp_path / "a.txt").write_text("a v2\n", encoding="utf-8")
+    _run(["git", "mv", "z.txt", "z2.txt"], tmp_path)
+    _run(["git", "add", "."], tmp_path)
+    _run(["git", "commit", "-q", "-m", "modify + rename"], tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+
+    result = await _call_with_query(monkeypatch, plugin, path="z2.txt", max_files=1)
+    data = result["data"]
+    assert data["truncated"] is True
+    assert len(data["files"]) == 1
+    fv = data["file"]
+    assert fv["status"] == "R"
+    assert fv["old_path"] == "z.txt"
+    assert fv["base_content"] == "z\n"
+
+
+async def test_show_path_query_oversized_base_is_truncated(
+    monkeypatch, plugin, tmp_path: Path
+):
+    """旧侧 blob 超上限:不发送正文,只标记 base_truncated。"""
+    shas = _init_repo_with_complex_commit(tmp_path)
+    _load_project(plugin, "u:m", str(tmp_path))
+    monkeypatch.setattr(_gs, "MAX_BASE_BLOB_BYTES", 3)
+
+    result = await _call_with_query(
+        monkeypatch, plugin, ref=shas["commit_1_sha"], path="init.txt"
+    )
+    fv = result["data"]["file"]
+    assert fv["base_truncated"] is True
+    assert fv["base_content"] == ""
+    assert fv["base_size"] == 4
 
 
 async def test_show_no_path_query_omits_file_field(monkeypatch, plugin, tmp_path: Path):
@@ -852,6 +985,9 @@ async def test_show_path_query_binary_file(monkeypatch, plugin, tmp_path: Path):
     assert fv["is_binary"] is True
     assert fv["patch"] is None
     assert fv["path"] == "init.txt"
+    # 旧侧也是二进制:不发送正文,但标记 base_binary(前端据此禁用叠加)。
+    assert fv["base_binary"] is True
+    assert fv["base_content"] == ""
 
 
 async def test_show_path_query_path_not_in_commit(monkeypatch, plugin, tmp_path: Path):
