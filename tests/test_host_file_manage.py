@@ -106,6 +106,7 @@ async def test_trash_uses_existing_dependency(tmp_path, monkeypatch):
         calls.append(path)
         Path(path).rename(tmp_path / "simulated-trash.txt")
 
+    monkeypatch.setattr(manage.sys, "platform", "linux")
     monkeypatch.setattr(send2trash, "send2trash", fake)
     result = (
         await manage.handle(None, body={"path": str(source), "operation": "trash"})
@@ -151,6 +152,7 @@ async def test_rename_permission_failure_preserves_target(tmp_path, monkeypatch)
     def denied(*args, **kwargs):
         raise PermissionError("denied")
 
+    monkeypatch.setattr(manage.sys, "platform", "win32")
     monkeypatch.setattr(Path, "rename", denied)
     result = (
         await manage.handle(
