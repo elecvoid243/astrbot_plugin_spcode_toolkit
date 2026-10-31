@@ -170,3 +170,27 @@ async def test_format_hint_cannot_reinterpret_disk_text(tmp_path: Path) -> None:
     assert target.read_bytes() == "你好\n".encode("utf-8")
     assert result["data"]["encoding"] == "utf-8"
     assert result["data"]["newline"] == "\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disk_bom", [False, True])
+async def test_confirmed_overwrite_uses_current_disk_bom(
+    tmp_path: Path, disk_bom: bool
+) -> None:
+    target = tmp_path / "bom.txt"
+    original = b"old\n" if disk_bom else b"\xef\xbb\xbfold\n"
+    target.write_bytes(original)
+    snapshot = _build_file_response(target)
+    body = {
+        "path": str(target),
+        "content": "draft\n",
+        "base_revision": snapshot["revision"],
+        "encoding": snapshot["encoding"],
+    }
+    target.write_bytes((b"\xef\xbb\xbf" if disk_bom else b"") + b"external\n")
+    conflict = (await host_file_write.handle(None, body=body))["data"]
+    assert conflict["reason"] == "conflict"
+    body["base_revision"] = conflict["revision"]
+    saved = (await host_file_write.handle(None, body=body))["data"]
+    assert saved["saved"]
+    assert target.read_bytes() == (b"\xef\xbb\xbf" if disk_bom else b"") + b"draft\n"

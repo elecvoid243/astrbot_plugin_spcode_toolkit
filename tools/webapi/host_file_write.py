@@ -78,7 +78,8 @@ async def handle(plugin: SPCodeToolkit, *, body: dict | None = None) -> dict:
         # to exactly the same source text as the normal detection chain.
         hint = body.get("encoding")
         text, _ = _decode_text_bytes(raw)
-        if hint in (*_TEXT_ENCODING_CANDIDATES, "utf-8-sig"):
+        # BOM presence or absence is current disk evidence, never a session hint.
+        if hint in _TEXT_ENCODING_CANDIDATES:
             try:
                 if raw.decode(hint) == text:
                     encoding = hint
@@ -138,6 +139,7 @@ async def handle(plugin: SPCodeToolkit, *, body: dict | None = None) -> dict:
             revision=hashlib.sha256(output).hexdigest(),
             encoding=encoding,
             newline=newline,
+            size=len(output),
             reason=None,
         )
     except PermissionError:

@@ -774,9 +774,9 @@ read. No loaded project, UMO or Agent permission change is involved. Nonempty
 `worktree` and `ref` are rejected; the target must already be a regular file.
 Text/output is bounded to 5 MiB; the WebUI retains its 2 MiB editing limit.
 
-Optional `encoding` and `newline` hints keep an editing session consistent through ASCII-only or newline-free intermediate saves. Encoding hints are honored only when they decode the current bytes to the same text as normal detection; existing newline evidence takes precedence over a hint.
+Optional `encoding` and `newline` hints keep an editing session consistent through ASCII-only or newline-free intermediate saves. Encoding hints are honored only when they decode the current bytes to the same text as normal detection; current BOM presence or absence and existing newline evidence take precedence over a hint.
 
-The response is `{status: "ok", data: {saved, path?, revision?, encoding?, newline?, reason}}`.
+The response is `{status: "ok", data: {saved, path?, revision?, encoding?, newline?, size?, reason}}`.
 Only `saved: true` confirms success; it also returns the actual encoding and newline used, which replace the editing session hints after a save. A `conflict` returns the observed disk
 revision without writing. Explicit overwrite submits that confirmed revision
 as `base_revision`; another disk change conflicts again. There is no unchecked
