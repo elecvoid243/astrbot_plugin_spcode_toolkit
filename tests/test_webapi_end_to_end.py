@@ -144,6 +144,7 @@ def test_routes_table_covers_all_endpoints() -> None:
     """
     routes = {entry[0] for entry in ROUTES}
     assert routes == {
+        "/spcode/host-file-write",
         "/spcode/project-status",
         "/spcode/project-load",  # 2026-07-28 — 静默加载项目 (POST)
         "/spcode/plan-mode",
@@ -256,7 +257,7 @@ def test_routes_table_covers_all_endpoints() -> None:
         methods.count("GET") == 26
     )  # +git-diff/file +git-diff/full (渐进式加载,v2.32.0)
     assert (
-        methods.count("POST") == 51
+        methods.count("POST") == 52
     )  # +terminal 4 +codegraph-init +git-reset +git-tag-create +file-remove/restore +git-file-export
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
@@ -579,7 +580,7 @@ def test_register_webapi_routes_calls_context_fifty_three_times() -> None:
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    assert plugin.context.register_web_api.call_count == 79
+    assert plugin.context.register_web_api.call_count == 80
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -603,7 +604,7 @@ def test_register_webapi_routes_continues_on_failure() -> None:
     # 2026-09-01 terminal 6 端点;2026-09-08 codegraph-init;2026-09-09
     # git-reset;2026-09-12 git-tag-create;2026-09-14 file-remove/restore)。
     register_webapi_routes(plugin)
-    assert call_count == 79
+    assert call_count == 80
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

@@ -762,3 +762,34 @@ Without `scope=host`, `path` remains project-relative and optional `ref` remains
 a Git revision; existing preflight, containment checks and ETag behavior are
 unchanged. This adds no Agent tool or permission grant. Text source-line
 navigation continues to use `file-browser`'s decoded text and 5 MiB limit.
+
+
+### Manual host text saves
+
+`POST /spcode/host-file-write` is an authenticated WebUI extension, separate from
+Agent tools and the legacy project-relative `/spcode/file-write` upsert API.
+It accepts `{path: <absolute host path>, content: <text>, base_revision: <SHA256>}`.
+The revision returned by `file-browser?scope=host` hashes the actual raw bytes
+read. No loaded project, UMO or Agent permission change is involved. Nonempty
+`worktree` and `ref` are rejected; the target must already be a regular file.
+Text/output is bounded to 5 MiB; the WebUI retains its 2 MiB editing limit.
+
+Optional `encoding` and `newline` hints keep an editing session consistent through ASCII-only or newline-free intermediate saves. Encoding hints are honored only when they decode the current bytes to the same text as normal detection; existing newline evidence takes precedence over a hint.
+
+The response is `{status: "ok", data: {saved, path?, revision?, encoding?, newline?, reason}}`.
+Only `saved: true` confirms success; it also returns the actual encoding and newline used, which replace the editing session hints after a save. A `conflict` returns the observed disk
+revision without writing. Explicit overwrite submits that confirmed revision
+as `base_revision`; another disk change conflicts again. There is no unchecked
+force flag. Failures include `permission_denied`, `path_not_found`,
+`encoding_error`, `file_too_large`, `not_a_file`, `target_changed` and
+`write_failed`. The UI preserves the draft and cancels pending navigation.
+
+Saving preserves the existing encoding, UTF-8 BOM and dominant newline style.
+It checks file write permission without truncation, stages complete encoded
+bytes in the same directory, then rechecks the disk version before replacement.
+Windows uses [ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew)
+to preserve the original DACL and attributes; other platforms use `os.replace`
+with the original mode. A directory that disallows staging/replacement produces
+a save failure. These optimistic checks cannot lock arbitrary external writers
+out of the final check-to-replace interval. The old relative API and Git safety
+checks retain their original meaning and scope.

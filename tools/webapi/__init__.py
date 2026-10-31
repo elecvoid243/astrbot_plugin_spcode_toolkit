@@ -127,6 +127,7 @@ from . import (
     git_worktree_remove,  # v2.14.0 (2026-06-26)
     git_worktree_unlock,  # v2.14.0 (2026-06-26)
     git_worktrees,
+    host_file_write,
     home_directory,  # 2026-08-15 GET /spcode/home-directory(目录选择器起始目录)
     operation_progress,  # 2026-08-06 静默操作实时进度 (GET /spcode/operation-progress)
     plan_mode,
@@ -142,6 +143,12 @@ logger = logging.getLogger(__name__)
 
 # (route, methods, handler, desc) — registration order is stable
 ROUTES: list[tuple[str, list[str], Callable, str]] = [
+    (
+        "/spcode/host-file-write",
+        ["POST"],
+        host_file_write.handle,
+        "Save a host text file against its revision",
+    ),
     (
         "/spcode/project-status",
         ["GET"],
@@ -665,6 +672,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_docs": docs_crud.handle_post_docs,  # spec B (2026-07-11)
     "handle_patch_docs": docs_crud.handle_patch_docs,  # spec B (2026-07-11)
     "handle_delete_docs": docs_crud.handle_delete_docs,  # spec B (2026-07-11)
+    "handle_post_host_file_write": host_file_write.handle,
     "handle_post_file_write": file_write.handle,  # 2026-07-17
     "handle_post_file_rename": file_rename.handle,  # 2026-07-18
     "handle_post_file_remove": file_remove.handle,  # 2026-07-18

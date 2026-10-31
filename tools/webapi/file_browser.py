@@ -13,7 +13,7 @@ import stat
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .._helpers import _decode_text_bytes
+from .._helpers import _decode_text_bytes, _detect_newline
 from ._helpers import _JSONResponseCompat
 
 if TYPE_CHECKING:
@@ -265,6 +265,7 @@ def _build_file_response(
     # 性能:utf-8 strict 一次性成功,无 fallback 开销(快路径不变);
     # GBK 路径多 1-2 次 decode 尝试,< 1ms 量级,可忽略。
     content, encoding = _decode_text_bytes(raw)
+    newline = _detect_newline(content)
     # 模拟 ``Path.read_text(encoding="utf-8")`` 的 universal newlines 行为:
     # 旧实现在 Windows 上把 ``\r\n`` / ``\r`` 统一为 ``\n``,我们用 ``open("rb")``
     # 拿到的是原始字节,需要手工做这个翻译,保持返回 content 与 v3.3 行为一致。
@@ -275,6 +276,7 @@ def _build_file_response(
         "is_binary": False,
         "content": content,
         "revision": hashlib.sha256(raw).hexdigest(),
+        "newline": newline,
         "reason": None,
     }
 
