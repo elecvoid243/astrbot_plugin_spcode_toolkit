@@ -312,7 +312,10 @@ def _build_directory_response(
         if child.name.startswith("."):
             continue
         try:
-            raw_entries.append(_make_entry(child))
+            entry = _make_entry(child)
+            # Devices and sockets are not file-browser entry types.
+            if entry["type"] in _TYPE_ORDER:
+                raw_entries.append(entry)
         except OSError:
             continue  # lstat 失败(罕见;权限/竞态)— 跳过
     raw_entries.sort(key=lambda e: (_TYPE_ORDER[e["type"]], e["name"]))
@@ -367,7 +370,7 @@ async def handle(
 
     Returns:
         A file-browser envelope. Query ``scope=host`` requires an absolute
-        ``path``, resolves the actual regular file, reads current disk bytes,
+        ``path``, resolves the actual file or directory, reads current disk bytes,
         and disables caching. This mode needs no loaded project and grants
         no Agent tool permissions. Without it, legacy browsing is unchanged.
     """
@@ -386,7 +389,9 @@ async def handle(
         try:
             path = path.resolve(strict=True)
             file_st = path.stat()
-            if not stat.S_ISREG(file_st.st_mode):
+            if stat.S_ISDIR(file_st.st_mode):
+                data = _build_directory_response(path, parent_st=file_st)
+            elif not stat.S_ISREG(file_st.st_mode):
                 data = _build_error_response(path, "not_a_file")
             else:
                 data = _build_file_response(path, file_st=file_st)
