@@ -145,6 +145,7 @@ def test_routes_table_covers_all_endpoints() -> None:
     routes = {entry[0] for entry in ROUTES}
     assert routes == {
         "/spcode/host-file-write",
+        "/spcode/host-file-manage",
         "/spcode/project-status",
         "/spcode/project-load",  # 2026-07-28 — 静默加载项目 (POST)
         "/spcode/plan-mode",
@@ -257,7 +258,7 @@ def test_routes_table_covers_all_endpoints() -> None:
         methods.count("GET") == 26
     )  # +git-diff/file +git-diff/full (渐进式加载,v2.32.0)
     assert (
-        methods.count("POST") == 52
+        methods.count("POST") == 53
     )  # +terminal 4 +codegraph-init +git-reset +git-tag-create +file-remove/restore +git-file-export
     assert methods.count("PATCH") == 1
     assert methods.count("DELETE") == 1
@@ -488,7 +489,8 @@ async def test_wrap_injects_scope_with_default(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_wrap_post_body_via_web_request(monkeypatch) -> None:
+@pytest.mark.parametrize("method", ["POST", "PATCH", "DELETE"])
+async def test_wrap_post_body_via_web_request(monkeypatch, method) -> None:
     """POST with body — framework calls ``view()`` with no positional args.
 
     ``_wrap`` must read body from ``web.request.json()`` and forward
@@ -515,7 +517,7 @@ async def test_wrap_post_body_via_web_request(monkeypatch) -> None:
         return payload
 
     mock_req = make_web_request_mock()
-    mock_req.method = "POST"
+    mock_req.method = method
     mock_req.json = _json
     monkeypatch.setattr(web, "request", mock_req)
 
@@ -580,7 +582,7 @@ def test_register_webapi_routes_calls_context_fifty_three_times() -> None:
     """
     plugin = MagicMock()
     register_webapi_routes(plugin)
-    assert plugin.context.register_web_api.call_count == 80
+    assert plugin.context.register_web_api.call_count == 81
 
 
 def test_register_webapi_routes_continues_on_failure() -> None:
@@ -604,7 +606,7 @@ def test_register_webapi_routes_continues_on_failure() -> None:
     # 2026-09-01 terminal 6 端点;2026-09-08 codegraph-init;2026-09-09
     # git-reset;2026-09-12 git-tag-create;2026-09-14 file-remove/restore)。
     register_webapi_routes(plugin)
-    assert call_count == 80
+    assert call_count == 81
 
 
 # ─── PR-B (v2.14.0, 2026-06-26) ────────────────────────────────────

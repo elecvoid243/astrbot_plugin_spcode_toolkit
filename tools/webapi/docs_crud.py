@@ -16,6 +16,8 @@ from .._helpers import (
     _detect_text_format,
     _encode_content,
 )
+from .host_file_manage import trash_file
+
 from ._helpers import (
     ReasonCode,
     _git_endpoint_preflight,
@@ -318,7 +320,17 @@ async def handle_delete_docs(
     worktree: str | None = None,
     body: dict | None = None,
 ) -> dict:
-    """DELETE /spcode/docs handler — 从工作区删除 docs 文件(直接 unlink)。"""
+    """Move a project document to the system recycle bin.
+
+    Args:
+        plugin: Plugin instance handling the authenticated WebUI request.
+        umo: Conversation whose loaded project defines the operation scope.
+        worktree: Validated worktree override within that project.
+        body: Project-relative document path.
+
+    Returns:
+        A deletion marker or an error without permanently deleting the target.
+    """
     t0 = _time.time()
     if body is None or not isinstance(body, dict):
         return _make_envelope(
@@ -384,7 +396,10 @@ async def handle_delete_docs(
             stderr=f"path {path} is a directory, not a file",
         )
 
-    target.unlink()
+    try:
+        trash_file(target)
+    except Exception:
+        return _make_envelope(success=False, reason="trash_failed", path=path)
     return _make_envelope(
         success=True,
         elapsed_ms=_elapsed(t0),

@@ -128,6 +128,7 @@ from . import (
     git_worktree_unlock,  # v2.14.0 (2026-06-26)
     git_worktrees,
     host_file_write,
+    host_file_manage,
     home_directory,  # 2026-08-15 GET /spcode/home-directory(目录选择器起始目录)
     operation_progress,  # 2026-08-06 静默操作实时进度 (GET /spcode/operation-progress)
     plan_mode,
@@ -143,6 +144,12 @@ logger = logging.getLogger(__name__)
 
 # (route, methods, handler, desc) — registration order is stable
 ROUTES: list[tuple[str, list[str], Callable, str]] = [
+    (
+        "/spcode/host-file-manage",
+        ["POST"],
+        host_file_manage.handle,
+        "Manage a single host file",
+    ),
     (
         "/spcode/host-file-write",
         ["POST"],
@@ -672,6 +679,7 @@ HANDLERS: dict[str, Callable] = {
     "handle_post_docs": docs_crud.handle_post_docs,  # spec B (2026-07-11)
     "handle_patch_docs": docs_crud.handle_patch_docs,  # spec B (2026-07-11)
     "handle_delete_docs": docs_crud.handle_delete_docs,  # spec B (2026-07-11)
+    "handle_post_host_file_manage": host_file_manage.handle,
     "handle_post_host_file_write": host_file_write.handle,
     "handle_post_file_write": file_write.handle,  # 2026-07-17
     "handle_post_file_rename": file_rename.handle,  # 2026-07-18
@@ -750,17 +758,17 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
         # is called.
         from astrbot.api import web
 
-        is_post = web.request.method == "POST"
+        has_body = web.request.method in ("POST", "PATCH", "DELETE")
         call_kwargs: dict[str, Any] = {}
 
-        # Parse the JSON body once for POST requests — used by umo,
+        # Parse the JSON body once for mutating requests — used by umo,
         # worktree and body injection below.
         body: dict = {}
-        if is_post and (accepts & {"umo", "worktree", "body"}):
+        if has_body and (accepts & {"umo", "worktree", "body"}):
             body = (await web.request.json(default={})) or {}
 
         if "umo" in accepts:
-            if is_post:
+            if has_body:
                 # Body wins; the query string is a fallback. Several
                 # bundled composables (and any cached older bundle) pass
                 # ?umo= for POSTs too, and dropping it silently made the
@@ -774,7 +782,7 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
                 call_kwargs["umo"] = web.request.query.get("umo") or None
 
         if "worktree" in accepts:
-            if is_post:
+            if has_body:
                 # Same body-first / query-fallback rule as ``umo`` above.
                 call_kwargs["worktree"] = body.get("worktree") or (
                     web.request.query.get("worktree")

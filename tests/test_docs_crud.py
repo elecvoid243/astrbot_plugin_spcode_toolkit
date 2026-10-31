@@ -73,9 +73,7 @@ async def test_post_preserves_gbk_encoding(plugin: Any, tmp_path: Path) -> None:
     """GBK 编码的已有 .md 文件覆盖后仍保持 GBK(不被强转 UTF-8)。v2.23.2"""
     _init_git_repo(tmp_path)
     (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "gbk.md").write_bytes(
-        "# 中文标题\n\n正文内容\n".encode("gbk")
-    )
+    (tmp_path / "docs" / "gbk.md").write_bytes("# 中文标题\n\n正文内容\n".encode("gbk"))
     _load_project(plugin, "u:m", str(tmp_path))
 
     result = await _dc.handle_post_docs(
@@ -425,3 +423,14 @@ async def test_delete_no_project_loaded(plugin: Any) -> None:
     _proj_state.reset()
     result = await _dc.handle_delete_docs(plugin, body={"path": "x.md"})
     assert result["data"]["reason"] == "no_project_loaded"
+
+
+@pytest.fixture(autouse=True)
+def simulated_system_trash(monkeypatch):
+    """Keep ordinary regression fixtures out of the real system recycle bin."""
+    from tools.webapi import docs_crud
+
+    def move(target):
+        target.rename(target.with_name(target.name + ".test-trash"))
+
+    monkeypatch.setattr(docs_crud, "trash_file", move)

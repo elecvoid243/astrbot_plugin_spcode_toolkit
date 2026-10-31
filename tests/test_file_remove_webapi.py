@@ -122,3 +122,14 @@ async def test_rejects_git_internals(plugin: Any, tmp_path: Path) -> None:
     _load_project(plugin, "u:m", str(tmp_path))
     result = await _frm.handle(plugin, umo="u:m", body={"path": ".git/config"})
     assert result["data"]["reason"] == "path_unsafe"
+
+
+@pytest.fixture(autouse=True)
+def simulated_system_trash(monkeypatch):
+    """Keep ordinary regression fixtures out of the real system recycle bin."""
+    from tools.webapi import file_remove
+
+    def move(target):
+        target.rename(target.with_name(target.name + ".test-trash"))
+
+    monkeypatch.setattr(file_remove, "trash_file", move)

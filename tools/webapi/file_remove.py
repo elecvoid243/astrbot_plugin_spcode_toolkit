@@ -6,8 +6,7 @@
   - 仅删除**文件**(目录一律拒绝);
   - 路径过 ``_validate_repo_relative_file`` 4 步防御(绝对路径 / ``..``
     / 越出 repo / ``.git`` 内部 / 符号链接逃逸全部拒绝);
-  - 直接 ``unlink``(不进回收站 — 与 docs DELETE 一致;误删防护
-    由前端确认对话框承担,git 未提交文件除外,已跟踪文件可 git 恢复)。
+  - System recycle bin only; failures never fall back to permanent deletion.
 
 统一 envelope 由 ``_helpers._make_envelope`` 生成。
 """
@@ -17,6 +16,8 @@ from __future__ import annotations
 import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from .host_file_manage import trash_file
 
 from ._helpers import (
     ReasonCode,
@@ -105,7 +106,10 @@ async def handle(
             stderr=f"path {path} is a directory, not a file",
         )
 
-    target.unlink()
+    try:
+        trash_file(target)
+    except Exception:
+        return _make_envelope(success=False, reason="trash_failed", path=path)
     return _make_envelope(
         success=True,
         elapsed_ms=_elapsed(t0),
