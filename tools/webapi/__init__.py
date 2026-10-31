@@ -734,6 +734,8 @@ def _wrap(handler: Callable, plugin: SPCodeToolkit) -> Callable:
     accepts = set(sig.parameters) - {"plugin"}
 
     async def view(*_args: Any, **_kwargs: Any) -> Any:
+        if getattr(plugin, "_webapi_active", True) is False:
+            return {"status": "error", "message": "spcode is disabled", "data": None}
         # Late import: ``astrbot.api.web`` requires the plugin runtime
         # to be initialised.  Importing at module scope would break
         # unit tests that mock ``web.request`` before ``register_webapi_routes``

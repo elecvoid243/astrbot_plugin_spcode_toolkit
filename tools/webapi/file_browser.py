@@ -6,6 +6,7 @@ Spec: docs/superpowers/specs/2026-06-20-file-browser-endpoint-design.md
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import stat
@@ -201,20 +202,16 @@ def _build_file_response(
     path: Path,
     file_st: os.stat_result | None = None,
 ) -> dict:
-    """构造文件响应。三种 reason 路径(成功 / file_too_large / binary_file)。
+    """Read bounded current text bytes and describe the actual target.
 
-    P1 perf (v3.4, 2026-06-21): 单次 ``open("rb")`` 合并 binary sniff + 全文读。
-    旧实现走 ``_is_binary(path)`` + ``path.read_text(...)``,共 2 次 open + 2 次 close。
-    新实现:1 次 open → sniff 8K → f.read() → utf-8 decode,合并 1 次 open + 1 次 close。
+    Args:
+        path: File to read under the host account's permissions.
+        file_st: Optional existing stat result for the target.
 
-    P2 perf (v3.4, 2026-06-21): 接受可选 ``file_st`` — caller 已 lstat 时复用,
-    内部不再 ``path.lstat()``(省 1 次 syscall)+ ``_safe_lstat_mtime`` 也不再 lstat。
-    总 file 路径 lstat 从 3 → 1。
-
-    行为兼容:
-    - binary 判定:sniff 8K 含 NUL → binary(同旧 sniff)
-    - utf-8 decode 失败 → binary(同旧 read_text UnicodeDecodeError 路径)
-    - OSError 不可读 → binary(同旧 _is_binary 异常路径)
+    Returns:
+        File metadata, normalized source text and its byte revision, or an
+        explicit size, binary or operating-system error state. The bounded
+        read also protects against a file growing after the initial stat.
     """
     if file_st is None:
         try:
@@ -251,14 +248,16 @@ def _build_file_response(
                 }
             # 读剩余(已经在缓存中的 sniff 数据不必重新读)
             f.seek(0)
-            raw = f.read()
-    except OSError:
+            raw = f.read(FILE_BROWSER_MAX_BYTES + 1)
+    except OSError as exc:
+        return _build_error_response(path, _classify_oserror(exc))
+    if len(raw) > FILE_BROWSER_MAX_BYTES:
         return {
             **base,
             "encoding": None,
-            "is_binary": True,
+            "is_binary": False,
             "content": None,
-            "reason": "binary_file",
+            "reason": "file_too_large",
         }
     # ANSI/GBK 支持(v3.7,2026-07-03):旧版只 decode utf-8,失败即报二进制,
     # 导致中文 Windows 上 GBK/GB18030 文件无法预览。现用 _decode_text_bytes
@@ -275,6 +274,7 @@ def _build_file_response(
         "encoding": encoding,
         "is_binary": False,
         "content": content,
+        "revision": hashlib.sha256(raw).hexdigest(),
         "reason": None,
     }
 
@@ -359,20 +359,47 @@ def _build_symlink_response(path: Path) -> dict:
 async def handle(
     plugin: SPCodeToolkit,
 ) -> dict:
-    """Web API handler for ``GET /spcode/file-browser``.
+    """Read a file or directory through the authenticated extension boundary.
 
-    Query params:
-      - ``path`` (必填):绝对路径;指向文件 / 目录 / 符号链接。
+    Args:
+        plugin: Registered spcode plugin instance. The host authenticates the
+            WebUI request before invoking this handler.
 
-    Response envelope::
-        {"status": "ok", "data": {<type-specific>}}
-
-    type ∈ {file, directory, symlink, null}。null 表示错误,
-    此时 data 含 ``reason`` 字段说明错误类型。
+    Returns:
+        A file-browser envelope. Query ``scope=host`` requires an absolute
+        ``path``, resolves the actual regular file, reads current disk bytes,
+        and disables caching. This mode needs no loaded project and grants
+        no Agent tool permissions. Without it, legacy browsing is unchanged.
     """
     import astrbot.api.web as _aw
 
-    raw_path = _aw.request.query.get("path", "").strip()
+    raw_path = _aw.request.query.get("path", "")
+    # Host reads are a separate, explicit contract. Legacy project-relative
+    # callers keep their existing behavior and never acquire host write access.
+    if _aw.request.query.get("scope") == "host":
+        path = Path(raw_path)
+        if not raw_path or not path.is_absolute():
+            return {
+                "status": "ok",
+                "data": _build_error_response(raw_path, "absolute_path_required"),
+            }
+        try:
+            path = path.resolve(strict=True)
+            file_st = path.stat()
+            if not stat.S_ISREG(file_st.st_mode):
+                data = _build_error_response(path, "not_a_file")
+            else:
+                data = _build_file_response(path, file_st=file_st)
+        except (OSError, ValueError, RuntimeError) as exc:
+            reason = (
+                _classify_oserror(exc) if isinstance(exc, OSError) else "path_not_found"
+            )
+            data = _build_error_response(raw_path, reason)
+        return _JSONResponseCompat(
+            {"status": "ok", "data": data},
+            headers={"Cache-Control": "no-store"},
+        )
+    raw_path = raw_path.strip()
     if not raw_path:
         return {"status": "ok", "data": _build_error_response("", "path_not_found")}
     path = Path(raw_path)

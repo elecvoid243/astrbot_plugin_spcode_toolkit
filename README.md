@@ -713,3 +713,22 @@ pytest tests/ --cov=tools           # 覆盖率
 ---
 
 > Author: elecvoid243 · 本文档同步至 v2.21 (2026-07-25)
+
+## Authenticated host text reads
+
+`GET /spcode/file-browser?scope=host&path=<host-absolute-path>` is the explicit
+host-file reference contract. AstrBot exposes it through the existing
+`/api/v1/plugins/extensions/spcode/file-browser` authenticated WebUI boundary.
+It does not require a project, worktree or Agent permission mode. It returns
+`status: ok` with the existing file-browser `data` shape: the resolved `path`,
+file metadata, `encoding`, `is_binary`, normalized source `content`, `reason`,
+and a SHA-256 `revision` of the bytes actually read. Responses use
+`Cache-Control: no-store`; files are read on each click, with the existing 5 MiB
+limit and explicit missing/permission/type/size errors. Relative host targets
+return `absolute_path_required`; directories return `not_a_file`.
+
+This is a WebUI read contract, not an Agent tool or a change to project-relative
+write/Git contracts. The legacy file-browser mode is unchanged. ChatUI links
+use `[name](G:/project/main.py#L12-L18)` (one-based closed source lines), `#L12`
+for a single line, or no fragment for the whole file; URL-special filename
+characters must be percent-encoded. File references currently preview read-only.

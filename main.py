@@ -184,12 +184,8 @@ class SPCodeToolkit(star.Star):
             "column_limit": _config.get("column_limit", 80),
             "tab_width": _config.get("tab_width", 8),
             "use_tab": bool(_config.get("use_tab", False)),
-            "break_before_braces": str(
-                _config.get("break_before_braces") or "attach"
-            ),
-            "pointer_alignment": str(
-                _config.get("pointer_alignment") or "right"
-            ),
+            "break_before_braces": str(_config.get("break_before_braces") or "attach"),
+            "pointer_alignment": str(_config.get("pointer_alignment") or "right"),
         }
         os.environ["CLANG_FORMAT_OPTIONS"] = json.dumps(self._clang_format_opts)
 
@@ -352,6 +348,7 @@ class SPCodeToolkit(star.Star):
 
     async def initialize(self) -> None:
         """插件激活(AstrBot 框架在 __init__ 后调用)。"""
+        self._webapi_active = True
         register_webapi_routes(self)
 
         # 构造 inta_shell 组件并写入 tools.inta_shell.runtime 模块级单例
@@ -740,6 +737,8 @@ class SPCodeToolkit(star.Star):
 
     async def terminate(self) -> None:
         """Star 框架在插件卸载/重载时调用。"""
+        # Registered callbacks can outlive the plugin instance's active lifecycle.
+        self._webapi_active = False
         from .tools.inta_shell import runtime as _inta_runtime
 
         # 清空 agentsmd 子系统 per-umo state
