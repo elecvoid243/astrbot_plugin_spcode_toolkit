@@ -35,6 +35,16 @@ def stub_vivado_mcp_modules(monkeypatch):
 
 
 class TestDetectVivadoLauncher:
+    @pytest.fixture(autouse=True)
+    def hide_local_environment(self, monkeypatch):
+        monkeypatch.setattr("pathlib.Path.is_file", lambda self: False)
+
+    def test_prefers_isolated_environment(self, vivado_mcp_module, monkeypatch):
+        monkeypatch.setattr("pathlib.Path.is_file", lambda self: True)
+        result = vivado_mcp_module.detect_vivado_launcher()
+        assert ".venv-vivado" in result["command"]
+        assert result["args"] == ["-m", "vivado_mcp"]
+
     def test_returns_dict_when_vivado_mcp_installed(self, vivado_mcp_module):
         with patch("importlib.util.find_spec", return_value=object()):
             result = vivado_mcp_module.detect_vivado_launcher()
@@ -50,13 +60,16 @@ class TestDetectVivadoLauncher:
 
 class TestNormalizePath:
     def test_windows_backslash_to_forward(self, vivado_mcp_module):
-        assert vivado_mcp_module.normalize_path(
-            r"D:\Xilinx\Vivado\2024.1\bin\vivado.bat"
-        ) == "D:/Xilinx/Vivado/2024.1/bin/vivado.bat"
+        assert (
+            vivado_mcp_module.normalize_path(r"D:\Xilinx\Vivado\2024.1\bin\vivado.bat")
+            == "D:/Xilinx/Vivado/2024.1/bin/vivado.bat"
+        )
 
     def test_no_change_on_linux(self, vivado_mcp_module):
-        assert vivado_mcp_module.normalize_path("/opt/xilinx/vivado") == \
-            "/opt/xilinx/vivado"
+        assert (
+            vivado_mcp_module.normalize_path("/opt/xilinx/vivado")
+            == "/opt/xilinx/vivado"
+        )
 
 
 class TestBuildEnv:

@@ -143,10 +143,10 @@ VIVADO_WRITE_TOOLS: tuple[str, ...] = (
 
 VIVADO_GUIDANCE_TEMPLATE: str = """{marker}
 [vivado-mcp integration]
-This plugin integrates vivado-mcp (21 tools), communicating over the MCP protocol via Python stdio.
+This plugin integrates vivado-mcp ({tool_count} tools), communicating over the MCP protocol via Python stdio.
 - Default session_id = "{session_default}". Use a dedicated session for long-running tasks.
 - Write tools ({write_tool_count} of them: {write_tools_sample}) are callable only in build mode (i.e. not while /plan is active).
 - Programming the device (program_device) is irreversible — verify the bitstream is correct first.
-- start_session spawns a `vivado -mode tcl` subprocess (~1GB RAM); enable it with care in containers / CI.
+- start_session supports GUI, Tcl, and attach modes. Choose the mode explicitly; attach reuses an existing instrumented Vivado session.
 - For vivado session status, use the chat command /vivado status or GET /spcode/vivado-status.
 - Vivado path precedence: spcode config `vivado_executable` > system `VIVADO_PATH` env > auto-detect.""".strip()

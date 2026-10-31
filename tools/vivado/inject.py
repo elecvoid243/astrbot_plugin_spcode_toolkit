@@ -17,22 +17,24 @@ if TYPE_CHECKING:
 
 
 async def inject_vivado_guidance(plugin: "SPCodeToolkit", req: Any) -> None:
-    """条件式注入 vivado 工具使用说明到 system_prompt。
+    """Inject guidance only for an enabled, connected Vivado server.
 
-    条件:
-        1. vivado_enabled=False → 跳过
-        2. 'vivado' not in mcp_server_runtime → 跳过
-        3. 已含 marker → 跳过 (防重复)
-        4. 注入 VIVADO_GUIDANCE_TEMPLATE
+    Args:
+        plugin: Plugin owning the configuration and MCP runtime.
+        req: LLM request receiving the system guidance.
     """
     if not plugin._config.get("vivado_enabled", True):
         return
     try:
         mgr = plugin.context.get_llm_tool_manager()
-        if "vivado" not in mgr.mcp_server_runtime:
+        runtime = mgr.mcp_server_runtime.get("vivado")
+        if runtime is None:
+            return
+        client = runtime.client
+        if not client.active or client.session is None or not client.tools:
             return
     except Exception as e:
-        logger.debug(f"inject_vivado_guidance: 查 mcp_server_runtime 失败: {e}")
+        logger.debug("Unable to inspect Vivado MCP runtime: %s", e)
         return
 
     prompt = getattr(req, "system_prompt", None) or ""
@@ -41,7 +43,7 @@ async def inject_vivado_guidance(plugin: "SPCodeToolkit", req: Any) -> None:
 
     text = VIVADO_GUIDANCE_TEMPLATE.format(
         marker=VIVADO_INJECTION_MARKER,
-        tool_count=21,
+        tool_count=len(client.tools),
         session_default="default",
         write_tool_count=len(VIVADO_WRITE_TOOLS),
         write_tools_sample=", ".join(VIVADO_WRITE_TOOLS[:5]) + "...",

@@ -17,7 +17,7 @@ WHY 抽到独立模块:
 
 from __future__ import annotations
 
-import importlib.util
+from .._vivado_mcp import detect_vivado_launcher
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -31,11 +31,11 @@ def is_vivado_enabled(plugin: "SPCodeToolkit") -> bool:
 
 def is_vivado_installed() -> bool:
     """vivado_mcp Python 包是否已安装 (无 IO, 只查 importlib)。"""
-    return importlib.util.find_spec("vivado_mcp") is not None
+    return detect_vivado_launcher() is not None
 
 
 def is_vivado_mcp_running(plugin: "SPCodeToolkit") -> bool:
-    """"vivado" 是否在 LLM tool manager 的 mcp_server_runtime 中。
+    """ "vivado" 是否在 LLM tool manager 的 mcp_server_runtime 中。
 
     启动期 mcp 尚未就绪时返回 False, 启动后由 tools/vivado/bootstrap.py
     通过 state.mark_running() 反映真实状态。

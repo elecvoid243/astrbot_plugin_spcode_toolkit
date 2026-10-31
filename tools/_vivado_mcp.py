@@ -13,6 +13,7 @@ import importlib.util
 import logging
 import os
 import sys
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +27,21 @@ def detect_vivado_launcher() -> dict | None:
 
     Returns:
         {"type": "stdio", "command": str, "args": list[str]} 或 None (未安装)。
-        command 永远是当前 Python 解释器 (sys.executable)。
+        Prefers the isolated environment, then the current interpreter.
     """
+    isolated_root = Path(__file__).resolve().parents[1] / ".venv-vivado"
+    isolated_python = isolated_root / (
+        "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
+    )
+    if isolated_python.is_file():
+        return {
+            "type": "stdio",
+            "command": str(isolated_python),
+            "args": ["-m", "vivado_mcp"],
+        }
     if importlib.util.find_spec("vivado_mcp") is None:
         logger.warning(
-            "vivado-mcp 未安装, 请 `pip install vivado-mcp` 后重启 AstrBot"
+            "Vivado MCP is unavailable; run python scripts/install_vivado_mcp.py in the plugin repository."
         )
         return None
     return {
@@ -82,8 +93,9 @@ def find_vivado_executable(*, configured: str = "") -> str:
         return normalize_path(env_path)
     try:
         from vivado_mcp.config import find_vivado
+
         return find_vivado()
-    except FileNotFoundError as e:
+    except (FileNotFoundError, ImportError) as e:
         raise VivadoNotFoundError(
             f"未找到 Vivado 安装。请设置 VIVADO_PATH 环境变量, "
             f"或在 spcode 配置的 vivado_executable 字段填入 Vivado 路径。"

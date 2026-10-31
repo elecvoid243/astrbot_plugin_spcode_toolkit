@@ -269,6 +269,7 @@ def test_no_production_subprocess_call_without_no_window():
                 ".pytest_cache",
                 ".ruff_cache",
                 ".worktrees",
+                ".venv-vivado",
             }
         ):
             continue
@@ -386,6 +387,7 @@ def test_no_sys_executable_in_production_subprocess_calls():
         ".pytest_cache",
         ".ruff_cache",
         ".worktrees",
+        ".venv-vivado",
     }
     SPAWN_NAMES = {
         "subprocess.run",

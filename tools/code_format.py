@@ -53,6 +53,7 @@ from __future__ import annotations
 import difflib
 import json
 import logging
+import re
 import shutil
 import subprocess
 import sys
@@ -292,7 +293,7 @@ def format(
 
     # 统一附加 check / formatter_options 字段
     result["check"] = check
-    result["formatter_options"] = formatter_options
+    result.setdefault("formatter_options", formatter_options)
     return result
 
 
@@ -721,6 +722,48 @@ def _format_with_clang_format(
         "file_size_before": file_size_before,
         "file_size_after": file_size_after,
     }
+
+    config_file = _find_clang_format_config(p)
+    if config_file is not None:
+        # Ask the same executable with the same input/flags, allowing native
+        # language sections and InheritParentConfig to resolve correctly.
+        try:
+            dumped = subprocess.run(
+                [*args, "--dump-config"],
+                input=before_bytes,
+                capture_output=True,
+                timeout=_FORMAT_TIMEOUT,
+                **_NO_WINDOW_KWARGS,
+            )
+            if dumped.returncode != 0:
+                raise ValueError(_decode_text_bytes(dumped.stderr or b"")[0][:500])
+            config_text, _ = _decode_text_bytes(dumped.stdout or b"")
+            effective = dict(
+                re.findall(
+                    r"^([A-Za-z][A-Za-z0-9]*):[ \t]*(.*?)\s*$",
+                    config_text,
+                    re.MULTILINE,
+                )
+            )
+            result["formatter_options"] = {
+                "style": "file",
+                "indent": int(effective["IndentWidth"]),
+                "options": {
+                    spec[0]: effective[spec[0]]
+                    for spec in CLANG_FORMAT_OPTION_SPEC.values()
+                    if spec[0] in effective
+                },
+                "config_file": str(config_file),
+            }
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
+            logger.warning("Unable to resolve effective clang-format options: %s", exc)
+            result["formatter_options"] = {
+                "style": "file",
+                "indent": None,
+                "options": {},
+                "config_file": str(config_file),
+                "error": str(exc),
+            }
 
     if check:
         # dry-run: 不写回

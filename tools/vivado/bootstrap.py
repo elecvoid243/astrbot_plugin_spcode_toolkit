@@ -37,7 +37,7 @@ async def bootstrap_mcp(plugin, *, state: "_state.VivadoState") -> None:
     if cfg is None:
         logger.info(
             "vivado-mcp 不可用 (未装或 launcher 失败), 跳过 MCP 集成"
-            "(spcode 其它工具照常工作; 如需启用请 `pip install vivado-mcp`)"
+            "(spcode 其它工具照常工作; 如需启用请 `python scripts/install_vivado_mcp.py`)"
         )
         return
 
@@ -62,9 +62,7 @@ async def bootstrap_mcp(plugin, *, state: "_state.VivadoState") -> None:
             timeout=180,
         )
         state.mark_running(True)
-        logger.info(
-            f"vivado MCP 已启动: {cfg['command']} {' '.join(cfg['args'])}"
-        )
+        logger.info(f"vivado MCP 已启动: {cfg['command']} {' '.join(cfg['args'])}")
     except Exception as e:
         state.mark_running(False)
         logger.warning(f"vivado MCP 启动失败, spcode 其它工具不受影响: {e}")

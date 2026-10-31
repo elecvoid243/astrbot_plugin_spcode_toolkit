@@ -68,7 +68,7 @@ class TestIsVivadoInstalled:
         from tools.vivado.availability import is_vivado_installed
 
         with patch(
-            "tools.vivado.availability.importlib.util.find_spec",
+            "tools.vivado.availability.detect_vivado_launcher",
             return_value=object(),
         ):
             assert is_vivado_installed() is True
@@ -77,7 +77,7 @@ class TestIsVivadoInstalled:
         from tools.vivado.availability import is_vivado_installed
 
         with patch(
-            "tools.vivado.availability.importlib.util.find_spec",
+            "tools.vivado.availability.detect_vivado_launcher",
             return_value=None,
         ):
             assert is_vivado_installed() is False
@@ -131,7 +131,7 @@ class TestCheckVivadoAvailable:
         from tools.vivado.availability import check_vivado_available
 
         with patch(
-            "tools.vivado.availability.importlib.util.find_spec",
+            "tools.vivado.availability.detect_vivado_launcher",
             return_value=object(),
         ):
             ok, reason = check_vivado_available(mock_plugin)
@@ -150,7 +150,7 @@ class TestCheckVivadoAvailable:
         from tools.vivado.availability import check_vivado_available
 
         with patch(
-            "tools.vivado.availability.importlib.util.find_spec",
+            "tools.vivado.availability.detect_vivado_launcher",
             return_value=None,
         ):
             ok, reason = check_vivado_available(mock_plugin)
@@ -163,7 +163,7 @@ class TestCheckVivadoAvailable:
         # vivado 不在 mcp_server_runtime
         mock_plugin.context.get_llm_tool_manager().mcp_server_runtime = {}
         with patch(
-            "tools.vivado.availability.importlib.util.find_spec",
+            "tools.vivado.availability.detect_vivado_launcher",
             return_value=object(),
         ):
             ok, reason = check_vivado_available(mock_plugin)
@@ -176,7 +176,7 @@ class TestCheckVivadoAvailable:
 
         mock_plugin._config["vivado_enabled"] = False
         with patch(
-            "tools.vivado.availability.importlib.util.find_spec",
+            "tools.vivado.availability.detect_vivado_launcher",
             return_value=None,
         ):
             ok, reason = check_vivado_available(mock_plugin)
@@ -188,7 +188,7 @@ class TestCheckVivadoAvailable:
         from tools.vivado.availability import check_vivado_available
 
         with patch(
-            "tools.vivado.availability.importlib.util.find_spec",
+            "tools.vivado.availability.detect_vivado_launcher",
             return_value=None,
         ):
             ok, reason = check_vivado_available(mock_plugin)

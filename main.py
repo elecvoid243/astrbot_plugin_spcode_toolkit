@@ -581,7 +581,7 @@ class SPCodeToolkit(star.Star):
             ),
             "not_installed": (
                 "❌ vivado_mcp 未安装, /vivado 命令不可用。\n"
-                "   请运行 `pip install vivado-mcp` 后重启 AstrBot。"
+                "   请在插件目录运行 `python scripts/install_vivado_mcp.py` 后重启 AstrBot。"
             ),
             "not_running": (
                 "❌ vivado MCP 未运行, /vivado 命令不可用。\n"

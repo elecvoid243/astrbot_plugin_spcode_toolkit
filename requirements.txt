@@ -2,6 +2,6 @@ ruff
 clang-format
 send2trash
 pywin32>=306; sys_platform == "win32"
-vivado-mcp>=0.1.0
+# Vivado MCP 0.3.27 requires MCP SDK 2.x; install it with scripts/install_vivado_mcp.py.
 crap4py>=0.1.1,<0.2
 lizard>=1.7

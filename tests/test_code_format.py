@@ -460,7 +460,11 @@ def test_function_tool_uses_injected_defaults(tmp_path: Path, fake_clang_format_
     style_arg = next(a for a in cmd if a.startswith("--style="))
     assert "BasedOnStyle: google" in style_arg, f"应该用 google 预设,实际: {cmd}"
     assert "IndentWidth: 2" in style_arg, f"应该用 2 空格,实际: {cmd}"
-    assert payload["formatter_options"] == {"style": "google", "indent": 2, "options": {}}
+    assert payload["formatter_options"] == {
+        "style": "google",
+        "indent": 2,
+        "options": {},
+    }
 
 
 # ── 17. 未注入时默认值 llvm + 4 ──
@@ -1032,3 +1036,26 @@ def test_function_tool_default_options_passthrough(
         "ColumnLimit": "120",
         "BreakBeforeBraces": "Allman",
     }
+
+
+@needs_clang_format
+def test_project_config_reports_effective_options(tmp_path: Path):
+    """Report native project values, including parent inheritance."""
+    (tmp_path / ".clang-format").write_text(
+        "BasedOnStyle: LLVM\nIndentWidth: 2\nColumnLimit: 88\n", encoding="utf-8"
+    )
+    nested = tmp_path / "src"
+    nested.mkdir()
+    (nested / ".clang-format").write_text(
+        "BasedOnStyle: InheritParentConfig\nColumnLimit: 100\n", encoding="utf-8"
+    )
+    source = nested / "example.cpp"
+    source.write_text("int main(){return 0;}\n", encoding="utf-8")
+    result = code_format.format(
+        str(source), check=True, indent=8, options={"column_limit": 40}
+    )
+    assert result["ok"] is True
+    assert result["formatter_options"]["indent"] == 2
+    assert result["formatter_options"]["options"]["ColumnLimit"] == "100"
+    assert result["formatter_options"]["style"] == "file"
+    assert source.read_text(encoding="utf-8") == "int main(){return 0;}\n"

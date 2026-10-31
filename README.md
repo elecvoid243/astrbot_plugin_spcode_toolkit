@@ -793,3 +793,19 @@ with the original mode. A directory that disallows staging/replacement produces
 a save failure. These optimistic checks cannot lock arbitrary external writers
 out of the final check-to-replace interval. The old relative API and Git safety
 checks retain their original meaning and scope.
+
+
+### Vivado MCP isolated runtime
+
+Vivado MCP is pinned to **0.3.27**. It requires MCP SDK 2.x, while AstrBot
+uses SDK 1.x. Install or update the server in this plugin's isolated environment:
+
+```bash
+python scripts/install_vivado_mcp.py
+```
+
+The plugin automatically prefers `.venv-vivado` when starting its stdio server.
+Run the installer again in the deployed plugin directory when deploying this
+source checkout. The installer does not update the host Python environment.
+Existing installations in the host environment remain a fallback. Guidance is
+injected only while Vivado integration is enabled and the server is connected.
