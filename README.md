@@ -736,3 +736,29 @@ write/Git contracts. The legacy file-browser mode is unchanged. ChatUI links
 use `[name](G:/project/main.py#L12-L18)` (one-based closed source lines), `#L12`
 for a single line, or no fragment for the whole file; URL-special filename
 characters must be percent-encoded. File references currently preview read-only.
+
+
+### Host binary preview bytes
+
+`GET /spcode/file-binary?scope=host&path=<host-absolute-path>` uses the same
+Dashboard-authenticated extension channel for manual current-disk previews.
+It needs no project or `umo`; `ref` and `worktree` are rejected with HTTP 400
+`invalid_param` to keep the host and Git contracts separate. Relative paths
+return HTTP 400 `absolute_path_required`. The target is resolved under host
+account permissions; only regular files are read. The existing `MIME_BY_EXT`
+whitelist (images, PDF, DOCX, XLSX, CSV, MD) and 50 MiB byte limit apply,
+including a bounded read if the file grows after the size check.
+
+Success returns raw bytes with the existing MIME and RFC 5987 Unicode filename
+headers, `Cache-Control: no-store`, and `X-File-Path` containing the resolved
+absolute path percent-encoded once (forward slashes and drive colon preserved).
+Host mode always rereads; it does not return 304 for an old ETag. Errors retain
+the existing JSON envelope (`data.success=false`, `data.reason`): 403
+`permission_denied`, 404 `path_not_found`, 413 `file_too_large`, 415
+`unsupported_media_type`/`special_file`. Disabled/unavailable plugin envelopes
+are displayed as enable-plugin feedback, never passed to a document decoder.
+
+Without `scope=host`, `path` remains project-relative and optional `ref` remains
+a Git revision; existing preflight, containment checks and ETag behavior are
+unchanged. This adds no Agent tool or permission grant. Text source-line
+navigation continues to use `file-browser`'s decoded text and 5 MiB limit.

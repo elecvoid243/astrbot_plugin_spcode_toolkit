@@ -276,17 +276,61 @@ async def handle(
     *,
     umo: str | None = None,
     worktree: str | None = None,
+    scope: str = "unstaged",
 ) -> ResponseLike:
     """GET /spcode/file-binary — main entry point.
 
-    Query params:
-      - ``path``: repo-relative file path (required).
-      - ``ref``: git ref; when absent, serve from workspace.
+    Args:
+        plugin: Registered plugin; the host authenticates extension requests.
+        umo: Legacy loaded-project identity; unused for manual host reads.
+        worktree: Legacy worktree parameter; rejected in host mode.
+        scope: ``host`` reads an absolute query ``path`` from current disk,
+            without project or Agent permissions. Other values retain the
+            project-relative ``path`` and optional Git ``ref`` contract.
 
     Returns:
         Binary bytes for whitelisted extensions; JSON error envelope
         otherwise.
     """
+    # Manual host reads use the authenticated extension boundary, independently
+    # of Agent permissions and project/Git path validation.
+    if scope == "host":
+        from astrbot.api import web
+
+        raw_path = web.request.query.get("path", "")
+        target = Path(raw_path)
+        if not raw_path or not target.is_absolute():
+            return _build_error(400, "absolute_path_required", raw_path)
+        if _get_ref_param() or worktree:
+            return _build_error(400, ReasonCode.INVALID_PARAM, raw_path)
+        try:
+            target = target.resolve(strict=True)
+            file_st = target.stat()
+            if not stat.S_ISREG(file_st.st_mode):
+                return _build_error(415, ReasonCode.SPECIAL_FILE, raw_path)
+            mime = MIME_BY_EXT.get(target.suffix.lower())
+            if mime is None:
+                return _build_error(415, ReasonCode.UNSUPPORTED_MEDIA_TYPE, raw_path)
+            if file_st.st_size > FILE_BINARY_MAX_BYTES:
+                return _build_error(413, ReasonCode.FILE_TOO_LARGE, raw_path)
+            with target.open("rb") as stream:
+                data = stream.read(FILE_BINARY_MAX_BYTES + 1)
+            if len(data) > FILE_BINARY_MAX_BYTES:
+                return _build_error(413, ReasonCode.FILE_TOO_LARGE, raw_path)
+        except (OSError, ValueError, RuntimeError) as exc:
+            status, reason = (
+                _classify_oserror(exc)
+                if isinstance(exc, OSError)
+                else (400, ReasonCode.PATH_UNSAFE)
+            )
+            return _build_error(status, reason, raw_path)
+        response = _build_binary_response(
+            data, mime, _compute_binary_etag(file_st), target.name
+        )
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-File-Path"] = quote(target.as_posix(), safe="/:")
+        return response
+
     # ``worktree`` parameter from _wrap is actually the git ref in our case
     # — we use the dedicated ?ref= query param to disambiguate.
     del worktree  # unused; ref is read directly from query below
