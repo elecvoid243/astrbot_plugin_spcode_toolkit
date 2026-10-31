@@ -4,6 +4,22 @@ spcode 工具箱的版本变更记录。格式参考 [Keep a Changelog](https://
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。本文件由 AstrBot Dashboard 插件页的
 「更新日志」按钮直接读取并渲染。
 
+## [v2.32.1] - 2026-10-31
+
+### 修复
+
+- 统一 `metadata.yaml`、`main.py` 插件注册、README、AGENTS.md 与本更新日志的版本标识，修复插件版本与文档版本不一致的问题。
+- 补齐 v2.32.0 的渐进式 Git Diff 发布说明。
+
+本版本不改变运行行为。
+
+## [v2.32.0] - 2026-10-25
+
+### 变更
+
+- Git Diff 改为渐进式加载：`GET /spcode/git-diff` 返回分页文件元数据，避免首次加载时生成所有文件的 patch。
+- 新增 `GET /spcode/git-diff/file` 按需读取单文件 patch，及 `GET /spcode/git-diff/full` 为提交对话框提供全量 patch。
+
 ## [v2.31.3] - 2026-10-17
 
 AGENTS.md 自动生成质量改造：提示词按 Codex `/init` 风格重写、生成时采集真实提交历史、

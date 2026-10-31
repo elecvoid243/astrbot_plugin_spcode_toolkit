@@ -1,6 +1,6 @@
 # spcode 工具箱
 
-> **当前版本: v2.31.3** · 作者: elecvoid243 · [更新日志](CHANGELOG.md)
+> **当前版本: v2.32.1** · 作者: elecvoid243 · [更新日志](CHANGELOG.md)
 
 AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用工具，并附带一套供 Dashboard 消费的 Web API。
 
