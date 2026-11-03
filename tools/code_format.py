@@ -487,7 +487,19 @@ def _current_env_executable_candidates(name: str) -> list[str]:
 
 
 def _find_clang_format() -> list[str]:
-    """查找 clang-format 可执行路径(3 级:解释器同目录 → Scripts/ → PATH)。"""
+    """查找 clang-format:包内二进制 → 解释器同目录 → Scripts/ → PATH。"""
+    if sys.platform == "win32":
+        bundled = (
+            Path(sys.prefix)
+            / "Lib"
+            / "site-packages"
+            / "clang_format"
+            / "data"
+            / "bin"
+            / "clang-format.exe"
+        )
+        if bundled.is_file():
+            return [str(bundled)]
     found = _current_env_executable_candidates("clang-format")
     if found:
         return found[:1]
@@ -648,7 +660,7 @@ def _format_with_clang_format(
     """C/C++/Java/JS/TS/C#: 调 clang-format (CLI,二进制 stdin/stdout)。
 
     流程:
-      1. ``_find_clang_format()`` 定位可执行文件(解释器同目录 → Scripts/ → PATH)
+      1. ``_find_clang_format()`` 定位可执行文件(包内 → 同目录 → Scripts/ → PATH)
       2. 读原文件 bytes(不做任何重编码/行尾归一化)
       3. ``subprocess.run(args, input=before_bytes)`` 二进制管道
       4. 字节级/text 级比较 → changed
