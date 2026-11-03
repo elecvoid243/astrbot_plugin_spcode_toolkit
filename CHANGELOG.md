@@ -4,6 +4,14 @@ spcode 工具箱的版本变更记录。格式参考 [Keep a Changelog](https://
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。本文件由 AstrBot Dashboard 插件页的
 「更新日志」按钮直接读取并渲染。
 
+## [v2.33.1] - 2026-11-04
+
+### 修复
+
+- 运行包构建时为 Vivado MCP 的 TCL 会话、GUI 启动器、进程清理与 Verilog 编译检查补充 Windows `CREATE_NO_WINDOW`，避免 `pythonw.exe` 宿主下闪现控制台。
+- 同时修补 ruff、clang-format、cppcheck Python 包装器和辅助脚本的子进程调用，共 24 处；源码补丁可重复应用，清单与校验值随运行包分发。
+- 新增真实 pythonw 回归验证，并将插件源码检查与运行包依赖检查分开。使用旧运行包时需重新构建或部署新版运行包。
+
 ## [v2.33.0] - 2026-11-04
 
 ### 变更

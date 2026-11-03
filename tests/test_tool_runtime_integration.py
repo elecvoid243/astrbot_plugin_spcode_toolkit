@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import ast
+import hashlib
 import json
 import shutil
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
 import pytest
 
+from scripts._runtime_patches import EXPECTED_CALLS, PATCH_ID, _spawn_calls
 from tools import _tool_runtime as runtime
 from tools import code_check, code_crap, code_format
 
@@ -47,6 +51,68 @@ def test_interpreter_and_stdlib_are_self_contained() -> None:
     assert Path(prefix) == Path(base_prefix) == runtime.runtime_root() / "python"
     assert Path(stdlib).is_relative_to(runtime.runtime_root())
     assert all(Path(path).is_relative_to(runtime.runtime_root()) for path in paths)
+
+
+def test_wheel_subprocess_patches_are_complete_and_recorded() -> None:
+    root = runtime.runtime_root()
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    patches = manifest["source_patches"]
+    assert patches["id"] == PATCH_ID
+    assert set(patches["files"]) == {*EXPECTED_CALLS, "_spcode_no_window.py"}
+    site = root / "python/Lib/site-packages"
+    for relative, info in patches["files"].items():
+        source = (site / relative).read_bytes()
+        assert hashlib.sha256(source).hexdigest() == info["sha256"]
+        calls = _spawn_calls(ast.parse(source))
+        assert len(calls) == info["spawn_calls"] == EXPECTED_CALLS.get(relative, 0)
+        for call in calls:
+            assert any(
+                keyword.arg is None
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id == "_SPCODE_NO_WINDOW"
+                for keyword in call.keywords
+            )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="pythonw Windows regression")
+def test_pythonw_dependency_spawns_have_no_console(tmp_path: Path) -> None:
+    report = tmp_path / "probe.json"
+    subprocess.run(
+        [
+            str(runtime.runtime_python().with_name("pythonw.exe")),
+            "-I",
+            str(Path(__file__).with_name("fixtures") / "runtime_no_window_probe.py"),
+            str(report),
+        ],
+        env=runtime.runtime_environment(),
+        check=True,
+        timeout=30,
+        **runtime._NO_WINDOW,
+    )
+    assert json.loads(report.read_text(encoding="utf-8")) == {
+        "vivado_spawn_sites": 5,
+        "cli_wrappers": 4,
+        "child_console_window": 0,
+    }
+
+
+@pytest.mark.parametrize("script", ["install_tool_runtime.py", "install_vivado_mcp.py"])
+def test_installer_entrypoints_run_in_embedded_python(script: str) -> None:
+    result = subprocess.run(
+        [
+            str(runtime.runtime_python()),
+            "-I",
+            str(runtime.runtime_root().parent / "scripts" / script),
+            "--help",
+        ],
+        env=runtime.runtime_environment(),
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=15,
+        **runtime._NO_WINDOW,
+    )
+    assert "--requirements" in result.stdout
 
 
 def test_python_format_check_and_crap_use_bundle(tmp_path: Path) -> None:

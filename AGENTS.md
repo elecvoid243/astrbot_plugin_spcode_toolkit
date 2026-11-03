@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.33.0** · Author: elecvoid243 · 最后更新: 2026-11-04
+> **当前版本: v2.33.1** · Author: elecvoid243 · 最后更新: 2026-11-04
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -146,13 +146,14 @@ pytest tests/ --cov=tools --cov-report=term-missing
 
 将项目根目录放入 AstrBot 插件目录，启动 AstrBot 即可加载 `main.py`。本地开发可用符号链接而非复制。
 
-### 独立工具运行环境（v2.33.0，Windows x64）
+### 独立工具运行环境（v2.33.1，Windows x64）
 
 - 构建：在插件根目录运行 `python scripts/install_tool_runtime.py --archive dist/spcode-tool-runtime-win-amd64.zip`。构建器下载并校验官方 CPython 嵌入式发行包，不创建 venv；`install_vivado_mcp.py` 为同一构建器的兼容入口。
 - 离线部署：把上述 ZIP 解压到插件根目录，确认存在 `runtime/python/python.exe` 和 `runtime/manifest.json`，再重启 AstrBot。解释器、标准库、工具依赖与 MSVC DLL 随包分发。
 - 修改依赖时编辑 `scripts/runtime-requirements.txt`，通过 `--requirements scripts/runtime-requirements.txt` 构建并核验，再同步 `scripts/runtime-requirements.lock`。不要把工具依赖加回宿主的 `requirements.txt`。
+- `scripts/_runtime_patches.py` 在构建时为锁定 wheel 的 24 个子进程调用补充 Windows `CREATE_NO_WINDOW`，不修改宿主包或全局 subprocess。升级依赖时须审查并同步 `EXPECTED_CALLS`；补丁与源码散列记录在运行包 manifest 的 `source_patches`，不要只手工修改已部署的 site-packages。
 - 调用入口集中在 `tools/_tool_runtime.py`；`_runtime_worker.py` 仅接受固定操作。缺失运行包时返回结构化错误，不得回退到宿主 Python、用户 site-packages 或 PATH 中的工具。
-- 修改运行环境或调用入口后，运行 `pytest tests/test_tool_runtime.py tests/test_tool_runtime_integration.py tests/test_install_tool_runtime.py`。集成用例必须真实调用运行包，包含目录迁移、清空宿主环境变量、MCP 初始化与工具执行验证；业务单元测试的 worker 上下文 mock 由 `tests/conftest.py` 管理。
+- 修改运行环境或调用入口后，运行 `pytest tests/test_tool_runtime.py tests/test_tool_runtime_integration.py tests/test_install_tool_runtime.py tests/test_runtime_patches.py tests/test_no_window_kwargs.py`。集成用例必须真实调用运行包，包含目录迁移、清空宿主环境变量、MCP 初始化、pythonw 子进程标志与工具执行验证；业务单元测试的 worker 上下文 mock 由 `tests/conftest.py` 管理。
 
 ## 目录结构与架构
 
@@ -520,7 +521,7 @@ AstrBot 主仓库（`all` 分支）已内置 `astrbot_file_remove` 工具（`loc
 10. **路径安全**：任何涉及用户输入路径的代码，先调用 `_path_safety` 校验，**不要**自己实现路径判断
 11. **Web API 参数安全**：`?worktree=` 等用户控制的路径参数，必须经过 `_validate_worktree_param`（位于 `tools/_helpers.py`）的 6 步防御链：**关键不变量 - git-common-dir 不匹配 = 直接拒绝**
 12. **配置拍平**：`_conf_schema.json` 是分组结构，`main.py._flatten_config()` 会把嵌套分组拍平为顶层键（如 `codegraph.codegraph_enabled` -> `codegraph_enabled`）。新增配置项时保持此约定
-13. **版本号统一**：当前版本统一为 **v2.33.0**。发布时同步更新 `metadata.yaml` 的 `version` 字段、`main.py` 的 `@register` 版本、README 与本文档的当前版本，并在 `CHANGELOG.md` 补一条对应版本的记录（Dashboard 插件页的「更新日志」直接读该文件）
+13. **版本号统一**：当前版本统一为 **v2.33.1**。发布时同步更新 `metadata.yaml` 的 `version` 字段、`main.py` 的 `@register` 版本、README 与本文档的当前版本，并在 `CHANGELOG.md` 补一条对应版本的记录（Dashboard 插件页的「更新日志」直接读该文件）
 
 ## Project 加载 — 静默变体 (2026-07-28)
 
@@ -765,4 +766,4 @@ pytest tests/ --cov=tools                    # 覆盖率
 
 ---
 
-> Author: elecvoid243 · 本文档同步至 v2.33.0 (2026-11-04)
+> Author: elecvoid243 · 本文档同步至 v2.33.1 (2026-11-04)

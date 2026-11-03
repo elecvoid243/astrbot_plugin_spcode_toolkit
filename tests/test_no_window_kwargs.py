@@ -255,7 +255,13 @@ def test_no_production_subprocess_call_without_no_window():
     }
 
     spawn_calls = []  # list of (file, lineno, text)
-    for py in ROOT.rglob("*.py"):
+    # Bundled wheels have a separate audit in test_tool_runtime_integration.
+    production_files = [
+        ROOT / "main.py",
+        *(ROOT / "tools").rglob("*.py"),
+        *(ROOT / "scripts").rglob("*.py"),
+    ]
+    for py in production_files:
         # 排除 tests / data / docs / 缓存 / 历史 worktree 副本
         if any(
             part in py.parts
@@ -306,11 +312,11 @@ def test_no_production_subprocess_call_without_no_window():
             }:
                 continue
 
-            # 检查附近源码(子进程调用通常在 5-15 行内展开 kwargs)
+            # 检查完整调用，长参数列表的窗口标志可能在 20 行之后。
             src = py.read_text(encoding="utf-8")
             lines = src.splitlines()
             window_start = max(0, node.lineno - 1)
-            window_end = min(len(lines), node.lineno + 20)  # 20 行窗口覆盖 kwargs 块
+            window_end = node.end_lineno
             window_text = "\n".join(lines[window_start:window_end])
 
             # 小写不敏感:匹配 _NO_WINDOW_KWARGS / _no_window
@@ -401,7 +407,12 @@ def test_no_sys_executable_in_production_subprocess_calls():
 
     violations: list[tuple[Path, int, str]] = []  # (file, lineno, qualified)
 
-    for py in ROOT.rglob("*.py"):
+    production_files = [
+        ROOT / "main.py",
+        *(ROOT / "tools").rglob("*.py"),
+        *(ROOT / "scripts").rglob("*.py"),
+    ]
+    for py in production_files:
         if any(part in py.parts for part in SKIP_PARTS):
             continue
         try:

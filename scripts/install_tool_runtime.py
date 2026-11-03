@@ -21,6 +21,13 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+if __package__:
+    from ._runtime_patches import apply_runtime_patches
+else:
+    # The embedded interpreter's _pth file does not include the script directory.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from _runtime_patches import apply_runtime_patches
+
 logger = logging.getLogger(__name__)
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 PYTHON_VERSION = "3.13.12"
@@ -222,6 +229,7 @@ def build_runtime(destination: Path, requirements: Path) -> None:
             str(requirements),
         )
         run(python, "-m", "pip", "check")
+        patches = apply_runtime_patches(python_root)
         run(
             python,
             "-c",
@@ -250,6 +258,7 @@ def build_runtime(destination: Path, requirements: Path) -> None:
             "standalone": True,
             "python_archive_sha256": PYTHON_SHA256,
             "requirements": frozen.splitlines(),
+            "source_patches": patches,
         }
         (staging / "runtime" / "manifest.json").write_text(
             json.dumps(manifest, indent=2) + "\n", encoding="utf-8"

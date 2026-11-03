@@ -1,7 +1,7 @@
 """VivadoManager - 4 个 /vivado 子命令 handler (PR-2 2026-07-23)。
 
-不调 subprocess (用户明确: 仅 spcode 直接 spawn 的进程需 _NO_WINDOW_KWARGS,
-此处通过 plugin.context.get_llm_tool_manager() 透传, AstrBot 内部处理)。
+本模块通过 plugin.context.get_llm_tool_manager() 透传，不直接启动子进程。
+运行包构建器为 vivado-mcp 内部的子进程调用补充 Windows 无控制台标志。
 cmd_* 通过 yield 引导消息让用户用 chat 让 LLM 调 mcp_vivado__* 工具。
 """
 

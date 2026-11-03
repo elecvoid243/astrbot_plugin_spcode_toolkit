@@ -1,6 +1,6 @@
 # spcode 工具箱
 
-> **当前版本: v2.33.0** · 作者: elecvoid243 · [更新日志](CHANGELOG.md)
+> **当前版本: v2.33.1** · 作者: elecvoid243 · [更新日志](CHANGELOG.md)
 
 AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用工具，并附带一套供 Dashboard 消费的 Web API。
 
@@ -820,6 +820,14 @@ python scripts/install_tool_runtime.py --archive dist/spcode-tool-runtime-win-am
 
 `scripts/install_vivado_mcp.py` 保留为相同构建流程的兼容入口。构建默认读取锁定依赖，
 也可通过 `--requirements scripts/runtime-requirements.txt` 重新解析依赖。
+
+v2.33.1 运行包会在构建时修补 Vivado MCP 和工具包装器的子进程调用，Windows 下
+统一传入 `CREATE_NO_WINDOW`，避免 AstrBot 使用 `pythonw.exe` 启动时弹出额外控制台。
+Vivado 的 GUI 模式仍按原有方式显示应用界面。已有 v2.33.0 运行包的用户须更新
+`runtime/` 或重新构建，源码更新本身不会修改已部署的 wheel。
+补丁列表与源码校验值记录在 `runtime/manifest.json` 的 `source_patches` 中；
+依赖升级出现未经审查的新启动位置时构建会中止。详见
+[外部程序启动检查](docs/tool-runtime-process-audit.md)。
 
 `code_format`、`code_check`、`code_crap`、文件搜索和插件提供的回收站操作均通过独立进程执行。
 工具缺失或运行包不完整时返回结构化错误，不会改用宿主环境。`cpplint` 随包提供；
