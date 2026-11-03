@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from python_ripgrep import search as rg_search
+from .._runtime_search import search as rg_search
 
 from ._helpers import (
     _JSONResponseCompat,

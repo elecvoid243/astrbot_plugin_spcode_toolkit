@@ -14,3 +14,8 @@ logo.png
 .superpowers/
 
 .venv-vivado/
+runtime/
+runtime.previous-*/
+.spcode-build-*/
+.runtime-downloads/
+dist/

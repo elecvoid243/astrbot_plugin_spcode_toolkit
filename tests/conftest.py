@@ -83,6 +83,25 @@ import pytest  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def _tool_implementation_context(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Legacy unit tests exercise implementations; runtime tests use the real seam."""
+    implementation_tests = {
+        "test_code_format.py", "test_code_check_clang_format.py",
+        "test_code_check_config_overrides.py", "test_code_crap.py",
+        "test_file_remove.py", "test_host_file_manage.py",
+    }
+    if request.node.path.name in implementation_tests:
+        from tools import _tool_runtime
+
+        monkeypatch.setattr(_tool_runtime, "_IN_WORKER", True)
+        if request.node.path.name == "test_code_crap.py":
+            # Pure-Python engines are unit-test dependencies, supplied by the bundle.
+            monkeypatch.syspath_prepend(str(_tool_runtime.runtime_root() / "python/Lib/site-packages"))
+
+
+@pytest.fixture(autouse=True)
 def _reset_module_state(monkeypatch: pytest.MonkeyPatch):
     """每个 test 前 reset 共享 module-level state(防相互污染)。"""
     # 惰性导入 — conftest 在 import 时机要早于 tools.*,直接 import 会触发

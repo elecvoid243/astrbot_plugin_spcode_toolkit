@@ -5,10 +5,14 @@ file_remove — 文件/目录删除工具。
 
 from __future__ import annotations
 
-import send2trash
 from pathlib import Path
+from typing import Any
 
 from ._helpers import proposal_reply
+from ._tool_runtime import runtime_tool
+
+# WHY: importing the plugin must not require Send2Trash in the host environment.
+send2trash: Any = None
 
 # 系统目录黑名单（删除这些目录会让 OS 崩溃）
 # 注意：/Users 不在列表中——开发者家目录常用，应放行。
@@ -89,6 +93,7 @@ def _human_size(n: int) -> str:
     return f"{f:.1f}PB"
 
 
+@runtime_tool("file_remove")
 def remove(
     path: str,
     confirm: bool = False,
@@ -109,6 +114,11 @@ def remove(
     协议：返回的 proposal 字段意味着需要 LLM 在下一轮调用中以
     `confirm=true` 重试——见 README「proposal → next_call」契约。
     """
+    global send2trash
+    if send2trash is None:
+        import send2trash as trash_module
+
+        send2trash = trash_module
     raw = str(Path(path))
 
     # 1. 路径穿越拦截

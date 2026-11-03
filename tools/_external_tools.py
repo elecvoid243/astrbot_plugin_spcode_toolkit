@@ -11,7 +11,6 @@ from astrbot.core.utils.astrbot_path import get_astrbot_plugin_path, get_astrbot
 
 _EXTERNAL_TOOL_RELATIVE_PATHS = {
     "es_path": Path("external_tools") / "Everything" / "es.exe",
-    "cppcheck_path": Path("external_tools") / "cppcheck" / "cppcheck.exe",
 }
 
 

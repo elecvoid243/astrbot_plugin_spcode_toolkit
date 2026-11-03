@@ -30,17 +30,17 @@ import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
 from ._helpers import (
     _NO_WINDOW_KWARGS,
     _decode_text_bytes,
-    _get_console_python,
     detect_console_encoding,
     proposal_reply,
 )
+
+from ._tool_runtime import bundled_binary, runtime_tool
 from .code_format import (
     _clang_format_flags,
     _find_clang_format,
@@ -72,6 +72,7 @@ def _supported_extensions() -> list[str]:
     return sorted(_PY_SUFFIXES | _CPP_SUFFIXES)
 
 
+@runtime_tool("code_check")
 def check(
     filepath: str,
     linter: str = "auto",
@@ -272,39 +273,8 @@ _CPPCHECK_LINE_RE = re.compile(
 
 
 def _find_cppcheck() -> list:
-    """查找 cppcheck 可执行路径：4 级 fallback（仿 _get_es_path）。
-
-    查找顺序：
-    1. CPPCHECK_PATH 环境变量（用户显式覆盖）
-    2. shutil.which("cppcheck.exe") / "cppcheck"
-    3. 常见安装路径（C:/Program Files/cppcheck/cppcheck.exe 等）
-    """
-    # 1. 环境变量
-    env_path = os.environ.get("CPPCHECK_PATH")
-    if env_path:
-        p = Path(env_path)
-        if p.exists():
-            return [str(p)]
-
-    # 2. PATH 中查找
-    for name in ("cppcheck.exe", "cppcheck"):
-        found = shutil.which(name)
-        if found and Path(found).exists():
-            return [found]
-
-    # 3. 常见安装路径
-    candidates = [
-        Path("C:/Program Files/Cppcheck/cppcheck.exe"),
-        Path("C:/Program Files (x86)/Cppcheck/cppcheck.exe"),
-        Path("D:/Program Files/Cppcheck/cppcheck.exe"),
-        Path("C:/cppcheck/cppcheck.exe"),
-        Path("D:/cppcheck/cppcheck.exe"),
-    ]
-    for c in candidates:
-        if c.exists():
-            return [str(c)]
-
-    return []
+    """Select the runtime's native cppcheck, without a host PATH fallback."""
+    return bundled_binary("cppcheck")
 
 
 def _parse_cppcheck_output(stderr: str) -> list[dict]:
@@ -411,21 +381,8 @@ def _run_cppcheck(
 
 
 def _find_ruff() -> list:
-    """查找 ruff 可执行路径：优先 PATH，备选 python -m ruff。"""
-    if shutil.which("ruff"):
-        return ["ruff"]
-    try:
-        subprocess.run(
-            [_get_console_python(), "-m", "ruff", "--version"],
-            capture_output=True,
-            timeout=5,
-            check=True,
-            # pythonw.exe 启动下抑制 cmd 黑窗;非 Windows 上为 {}
-            **_NO_WINDOW_KWARGS,
-        )
-        return [_get_console_python(), "-m", "ruff"]
-    except Exception:
-        return []
+    """Use the bundled Rust executable, with no user-site discovery fallback."""
+    return bundled_binary("ruff")
 
 
 def _run_ruff(p: Path, fix: bool = False) -> dict:
@@ -433,10 +390,10 @@ def _run_ruff(p: Path, fix: bool = False) -> dict:
     if not ruff_cmd:
         return proposal_reply(
             False,
-            "ruff 未安装，无法检查 Python 文件。请运行: pip install ruff",
+            "ruff 未安装，无法检查 Python 文件。请运行: python scripts/install_tool_runtime.py",
             error="ruff 未安装",
             evidence={"python_file": str(p)},
-            options=["pip install ruff", "切换到 linter=clang-format 不适用（仅 C/C++）"],
+            options=["python scripts/install_tool_runtime.py", "切换到 linter=clang-format 不适用（仅 C/C++）"],
         )
 
     if not fix:
@@ -502,6 +459,8 @@ def _run_ruff_once(p: Path, ruff_cmd: list, *, fix: bool) -> dict:
         )
         if r.returncode == 0:
             return {"ok": True, "linter": "ruff", "issues": [], "count": 0}
+        if r.returncode != 1 or not r.stdout.strip():
+            return {"ok": False, "error": f"ruff 执行失败 ({r.returncode}): {r.stderr.strip()[:2000]}"}
         issues = json.loads(r.stdout) if r.stdout.strip() else []
         return {"ok": True, "linter": "ruff", "issues": issues, "count": len(issues)}
     except json.JSONDecodeError:
@@ -644,11 +603,11 @@ def _run_clang_format_check(p: Path) -> dict:
         return proposal_reply(
             False,
             "clang-format 未安装，无法检查 C/C++ 文件格式。"
-            "请运行: pip install clang-format",
+            "请运行: python scripts/install_tool_runtime.py",
             error="clang-format 未安装",
             evidence={"cpp_file": str(p)},
             options=[
-                "pip install clang-format",
+                "python scripts/install_tool_runtime.py",
                 "切换到 linter=ruff 不适用（仅 Python）",
             ],
         )

@@ -30,7 +30,7 @@ from ._helpers import detect_console_encoding
 DEFAULT_CONFIG: dict[str, Any] = {
     "es_path": "",  # Everything es.exe 路径(Windows);Linux/macOS 留空
     "git_path": "",  # git 可执行文件绝对路径;留空走系统 PATH
-    "cppcheck_path": "",  # cppcheck.exe 路径(Windows/Linux/macOS);C/C++ 正确性检查(格式检查由 clang-format 负责)
+    "cppcheck_path": "",  # 兼容历史配置；cppcheck 固定由独立运行包提供
     "cppcheck_shortcircuit": "error",  # cppcheck 短路策略:error/warning/never(仅 auto 模式生效)
     "cppcheck_enable": [],  # cppcheck 启用的额外检查类目(空=只报 error):warning/style/performance/portability
     "default_style": "llvm",  # clang-format 默认风格(兼容 legacy astyle 风格名)

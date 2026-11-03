@@ -195,7 +195,7 @@ def test_crap4py_missing(tmp_path: Path, monkeypatch):
     result = code_crap.check(str(f))
     assert result["ok"] is False
     assert "crap4py 未安装" in result["error"]
-    assert "pip install crap4py" in result["proposal"]
+    assert "python scripts/install_tool_runtime.py" in result["proposal"]
 
 
 def test_python_lcov_branch_coverage(tmp_path: Path):
@@ -283,7 +283,7 @@ def test_cpp_lizard_missing(tmp_path: Path, monkeypatch):
     result = code_crap.check(str(f))
     assert result["ok"] is False
     assert "lizard 未安装" in result["error"]
-    assert "pip install lizard" in result["proposal"]
+    assert "python scripts/install_tool_runtime.py" in result["proposal"]
 
 
 def test_parse_lcov_da():

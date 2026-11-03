@@ -1,6 +1,6 @@
 # spcode 工具箱
 
-> **当前版本: v2.32.1** · 作者: elecvoid243 · [更新日志](CHANGELOG.md)
+> **当前版本: v2.33.0** · 作者: elecvoid243 · [更新日志](CHANGELOG.md)
 
 AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用工具，并附带一套供 Dashboard 消费的 Web API。
 
@@ -46,7 +46,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 将 FPGA 开发助手 vivado-mcp（21 个 `mcp_vivado__*` 工具）集成到 spcode。
 
-**安装**: `pip install vivado-mcp`
+**安装**：部署下文的独立工具运行包，或运行 `python scripts/install_tool_runtime.py`。
 
 **配置**: `vivado.enabled=true`，可选 `vivado.executable`（Vivado 工具链路径，留空走自动检测）。
 
@@ -216,7 +216,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 | 工具 | 可选依赖 | 缺失时行为 |
 |------|----------|-----------|
-| `code_check` (Python) | ruff (`pip install ruff`) | 返回安装提示 |
+| `code_check` (Python) | 独立运行包中的 ruff | 返回运行包安装提示 |
 | `code_check` (C/C++) | cppcheck（先跑正确性检查）+ clang-format（后跑格式检查） | 返回安装提示 |
 | `code_format` (Python) | ruff | 返回安装提示 |
 | `code_format` (C/C++/Java/JS/TS/C#) | clang-format | 返回安装提示 |
@@ -224,7 +224,8 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | `es_search` (Windows) | Everything + es.exe | 返回安装提示 |
 | `es_search` (Linux/macOS) | locate / fd / Python 兜底 | 自动降级到 Python `os.walk` |
 
-`requirements.txt`（lint + 运行时依赖）：`ruff`、`clang-format`、`send2trash`。
+工具依赖由下文的独立运行包提供，版本锁定于 `scripts/runtime-requirements.lock`。
+`requirements.txt` 不再向 AstrBot 宿主环境安装这些依赖。
 
 ## 工具详解
 
@@ -550,7 +551,7 @@ astrbot_plugin_spcode_toolkit/
 ├── main.py                       # 插件入口：注册工具/命令/事件 + L1 鉴权 + 多个 @filter.on_llm_request 钩子
 ├── metadata.yaml                 # 插件元信息（AstrBot 加载识别）
 ├── _conf_schema.json             # WebUI 配置 schema（分组结构）
-├── requirements.txt              # lint + 运行时依赖：ruff, clang-format, send2trash
+├── requirements.txt              # 宿主依赖说明；工具依赖使用独立运行包
 ├── README.md                     # 本文件
 ├── AGENTS.md                     # 供 coding agent 使用的项目规范
 │
@@ -795,17 +796,42 @@ out of the final check-to-replace interval. The old relative API and Git safety
 checks retain their original meaning and scope.
 
 
-### Vivado MCP isolated runtime
+### 独立工具运行包（Windows x64）
 
-Vivado MCP is pinned to **0.3.27**. It requires MCP SDK 2.x, while AstrBot
-uses SDK 1.x. Install or update the server in this plugin's isolated environment:
+插件的工具操作统一使用 `runtime/python/python.exe`。这是包含解释器、标准库和
+DLL 的 CPython **3.13.12** 发行包，可以随插件移动目录；运行时无需 conda、venv
+或宿主 Python 的第三方依赖。
 
-```bash
-python scripts/install_vivado_mcp.py
+运行包包含 Vivado MCP **0.3.27**（MCP SDK **2.3.0**）、ruff、clang-format、cpplint、
+cppcheck（原生版本 **2.22.0**）、crap4py、lizard、Send2Trash、pywin32 和 python-ripgrep。
+clang-format / cppcheck 所需的 MSVC DLL 也一并部署。确切版本见
+`scripts/runtime-requirements.lock` 与运行包内的 `requirements.lock`。
+
+**离线部署**：将 `spcode-tool-runtime-win-amd64.zip` 解压到插件根目录，形成
+`runtime/python/python.exe` 和 `runtime/manifest.json`，然后重启 AstrBot。
+ZIP 旁的 `.sha256` 文件可用于核对压缩包完整性。
+
+**重新构建或更新**：在 Windows x64 上执行以下命令。构建阶段使用的 Python 仅用于
+下载与安装；成品解释器来自经过 SHA-256 校验的官方嵌入式发行包。
+
+```powershell
+python scripts/install_tool_runtime.py --archive dist/spcode-tool-runtime-win-amd64.zip
 ```
 
-The plugin automatically prefers `.venv-vivado` when starting its stdio server.
-Run the installer again in the deployed plugin directory when deploying this
-source checkout. The installer does not update the host Python environment.
-Existing installations in the host environment remain a fallback. Guidance is
-injected only while Vivado integration is enabled and the server is connected.
+`scripts/install_vivado_mcp.py` 保留为相同构建流程的兼容入口。构建默认读取锁定依赖，
+也可通过 `--requirements scripts/runtime-requirements.txt` 重新解析依赖。
+
+`code_format`、`code_check`、`code_crap`、文件搜索和插件提供的回收站操作均通过独立进程执行。
+工具缺失或运行包不完整时返回结构化错误，不会改用宿主环境。`cpplint` 随包提供；
+现有 C/C++ 检查仍为 cppcheck 正确性检查加 clang-format 格式检查。
+历史 `cppcheck_path` 配置键予以保留，当前工具固定使用运行包中的 cppcheck。
+
+可以直接核对工具版本：
+
+```powershell
+.\runtime\python\python.exe -I -m ruff --version
+.\runtime\python\python.exe -I -m cpplint --version
+```
+
+Vivado 工具链本体仍需安装，并通过原有 `vivado_executable` 或 `VIVADO_PATH` 配置。
+Vivado MCP 指引仅在集成启用且服务器已连接时注入。

@@ -4,6 +4,14 @@ spcode 工具箱的版本变更记录。格式参考 [Keep a Changelog](https://
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。本文件由 AstrBot Dashboard 插件页的
 「更新日志」按钮直接读取并渲染。
 
+## [v2.33.0] - 2026-11-04
+
+### 变更
+
+- 新增 Windows x64 独立工具运行包：包含 CPython 解释器、标准库、MSVC DLL 与锁定的工具依赖，可移动目录、离线部署。
+- Vivado MCP、ruff、clang-format、cppcheck、CRAP 分析、文件搜索和插件回收站操作统一使用运行包；不再向 AstrBot 宿主环境安装这些依赖，也不回退到宿主工具。
+- 随包提供 cpplint；保留现有 C/C++ 检查流程。`install_vivado_mcp.py` 改为统一运行包构建器的兼容入口。
+
 ## [v2.32.1] - 2026-10-31
 
 ### 修复

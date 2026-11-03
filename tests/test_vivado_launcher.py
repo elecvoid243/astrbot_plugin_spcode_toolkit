@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import sys
 import types
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -37,21 +38,18 @@ def stub_vivado_mcp_modules(monkeypatch):
 class TestDetectVivadoLauncher:
     @pytest.fixture(autouse=True)
     def hide_local_environment(self, monkeypatch):
-        monkeypatch.setattr("pathlib.Path.is_file", lambda self: False)
+        monkeypatch.setattr("tools._vivado_mcp.runtime_python", lambda: None)
 
     def test_prefers_isolated_environment(self, vivado_mcp_module, monkeypatch):
-        monkeypatch.setattr("pathlib.Path.is_file", lambda self: True)
+        monkeypatch.setattr(vivado_mcp_module, "runtime_python", lambda: Path("bundle/python.exe"))
         result = vivado_mcp_module.detect_vivado_launcher()
-        assert ".venv-vivado" in result["command"]
-        assert result["args"] == ["-m", "vivado_mcp"]
+        assert result["command"] == str(Path("bundle/python.exe"))
+        assert result["args"] == ["-I", "-m", "vivado_mcp"]
 
     def test_returns_dict_when_vivado_mcp_installed(self, vivado_mcp_module):
         with patch("importlib.util.find_spec", return_value=object()):
             result = vivado_mcp_module.detect_vivado_launcher()
-        assert result is not None
-        assert result["type"] == "stdio"
-        assert result["command"] == sys.executable
-        assert result["args"] == ["-m", "vivado_mcp"]
+        assert result is None  # Host packages cannot substitute for a missing bundle.
 
     def test_returns_none_when_vivado_mcp_not_installed(self, vivado_mcp_module):
         with patch("importlib.util.find_spec", return_value=None):
@@ -74,11 +72,11 @@ class TestNormalizePath:
 
 class TestBuildEnv:
     def test_empty_when_no_executable(self, vivado_mcp_module):
-        assert vivado_mcp_module.build_env(vivado_executable="") == {}
+        assert not any(key.upper().startswith("PYTHON") for key in vivado_mcp_module.build_env(vivado_executable=""))
 
     def test_nonexistent_file_no_env(self, vivado_mcp_module, tmp_path):
         fake = str(tmp_path / "no_such_vivado.bat")
-        assert vivado_mcp_module.build_env(vivado_executable=fake) == {}
+        assert not any(key.upper().startswith("PYTHON") for key in vivado_mcp_module.build_env(vivado_executable=fake))
 
     def test_existing_file_sets_vivado_path(self, vivado_mcp_module, tmp_path):
         fake = tmp_path / "vivado.bat"
@@ -100,9 +98,8 @@ class TestFindVivadoExecutable:
     ):
         monkeypatch.delenv("VIVADO_PATH", raising=False)
         with patch(
-            "vivado_mcp.config.find_vivado",
-            return_value="/opt/vivado",
-            create=True,
+            "tools._vivado_mcp.invoke",
+            return_value={"ok": True, "path": "/opt/vivado"},
         ):
             result = vivado_mcp_module.find_vivado_executable(
                 configured=str(tmp_path / "nope.bat")
@@ -121,9 +118,8 @@ class TestFindVivadoExecutable:
     ):
         monkeypatch.delenv("VIVADO_PATH", raising=False)
         with patch(
-            "vivado_mcp.config.find_vivado",
-            side_effect=FileNotFoundError("not found"),
-            create=True,
+            "tools._vivado_mcp.invoke",
+            return_value={"ok": False, "error": "not found"},
         ):
             with pytest.raises(vivado_mcp_module.VivadoNotFoundError):
                 vivado_mcp_module.find_vivado_executable(configured="")

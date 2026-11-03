@@ -117,7 +117,7 @@ def test_explicit_clang_format_not_installed(cpp_file: Path, monkeypatch):
     r = code_check.check(str(cpp_file), "clang-format")
     assert r["ok"] is False
     assert r["error"] == "clang-format 未安装"
-    assert "pip install clang-format" in r["proposal"]
+    assert "python scripts/install_tool_runtime.py" in r["proposal"]
 
 
 def test_explicit_clang_format_syntax_error(cpp_file: Path, fake_clang_format):

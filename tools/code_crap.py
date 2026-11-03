@@ -34,6 +34,7 @@ import logging
 from pathlib import Path
 
 from ._helpers import _decode_text_bytes, proposal_reply
+from ._tool_runtime import runtime_tool
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ def _get_crap_score():
 # ── 公开入口 ─────────────────────────────────────────
 
 
+@runtime_tool("code_crap")
 def check(
     filepath: str,
     lcov: str | None = None,
@@ -268,10 +270,10 @@ def _analyze_python(p: Path, lcov_path: str | None, max_crap: float) -> dict:
     if c4 is None:
         return proposal_reply(
             False,
-            "crap4py 未安装,无法分析 Python 文件的 CRAP。请运行: pip install crap4py",
+            "crap4py 未安装,无法分析 Python 文件的 CRAP。请运行: python scripts/install_tool_runtime.py",
             error="crap4py 未安装",
             evidence={"python_file": str(p)},
-            options=["pip install crap4py", "切换到 .c/.cpp 文件(lizard 路径)"],
+            options=["python scripts/install_tool_runtime.py", "切换到 .c/.cpp 文件(lizard 路径)"],
         )
 
     source = p.read_text(encoding="utf-8", errors="replace")
@@ -407,19 +409,19 @@ def _analyze_cpp(p: Path, lcov_path: str | None, max_crap: float) -> dict:
     except ImportError:
         return proposal_reply(
             False,
-            "lizard 未安装,无法分析 C/C++ 文件的 CRAP。请运行: pip install lizard",
+            "lizard 未安装,无法分析 C/C++ 文件的 CRAP。请运行: python scripts/install_tool_runtime.py",
             error="lizard 未安装",
             evidence={"cpp_file": str(p)},
-            options=["pip install lizard", "切换到 .py 文件(crap4py 路径)"],
+            options=["python scripts/install_tool_runtime.py", "切换到 .py 文件(crap4py 路径)"],
         )
     crap_score = _get_crap_score()
     if crap_score is None:
         return proposal_reply(
             False,
-            "crap4py 未安装(CRAP 公式依赖)。请运行: pip install crap4py",
+            "crap4py 未安装(CRAP 公式依赖)。请运行: python scripts/install_tool_runtime.py",
             error="crap4py 未安装",
             evidence={"cpp_file": str(p)},
-            options=["pip install crap4py"],
+            options=["python scripts/install_tool_runtime.py"],
         )
     try:
         result = lizard.analyze_file(str(p))

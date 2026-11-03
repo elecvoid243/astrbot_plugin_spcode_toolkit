@@ -332,22 +332,22 @@ def test_format_is_idempotent(unformatted_cpp: Path, fake_clang_format_run):
 def test_format_clang_format_not_installed_suggests_install(
     unformatted_cpp: Path, no_clang_format
 ):
-    """clang-format 不可用时,proposal 应提示 pip install clang-format。"""
+    """clang-format 不可用时,proposal 应提示 python scripts/install_tool_runtime.py。"""
     r = code_format.format(str(unformatted_cpp))
     assert r["ok"] is False
     assert r["proposal"]
-    assert "pip install clang-format" in r["proposal"]
+    assert "python scripts/install_tool_runtime.py" in r["proposal"]
 
 
 # ── 12. ruff 不安装 → proposal 含安装提示 ────────
 
 
 def test_format_ruff_not_installed(unformatted_py: Path, no_ruff):
-    """ruff 不可用 → ok=False + 提示 pip install ruff。"""
+    """ruff 不可用 → ok=False + 提示 python scripts/install_tool_runtime.py。"""
     r = code_format.format(str(unformatted_py))
     assert r["ok"] is False
     assert r["error"] == "ruff 未安装"
-    assert "pip install ruff" in r["proposal"]
+    assert "python scripts/install_tool_runtime.py" in r["proposal"]
 
 
 # ── 13. FunctionTool 包装: record_and_run 模板 ───
@@ -578,8 +578,8 @@ def test_format_crlf_source_binary_passthrough(tmp_path: Path, fake_clang_format
 # ── 21. ruff 调用走 python -m,不走路径检测 ──────
 
 
-def test_format_ruff_uses_python_m_directly(monkeypatch, unformatted_py: Path):
-    """ruff 调用必须用 ``[sys.executable, "-m", "ruff", "format", ...]``。"""
+def test_format_ruff_uses_bundled_native_binary(monkeypatch, unformatted_py: Path):
+    """The fixed Rust executable must not search host Python or user site-packages."""
     captured: dict = {}
 
     def fake_run(cmd, **kwargs):
@@ -591,11 +591,8 @@ def test_format_ruff_uses_python_m_directly(monkeypatch, unformatted_py: Path):
     code_format.format(str(unformatted_py))
 
     cmd = captured["cmd"]
-    assert cmd[0] == sys.executable, f"应走 sys.executable,实际: {cmd[0]}"
-    assert "-m" in cmd
-    assert "ruff" in cmd
+    assert cmd[:1] == code_format.bundled_binary("ruff")
     assert "format" in cmd
-    assert not any(part.endswith("ruff.exe") for part in cmd)
 
 
 # ── 22. 编码字节级保真 (GBK / UTF-8 BOM) ──
@@ -694,108 +691,29 @@ def test_format_accepts_legacy_style(unformatted_cpp: Path, fake_clang_format_ru
     assert "IndentWidth: 4" in style_arg
 
 
-# ── 24. _find_clang_format 定位顺序(解释器环境优先) ──
+# ── Bundled executable discovery ─────────────────────────────────────
 
 
-def _exe_name() -> str:
-    return "clang-format.exe" if sys.platform == "win32" else "clang-format"
+def test_find_clang_format_uses_runtime_package(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tools import _tool_runtime
+
+    root = tmp_path / "runtime"
+    monkeypatch.setattr(_tool_runtime, "runtime_root", lambda: root)
+    executable = "clang-format.exe" if sys.platform == "win32" else "clang-format"
+    native = root / "python/Lib/site-packages/clang_format/data/bin" / executable
+    native.parent.mkdir(parents=True)
+    native.write_bytes(b"MZ")
+    assert code_format._find_clang_format() == [str(native)]
 
 
-@pytest.fixture
-def isolated_clang_format_prefix(monkeypatch, tmp_path: Path):
-    """路径查找测试不依赖运行测试的 Python 环境。"""
-    monkeypatch.setattr(code_format.sys, "prefix", str(tmp_path))
+def test_find_clang_format_does_not_use_host(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tools import _tool_runtime
 
-
-@pytest.mark.skipif(sys.platform != "win32", reason="包内 exe 布局仅 Windows")
-def test_find_clang_format_prefers_bundled_binary(
-    monkeypatch, tmp_path: Path, isolated_clang_format_prefix
-):
-    """包内二进制优先于解释器同目录、Scripts 和 PATH。"""
-    monkeypatch.setattr(code_format.sys, "executable", str(tmp_path / "python.exe"))
-    bundled = (
-        tmp_path / "Lib" / "site-packages" / "clang_format" / "data" / "bin"
-        / "clang-format.exe"
-    )
-    bundled.parent.mkdir(parents=True)
-    bundled.write_bytes(b"MZ")
-    (tmp_path / "clang-format.exe").write_bytes(b"MZ")
-    scripts = tmp_path / "Scripts"
-    scripts.mkdir()
-    (scripts / "clang-format.exe").write_bytes(b"MZ")
-    monkeypatch.setattr(code_format.shutil, "which", lambda n: "global-clang-format")
-
-    assert code_format._find_clang_format() == [str(bundled)]
-
-
-def test_find_clang_format_prefers_current_env_sibling(
-    monkeypatch, tmp_path: Path, isolated_clang_format_prefix
-):
-    """venv 布局:pip 入口与 python 同目录 → 直接命中,不问 PATH。"""
-    py = tmp_path / ("python.exe" if sys.platform == "win32" else "python")
-    exe = tmp_path / _exe_name()
-    exe.write_bytes(b"MZ")
-    monkeypatch.setattr(code_format.sys, "executable", str(py))
-    monkeypatch.setattr(code_format.shutil, "which", lambda n: None)
-
-    assert code_format._find_clang_format() == [str(exe)]
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="conda Scripts/ 布局仅 Windows")
-def test_find_clang_format_conda_scripts_layout(
-    monkeypatch, tmp_path: Path, isolated_clang_format_prefix
-):
-    """conda 布局:python.exe 在 env 根,pip 入口在 <env>/Scripts/。"""
-    monkeypatch.setattr(code_format.sys, "executable", str(tmp_path / "python.exe"))
-    scripts_exe = tmp_path / "Scripts" / "clang-format.exe"
-    scripts_exe.parent.mkdir()
-    scripts_exe.write_bytes(b"MZ")
-    monkeypatch.setattr(code_format.shutil, "which", lambda n: None)
-
-    assert code_format._find_clang_format() == [str(scripts_exe)]
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="候选双命中场景需拼 win32 布局")
-def test_find_clang_format_sibling_shadows_scripts(
-    monkeypatch, tmp_path: Path, isolated_clang_format_prefix
-):
-    """同目录与 Scripts/ 同时存在时,同目录(venv 布局)优先。"""
-    monkeypatch.setattr(code_format.sys, "executable", str(tmp_path / "python.exe"))
-    sibling = tmp_path / "clang-format.exe"
-    sibling.write_bytes(b"MZ")
-    scripts = tmp_path / "Scripts"
-    scripts.mkdir()
-    (scripts / "clang-format.exe").write_bytes(b"MZ")
-    monkeypatch.setattr(code_format.shutil, "which", lambda n: None)
-
-    assert code_format._find_clang_format() == [str(sibling)]
-
-
-def test_find_clang_format_falls_back_to_which(
-    monkeypatch, tmp_path: Path, isolated_clang_format_prefix
-):
-    """当前环境未安装 → shutil.which 全局兜底。"""
-    global_exe = tmp_path / "global" / _exe_name()
-    global_exe.parent.mkdir()
-    global_exe.write_bytes(b"MZ")
-    # 解释器指向空目录:同级/Scripts 候选均不存在
-    monkeypatch.setattr(
-        code_format.sys, "executable", str(tmp_path / "nowhere" / "python")
-    )
-    monkeypatch.setattr(code_format.shutil, "which", lambda n: str(global_exe))
-
-    assert code_format._find_clang_format() == [str(global_exe)]
-
-
-def test_find_clang_format_returns_empty_when_absent(
-    monkeypatch, tmp_path: Path, isolated_clang_format_prefix
-):
-    """所有候选均落空 → 返回 []。"""
-    monkeypatch.setattr(
-        code_format.sys, "executable", str(tmp_path / "nowhere" / "python")
-    )
-    monkeypatch.setattr(code_format.shutil, "which", lambda n: None)
-
+    monkeypatch.setattr(_tool_runtime, "runtime_root", lambda: tmp_path / "missing")
     assert code_format._find_clang_format() == []
 
 

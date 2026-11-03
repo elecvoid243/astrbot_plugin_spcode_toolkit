@@ -99,7 +99,7 @@ from .tools.worktree_activation import reset as _reset_worktree_activation
 _DEFAULT_CONFIG = {
     "es_path": "",  # Everything es.exe 路径（空值由 AstrBot 内置 external_tools 默认路径填充）
     "git_path": "",  # git 可执行文件绝对路径;留空走系统 PATH
-    "cppcheck_path": "",  # cppcheck.exe 路径（空值由 AstrBot 内置 external_tools 默认路径填充）
+    "cppcheck_path": "",  # 兼容历史配置；cppcheck 固定由独立运行包提供
     "cppcheck_shortcircuit": "error",  # cppcheck 短路策略：error/warning/never（仅 auto 模式生效）
     "cppcheck_enable": [],  # cppcheck 启用的额外检查类目（空=只报 error）:warning/style/performance/portability
     "codegraph_enabled": True,  # 是否启用 codegraph MCP 集成
@@ -142,7 +142,7 @@ _CORE_PROVIDES_FILE_REMOVE = False
     "astrbot_plugin_spcode_toolkit",
     "elecvoid243",
     ("spcode 开发工具箱 — 提供实用开发工具, 部分实现基于Irmia DevKit插件。"),
-    "v2.32.1",
+    "v2.33.0",
 )
 class SPCodeToolkit(star.Star):
     def __init__(self, context: star.Context, config: dict = None) -> None:

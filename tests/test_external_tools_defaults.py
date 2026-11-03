@@ -16,7 +16,6 @@ def test_external_tool_defaults_use_astrbot_root(
 
     assert defaults == {
         "es_path": str(tmp_path / "external_tools" / "Everything" / "es.exe"),
-        "cppcheck_path": str(tmp_path / "external_tools" / "cppcheck" / "cppcheck.exe"),
     }
 
 

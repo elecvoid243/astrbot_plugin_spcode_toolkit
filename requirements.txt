@@ -1,7 +1,4 @@
-ruff
-clang-format
-send2trash
-pywin32>=306; sys_platform == "win32"
-# Vivado MCP 0.3.27 requires MCP SDK 2.x; install it with scripts/install_vivado_mcp.py.
-crap4py>=0.1.1,<0.2
-lizard>=1.7
+# Tool dependencies live in the standalone runtime, not AstrBot's environment.
+# Build: python scripts/install_tool_runtime.py
+# Offline deployment: extract spcode-tool-runtime-win-amd64.zip in the plugin root.
+# See scripts/runtime-requirements.txt for the pinned runtime dependencies.

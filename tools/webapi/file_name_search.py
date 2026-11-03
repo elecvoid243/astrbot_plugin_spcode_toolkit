@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from python_ripgrep import files as rg_files
+from .._runtime_search import files as rg_files
 
 from ._helpers import (
     _JSONResponseCompat,

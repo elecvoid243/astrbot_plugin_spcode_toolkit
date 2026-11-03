@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.32.1** · Author: elecvoid243 · 最后更新: 2026-10-31
+> **当前版本: v2.33.0** · Author: elecvoid243 · 最后更新: 2026-11-04
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -10,7 +10,7 @@
 - **项目绝对路径**: `F:\github\astrbot_plugin_spcode_toolkit`
 - **项目类型**: AstrBot 插件（Python）
 - **Python 版本**: 3.10+（用到 `list[str]`、`X | None` 等内置泛型）
-- **依赖管理**: `requirements.txt`（含 lint 工具与运行时依赖：`ruff`、`clang-format`、`crap4py`、`lizard`、`send2trash`；AstrBot 宿主环境装运行时依赖）
+- **依赖管理**: 工具依赖锁定在 `scripts/runtime-requirements.lock`，部署到 `runtime/python`；`requirements.txt` 仅保留宿主依赖说明，不向 AstrBot 环境安装工具依赖
 - **测试框架**: pytest
 - **目标平台**: 以 Windows 为首选（`es.exe` / PowerShell 路径）；Linux/macOS 有 fallback
 - **仓库**: https://github.com/elecvoid243/astrbot_plugin_spcode_toolkit
@@ -146,6 +146,14 @@ pytest tests/ --cov=tools --cov-report=term-missing
 
 将项目根目录放入 AstrBot 插件目录，启动 AstrBot 即可加载 `main.py`。本地开发可用符号链接而非复制。
 
+### 独立工具运行环境（v2.33.0，Windows x64）
+
+- 构建：在插件根目录运行 `python scripts/install_tool_runtime.py --archive dist/spcode-tool-runtime-win-amd64.zip`。构建器下载并校验官方 CPython 嵌入式发行包，不创建 venv；`install_vivado_mcp.py` 为同一构建器的兼容入口。
+- 离线部署：把上述 ZIP 解压到插件根目录，确认存在 `runtime/python/python.exe` 和 `runtime/manifest.json`，再重启 AstrBot。解释器、标准库、工具依赖与 MSVC DLL 随包分发。
+- 修改依赖时编辑 `scripts/runtime-requirements.txt`，通过 `--requirements scripts/runtime-requirements.txt` 构建并核验，再同步 `scripts/runtime-requirements.lock`。不要把工具依赖加回宿主的 `requirements.txt`。
+- 调用入口集中在 `tools/_tool_runtime.py`；`_runtime_worker.py` 仅接受固定操作。缺失运行包时返回结构化错误，不得回退到宿主 Python、用户 site-packages 或 PATH 中的工具。
+- 修改运行环境或调用入口后，运行 `pytest tests/test_tool_runtime.py tests/test_tool_runtime_integration.py tests/test_install_tool_runtime.py`。集成用例必须真实调用运行包，包含目录迁移、清空宿主环境变量、MCP 初始化与工具执行验证；业务单元测试的 worker 上下文 mock 由 `tests/conftest.py` 管理。
+
 ## 目录结构与架构
 
 ```text
@@ -153,7 +161,8 @@ astrbot_plugin_spcode_toolkit/
 ├── main.py                       # 插件入口：注册工具/命令/事件 + L1 鉴权 + 多个 @filter.on_llm_request 钩子
 ├── metadata.yaml                 # 插件元信息（AstrBot 加载识别）
 ├── _conf_schema.json             # 配置 schema（分组结构，_flatten_config 拍平）
-├── requirements.txt              # lint + 运行时依赖：ruff, clang-format, crap4py, lizard, send2trash
+├── requirements.txt              # 宿主依赖说明；工具依赖见 scripts/runtime-requirements.lock
+├── runtime/                      # 自带 CPython 与工具依赖（构建产物，不纳入 Git）
 ├── README.md                     # 项目说明（面向用户/社区）
 ├── CHANGELOG.md                  # 更新日志（Dashboard 插件页「更新日志」读取）
 ├── AGENTS.md                     # 本文件（面向 coding agent）
@@ -511,7 +520,7 @@ AstrBot 主仓库（`all` 分支）已内置 `astrbot_file_remove` 工具（`loc
 10. **路径安全**：任何涉及用户输入路径的代码，先调用 `_path_safety` 校验，**不要**自己实现路径判断
 11. **Web API 参数安全**：`?worktree=` 等用户控制的路径参数，必须经过 `_validate_worktree_param`（位于 `tools/_helpers.py`）的 6 步防御链：**关键不变量 - git-common-dir 不匹配 = 直接拒绝**
 12. **配置拍平**：`_conf_schema.json` 是分组结构，`main.py._flatten_config()` 会把嵌套分组拍平为顶层键（如 `codegraph.codegraph_enabled` -> `codegraph_enabled`）。新增配置项时保持此约定
-13. **版本号统一**：当前版本统一为 **v2.32.1**。发布时同步更新 `metadata.yaml` 的 `version` 字段、`main.py` 的 `@register` 版本、README 与本文档的当前版本，并在 `CHANGELOG.md` 补一条对应版本的记录（Dashboard 插件页的「更新日志」直接读该文件）
+13. **版本号统一**：当前版本统一为 **v2.33.0**。发布时同步更新 `metadata.yaml` 的 `version` 字段、`main.py` 的 `@register` 版本、README 与本文档的当前版本，并在 `CHANGELOG.md` 补一条对应版本的记录（Dashboard 插件页的「更新日志」直接读该文件）
 
 ## Project 加载 — 静默变体 (2026-07-28)
 
@@ -756,4 +765,4 @@ pytest tests/ --cov=tools                    # 覆盖率
 
 ---
 
-> Author: elecvoid243 · 本文档同步至 v2.32.1 (2026-10-31)
+> Author: elecvoid243 · 本文档同步至 v2.33.0 (2026-11-04)

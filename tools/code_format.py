@@ -54,17 +54,16 @@ import difflib
 import json
 import logging
 import re
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 from ._helpers import (
     _NO_WINDOW_KWARGS,
     _decode_text_bytes,
-    _get_console_python,
     proposal_reply,
 )
+
+from ._tool_runtime import bundled_binary, runtime_tool
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +170,7 @@ _DIFF_PREVIEW_LINES = 20
 # ── 公开 API ────────────────────────────────────────
 
 
+@runtime_tool("code_format")
 def format(
     filepath: str,
     formatter: str = "auto",
@@ -316,25 +316,16 @@ def _supported_extensions() -> list[str]:
 
 # ── ruff 路径 ────────────────────────────────────────
 #
-# 设计变更(v2.15,2026-07-01):不再查找 ruff 二进制路径,直接
-# ``[sys.executable, "-m", "ruff", ...]``。这样:
-#   1. 无需 ``shutil.which`` 走 PATHEXT 解析,彻底避免 .bat/.cmd wrapper 顶替
-#      (原因 A:pythonw 模式下弹 cmd 黑窗的根因之一)
-#   2. 无需 ``_find_ruff`` 路径检测函数
-#   3. ruff 必须以 pip 包形式安装(``pip install ruff``),这是项目
-#      requirements.txt 里已声明的依赖
-#
-# 仍保留 ``**_NO_WINDOW_KWARGS`` 双保险,防止 ruff 内部 helper 进程
-# 触发 cmd 黑窗(原因 B/E 的兜底)。
+# 运行包内的 Scripts/ruff.exe 是 Rust 原生程序,不是 pip 的 Python 启动器。
+# 固定使用其绝对路径,避免 ruff.__main__ 在包损坏时查找用户目录的其它安装。
+# 版本锁定于 scripts/runtime-requirements.lock,子进程始终携带隐藏窗口标志。
 
 
 def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
-    """Python: 直接调 ``python -m ruff format``。
+    """Python: 调用运行包内的 Ruff 原生程序。
 
     设计要点:
-      - **不**查找 ruff 二进制路径。ruff 必须是 pip 包
-        (``pip install ruff``),通过 ``python -m ruff`` 走 Python 解释器,
-        避免 ``shutil.which`` 的 PATHEXT 风险(.bat 顶替 → cmd.exe 黑窗)。
+      - 固定使用运行包内的原生程序,不搜索宿主、PATH 或用户 site-packages。
       - indent 仅作 metadata(ruff 用自身默认配置,不读我们的 indent 参数)。
 
     Args:
@@ -348,15 +339,13 @@ def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
     before_bytes = p.read_bytes()
     file_size_before = len(before_bytes)
 
+    command = bundled_binary("ruff")
+    if not command:
+        return {"ok": False, "error": "运行包内缺少 ruff 原生程序，请运行 scripts/install_tool_runtime.py"}
+
     if check:
         # --check 不写回;--diff 输出 diff 文本(写到 stdout)
-        # WHY _get_console_python() 而非 sys.executable: pythonw.exe 是 GUI
-        # subsystem,启动 ruff 后 Rust runtime 会主动 AllocConsole() 弹黑框,
-        # CREATE_NO_WINDOW 无法阻止子进程主动行为;切到 CUI python.exe 即可。
-        args = [
-            _get_console_python(),
-            "-m",
-            "ruff",
+        args = command + [
             "format",
             "--check",
             "--diff",
@@ -364,7 +353,7 @@ def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
         ]
     else:
         # 直接格式化(写回原文件)
-        args = [_get_console_python(), "-m", "ruff", "format", str(p)]
+        args = command + ["format", str(p)]
 
     try:
         r = subprocess.run(
@@ -383,14 +372,17 @@ def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
         # FileNotFoundError(ruff 未装)/其他 → 一律"未安装"提示
         return proposal_reply(
             False,
-            "ruff 未安装,无法格式化 Python 文件。请运行: pip install ruff",
+            "ruff 未安装,无法格式化 Python 文件。请运行: python scripts/install_tool_runtime.py",
             error="ruff 未安装",
             evidence={"python_file": str(p), "exception": str(e)},
             options=[
-                "pip install ruff",
+                "python scripts/install_tool_runtime.py",
                 "切换到 formatter=clang-format(不适用,仅 C/C++/Java/JS/TS/C#)",
             ],
         )
+
+    if r.returncode not in (0, 1, 2) or (r.returncode == 1 and (not check or not r.stdout)):
+        return {"ok": False, "error": f"ruff 执行失败 ({r.returncode}): {r.stderr.strip()[:2000]}"}
 
     # ── 解析结果 ──
     # ruff format 返回码语义:
@@ -446,18 +438,8 @@ def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
 # Spec: docs/superpowers/specs/2026-08-14-clang-format-unify-design.md
 #
 # 设计要点:
-#   1. clang-format 以 pip 包形式安装(requirements.txt 已声明)。插件随 AstrBot
-#      运行在 AstrBot 自带的虚拟环境里,pip 包装在**同一个 env**,可执行入口与
-#      python 解释器同环境。因此定位以**当前解释器**为起点,不依赖
-#      AstrBot 主目录/cwd 解析(ASTRBOT_ROOT 变更、desktop 打包布局等都不影响):
-#        a. ``Path(sys.executable).parent / clang-format(.exe)``
-#           —— venv 布局:python.exe 与 pip 入口同在 <env>/Scripts/
-#        b. Windows 再试 ``<...>/Scripts/clang-format.exe`` —— conda 布局兼容:
-#           python.exe 在 <env> 根,pip 入口在 <env>/Scripts/
-#        c. ``shutil.which("clang-format")`` 兜底(dev 环境全局安装)
-#      命中即返回**绝对路径**,不走 PATH/PATHEXT 解析 → 不存在 .bat/.cmd wrapper
-#      顶替风险;pip 包装的是 .exe 二进制(非 .bat/.cmd),CREATE_NO_WINDOW 即可
-#      抑制黑框。
+#   1. clang-format 来自 runtime/python/Lib/site-packages/clang_format/data/bin/。
+#      固定使用原生二进制,不执行 pip 的绝对路径启动器,不搜索宿主或 PATH。
 #   2. 永远 **二进制 stdin/stdout** 调用:读原文件 bytes → stdin → stdout bytes
 #      直接写回。clang-format 对 stdin 字节流透明传递(不重编码),GBK 源文件、
 #      UTF-8 BOM 都保持字节级保真(astyle 时代的编码 workaround 全部移除)。
@@ -471,40 +453,9 @@ def _format_with_ruff(p: Path, *, check: bool, indent: int) -> dict:
 # Author: elecvoid243, 2026-08-14
 
 
-def _current_env_executable_candidates(name: str) -> list[str]:
-    """当前运行解释器所在环境中 ``name`` 可执行文件的候选绝对路径(已过滤存在项)。
-
-    - venv 布局(Windows): ``<env>/Scripts/{name}.exe`` 与 python.exe 同目录
-    - conda 布局(Windows): python.exe 在 ``<env>`` 根,pip 入口在 ``<env>/Scripts/``
-    - POSIX(venv/conda 一致): ``<env>/bin/{name}``
-    """
-    base = Path(sys.executable).resolve().parent
-    exe = f"{name}.exe" if sys.platform == "win32" else name
-    candidates = [base / exe]
-    if sys.platform == "win32":
-        candidates.append(base / "Scripts" / exe)
-    return [str(c) for c in candidates if c.is_file()]
-
-
 def _find_clang_format() -> list[str]:
-    """查找 clang-format:包内二进制 → 解释器同目录 → Scripts/ → PATH。"""
-    if sys.platform == "win32":
-        bundled = (
-            Path(sys.prefix)
-            / "Lib"
-            / "site-packages"
-            / "clang_format"
-            / "data"
-            / "bin"
-            / "clang-format.exe"
-        )
-        if bundled.is_file():
-            return [str(bundled)]
-    found = _current_env_executable_candidates("clang-format")
-    if found:
-        return found[:1]
-    which_hit = shutil.which("clang-format")
-    return [which_hit] if which_hit else []
+    """Select the bundled native binary; never probe the host or PATH."""
+    return bundled_binary("clang-format")
 
 
 def _normalize_clang_format_options(
@@ -682,11 +633,11 @@ def _format_with_clang_format(
         return proposal_reply(
             False,
             "clang-format 未安装,无法格式化 C/C++/Java/JS/TS/C# 文件。"
-            "请运行: pip install clang-format",
+            "请运行: python scripts/install_tool_runtime.py",
             error="clang-format 未安装",
             evidence={"file": str(p)},
             options=[
-                "pip install clang-format",
+                "python scripts/install_tool_runtime.py",
                 "切换到 formatter=ruff(不适用,仅 Python)",
             ],
         )
@@ -864,7 +815,6 @@ __all__ = [
     "CLANG_FORMAT_OPTION_SPEC",
     "_detect_formatter",
     "_supported_extensions",
-    "_current_env_executable_candidates",
     "_find_clang_format",
     "_normalize_clang_format_options",
     "_resolve_clang_format_style",

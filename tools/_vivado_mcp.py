@@ -9,11 +9,10 @@
 
 from __future__ import annotations
 
-import importlib.util
 import logging
 import os
-import sys
-from pathlib import Path
+
+from ._tool_runtime import invoke, runtime_environment, runtime_python
 
 logger = logging.getLogger(__name__)
 
@@ -27,27 +26,18 @@ def detect_vivado_launcher() -> dict | None:
 
     Returns:
         {"type": "stdio", "command": str, "args": list[str]} 或 None (未安装)。
-        Prefers the isolated environment, then the current interpreter.
+        Uses the standalone runtime exclusively.
     """
-    isolated_root = Path(__file__).resolve().parents[1] / ".venv-vivado"
-    isolated_python = isolated_root / (
-        "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
-    )
-    if isolated_python.is_file():
-        return {
-            "type": "stdio",
-            "command": str(isolated_python),
-            "args": ["-m", "vivado_mcp"],
-        }
-    if importlib.util.find_spec("vivado_mcp") is None:
+    python = runtime_python()
+    if python is None:
         logger.warning(
-            "Vivado MCP is unavailable; run python scripts/install_vivado_mcp.py in the plugin repository."
+            "Vivado MCP runtime is unavailable; run python scripts/install_tool_runtime.py."
         )
         return None
     return {
         "type": "stdio",
-        "command": sys.executable,
-        "args": ["-m", "vivado_mcp"],
+        "command": str(python),
+        "args": ["-I", "-m", "vivado_mcp"],
     }
 
 
@@ -66,7 +56,7 @@ def build_env(*, vivado_executable: str) -> dict[str, str]:
         环境变量 dict, 为空字符串/不存在 → {} (让 vivado-mcp 自动检测);
         存在 → {"VIVADO_PATH": 正斜杠路径}
     """
-    env: dict[str, str] = {}
+    env = runtime_environment()
     if vivado_executable and os.path.isfile(vivado_executable):
         env["VIVADO_PATH"] = normalize_path(vivado_executable)
     return env
@@ -91,13 +81,11 @@ def find_vivado_executable(*, configured: str = "") -> str:
     env_path = os.environ.get("VIVADO_PATH", "")
     if env_path and os.path.isfile(env_path):
         return normalize_path(env_path)
-    try:
-        from vivado_mcp.config import find_vivado
-
-        return find_vivado()
-    except (FileNotFoundError, ImportError) as e:
-        raise VivadoNotFoundError(
-            f"未找到 Vivado 安装。请设置 VIVADO_PATH 环境变量, "
-            f"或在 spcode 配置的 vivado_executable 字段填入 Vivado 路径。"
-            f" (底层错误: {e})"
-        ) from e
+    result = invoke("find_vivado", {})
+    if result.get("ok"):
+        return result["path"]
+    raise VivadoNotFoundError(
+        "未找到 Vivado 安装。请设置 VIVADO_PATH 环境变量, "
+        "或在 spcode 配置的 vivado_executable 字段填入 Vivado 路径。"
+        f" (底层错误: {result.get('error')})"
+    )
