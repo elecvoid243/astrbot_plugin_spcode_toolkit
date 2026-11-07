@@ -232,7 +232,7 @@
     "items": {
       "plan_mode_blocked_tools": {
         "description": "plan模式下的工具黑名单 — /plan 激活时禁用执行的工具名",
-        "hint": "禁用写工具的执行，让LLM 在 plan 模式下只能只读探索。默认走 strict 模式，禁用所有 spcode 写工具 + AstrBot 内建文件写编辑工具。",
+        "hint": "禁用写工具的执行，让LLM 在 plan 模式下只能只读探索。默认走 strict 模式，禁用所有 spcode 写工具 + AstrBot 内建文件写编辑工具。astrbot_execute_shell 与 astrbot_shell_session 始终保留：Windows 下 shell 在只读沙盒内运行，其他平台由工具自身拒绝写入。",
         "type": "list",
         "item": {
           "type": "string",
@@ -251,8 +251,6 @@
           "astrbot_inta_shell_stop",
           "astrbot_file_write_tool",
           "astrbot_file_edit_tool",
-          "astrbot_execute_shell",
-          "astrbot_shell_session",
           "mcp_vivado__add_files",
           "mcp_vivado__close_project",
           "mcp_vivado__create_project",

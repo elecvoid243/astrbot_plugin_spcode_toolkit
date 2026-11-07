@@ -20,6 +20,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Shell execution stays enabled in plan mode. On Windows its call-time sandbox
+# enforces readonly; on other platforms the shell tool rejects writes itself.
+_READONLY_ALLOWED_SHELL_TOOLS = frozenset(
+    {"astrbot_execute_shell", "astrbot_shell_session"}
+)
+
 _FS_ACCESS_WARNING_EMITTED = False
 
 
@@ -97,7 +103,12 @@ class PlanModeController:
     # ── 钩子主入口(由 _plan_filter_tools 装饰方法调用) ──────────
 
     def filter_request(self, event, req: "ProviderRequest") -> None:
-        """readonly 时禁用写工具的执行 + 注入 reminder;否则 no-op。"""
+        """readonly 时禁用写工具的执行 + 注入 reminder;否则 no-op。
+
+        Shell tools are deliberately excluded from the blocked set: Windows
+        runs them inside the read-only file-access sandbox, and the tools
+        enforce readonly themselves on other platforms.
+        """
         umo = event.unified_msg_origin
         if not self.is_active(umo):
             # 离开 readonly 时重置 reminder,下次进入重新注入。
@@ -106,7 +117,14 @@ class PlanModeController:
         if not req.func_tool:
             return
 
-        blocked_tools = self._get_config().get("plan_mode_blocked_tools") or []
+        configured_tools = list(
+            self._get_config().get("plan_mode_blocked_tools") or []
+        )
+        blocked_tools = [
+            tool
+            for tool in configured_tools
+            if tool not in _READONLY_ALLOWED_SHELL_TOOLS
+        ]
         if blocked_tools:
             # 执行期拒绝而非移除 schema:工具段在 /plan <-> /build 切换前后
             # 保持字节不变,provider 侧前缀缓存不受模式切换影响;被拒调用会
@@ -114,6 +132,10 @@ class PlanModeController:
             req.denied_tools = set(req.denied_tools or ()) | set(blocked_tools)
             logger.debug(
                 f"[plan] 会话 {umo}: 已禁止 {len(blocked_tools)} 个写工具的执行调用"
+            )
+        elif configured_tools:
+            logger.debug(
+                f"[plan] 会话 {umo}: 仅配置了 shell 工具,保留其执行以支持只读探索"
             )
         else:
             logger.warning(

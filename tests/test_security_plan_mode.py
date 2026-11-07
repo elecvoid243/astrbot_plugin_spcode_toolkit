@@ -213,6 +213,47 @@ def test_filter_isolation_per_umo():
 # ── filter_request: plan 模式过滤 ─────────────────────────
 
 
+def test_filter_request_keeps_shell_enabled_in_plan_mode():
+    """plan 模式保留 shell 工具执行,即使旧配置仍列在 blocklist 中。"""
+    cfg = {
+        "plan_mode_blocked_tools": [
+            "astrbot_execute_shell",
+            "astrbot_shell_session",
+            "astrbot_file_remove",
+        ]
+    }
+    c = PlanModeController(get_config=lambda: cfg, get_core_config=lambda umo: {})
+    c.activate("umo-shell")
+    event = _make_event("umo-shell")
+    req = _make_req()
+    req.func_tool = _make_tool_set(
+        ["astrbot_execute_shell", "astrbot_shell_session", "astrbot_file_remove"]
+    )
+
+    c.filter_request(event, req)
+
+    assert req.denied_tools == {"astrbot_file_remove"}
+    assert [tool.name for tool in req.func_tool.tools] == [
+        "astrbot_execute_shell",
+        "astrbot_shell_session",
+        "astrbot_file_remove",
+    ]
+
+
+def test_filter_request_shell_only_blocklist_keeps_execution():
+    """旧配置只列 shell 时不得把整个 plan 黑名单视为空配置。"""
+    cfg = {"plan_mode_blocked_tools": ["astrbot_execute_shell"]}
+    c = PlanModeController(get_config=lambda: cfg, get_core_config=lambda umo: {})
+    c.activate("umo-shell-only")
+    event = _make_event("umo-shell-only")
+    req = _make_req()
+    req.func_tool = _make_tool_set(["astrbot_execute_shell"])
+
+    c.filter_request(event, req)
+
+    assert req.denied_tools == set()
+
+
 def test_filter_request_plan_mode_filters_tools():
     """plan 模式:blocked_tools 写入 req.denied_tools,schema 保持可见。"""
     cfg = {"plan_mode_blocked_tools": ["astrbot_file_remove"]}
@@ -346,6 +387,12 @@ def test_filter_request_reminder_appended_to_last_user_message():
     # 最后一条 user message 被追加
     assert "u2-original" in req.contexts[3]["content"]
     assert "PLAN_REMINDER_TEXT" in req.contexts[3]["content"]
+
+
+def test_shell_tools_not_blocked_by_default():
+    defaults = _load_plan_mode_blocked_defaults()
+    assert "astrbot_execute_shell" not in defaults
+    assert "astrbot_shell_session" not in defaults
 
 
 class TestVivadoBlockedInPlanMode:

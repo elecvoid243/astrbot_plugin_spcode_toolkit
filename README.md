@@ -173,7 +173,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `plan_mode_blocked_tools` | 字符串列表 | 见下 | `/plan` 激活时禁用执行的工具名（schema 仍对 LLM 可见，调用返回 Permission denied）。默认走 strict 模式，禁用所有 spcode 写工具 + AstrBot 内建文件写编辑工具 |
+| `plan_mode_blocked_tools` | 字符串列表 | 见下 | `/plan` 激活时禁用执行的工具名（schema 仍对 LLM 可见，调用返回 Permission denied）。默认走 strict 模式，禁用所有 spcode 写工具 + AstrBot 内建文件写编辑工具；`astrbot_execute_shell` / `astrbot_shell_session` 始终保留（Windows 下在只读沙盒内运行，其他平台由工具自身拒绝写入） |
 | `plan_mode_reminder` | 文本 | 内置英文模板 | 切换到 plan 模式时给 LLM 的提醒文本，作为 `<system-reminder>` 注入。支持 `{blocked}` 占位符替换为实际黑名单列表。留空则不注入 |
 
 默认 `plan_mode_blocked_tools`：
