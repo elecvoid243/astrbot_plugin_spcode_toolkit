@@ -4,6 +4,12 @@ spcode 工具箱的版本变更记录。格式参考 [Keep a Changelog](https://
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。本文件由 AstrBot Dashboard 插件页的
 「更新日志」按钮直接读取并渲染。
 
+## [v2.34.1] - 2026-11-08
+
+### 修复
+
+- plan 模式不再禁用 `astrbot_execute_shell` / `astrbot_shell_session`：只读模式保留 shell 执行，旧配置中仍列出的这两项会被忽略；Windows 下由只读文件沙盒限制写入，其他平台由 shell 工具自身拒绝写入。
+
 ## [v2.34.0] - 2026-11-07
 
 ### 变更
