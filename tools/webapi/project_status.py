@@ -18,6 +18,22 @@ if TYPE_CHECKING:
 _BOOT_ID = f"{os.getpid()}-{_time.time_ns()}"
 
 
+def _agents_md_loaded(plugin: "SPCodeToolkit", umo: str | None) -> bool:
+    """Return whether ``umo`` currently has an AGENTS.md injection.
+
+    Args:
+        plugin: Plugin instance (lightweight test doubles may omit the
+            agentsmd subsystem).
+        umo: Session origin to query.
+
+    Returns:
+        True when the agentsmd subsystem holds state for this umo.
+    """
+    agentsmd = getattr(plugin, "agentsmd", None)
+    state = getattr(agentsmd, "state", None)
+    return bool(umo and state is not None and state.get(umo) is not None)
+
+
 async def handle(
     plugin: "SPCodeToolkit",
     *,
@@ -89,6 +105,7 @@ async def handle(
                     "umo": umo_param,
                     "all_loaded_count": all_count,
                     "skipped_substeps": [],
+                    "agents_md": False,
                     "boot_id": _BOOT_ID,
                 },
             }
@@ -103,9 +120,8 @@ async def handle(
                 # 2026-07-25: 暴露给前端,空 list 表示未跳过任何子步骤。
                 # 旧 state(无 skipped_substeps 字段)用 .get 兜底默认空 set,
                 # 与行为契约一致(默认 load = 未跳过任何子步骤)。
-                "skipped_substeps": sorted(
-                    info.get("skipped_substeps", set())
-                ),
+                "skipped_substeps": sorted(info.get("skipped_substeps", set())),
+                "agents_md": _agents_md_loaded(plugin, umo_param),
                 "boot_id": _BOOT_ID,
             },
         }
@@ -125,6 +141,7 @@ async def handle(
                 "umo": None,
                 "all_loaded_count": 0,
                 "skipped_substeps": [],
+                "agents_md": False,
                 "boot_id": _BOOT_ID,
             },
         }
@@ -141,9 +158,8 @@ async def handle(
             "loaded_at": recent_info.get("loaded_at"),
             "umo": recent_umo,
             "all_loaded_count": len(all_items),
-            "skipped_substeps": sorted(
-                recent_info.get("skipped_substeps", set())
-            ),
+            "skipped_substeps": sorted(recent_info.get("skipped_substeps", set())),
+            "agents_md": _agents_md_loaded(plugin, recent_umo),
             "boot_id": _BOOT_ID,
         },
     }

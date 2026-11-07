@@ -1,6 +1,6 @@
 # spcode 工具箱
 
-> **当前版本: v2.33.1** · 作者: elecvoid243 · [更新日志](CHANGELOG.md)
+> **当前版本: v2.34.0** · 作者: elecvoid243 · [更新日志](CHANGELOG.md)
 
 AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用工具，并附带一套供 Dashboard 消费的 Web API。
 
@@ -16,7 +16,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | 文件搜索 | `es_search` Everything/locate/fd/Python 兜底文件名搜索 |
 | 任务管理 | `todo_*` 6 工具，LLM 自我管理跨会话持久化任务清单 |
 | 交互式 Shell | `astrbot_inta_shell_*` 5 工具，多轮双向 Shell 会话管理 |
-| 项目加载 | `/project load|unload|status` 一键组合 agentsmd + codegraph |
+| 项目加载 | `/project load|unload|status` 加载目录；AGENTS.md 存在则注入，不自动生成、不自动初始化 codegraph |
 | Plan/Build 模式 | `/plan` 禁用写工具进入只读调研；`/build` 还原 |
 | Web API | 31 条 `/spcode/*` 路由，供 Dashboard 实时拉取项目状态/文件树/git 信息 |
 
@@ -83,7 +83,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 | 命令 | 描述 |
 |------|------|
-| `/project load <文件夹路径>` | 一键组合 `agentsmd init+load` + `codegraph init` + 注入 codegraph 优先使用指引。需同时启用 agentsmd 和 codegraph |
+| `/project load <文件夹路径>` | 加载项目目录，并把目录内已存在的 `AGENTS.md` 注入 system_prompt。不会自动生成 AGENTS.md，也不会自动执行 codegraph init |
 | `/project unload` | 清掉 AGENTS.md 注入，把 codegraph 默认项目指回配置值 |
 | `/project status` | 查看当前会话已加载项目信息 |
 
@@ -358,12 +358,12 @@ todo_clear()
 
 **迁移说明：** v2.6 之前的单工具 `todo_list(action=...)` 已废弃为 stub。`todo_modify` 仅在 v2.6 ~ v2.11 之间存在，v2.12 起彻底删除。升级到 v2.12 后，老 config 中显式列出的 `todo_modify` 会被 `filter_enabled_tools()` 报告为 `unknown`，引导用户改用 `todo_list` 组别名。
 
-### /project load & /project unload & /project status - 项目一键加载/卸载（v2.7+）
+### /project load & /project unload & /project status - 项目加载/卸载（v2.7+，2026-11-07 重设计）
 
-把"加载项目"从 4 步压缩为 1 步。需在配置中**同时**启用 agentsmd 和 codegraph。
+项目加载只有两件事：登记工作目录；如果目录内**已经存在** `AGENTS.md`，把它注入 system_prompt。加载不会生成 AGENTS.md，也不会自动初始化 codegraph 索引（后者请用 `/codegraph init` 或 WebUI 的 Codegraph 管理页手动执行）。
 
 ```text
-# 一键加载：自动执行 agentsmd init+load、codegraph init（建索引）、注入 codegraph 优先使用指引
+# 加载：登记目录；有 AGENTS.md 就注入，没有就跳过
 /project load C:/Users/me/projects/myapp
 
 # 卸载：清掉 AGENTS.md 注入，把 codegraph 默认项目指回配置中的 codegraph_project
@@ -373,11 +373,11 @@ todo_clear()
 /project status
 ```
 
-**前置条件**：`agentsmd_enabled = true` **AND** `codegraph_enabled = true`。任一关闭时命令会拒绝执行并提示。
+**功能开关**：`agentsmd_enabled = false` 时仍可加载项目，只是跳过 AGENTS.md 注入；`codegraph_enabled` 不再影响项目加载。
 
 **重复 load 防护**：当前会话已加载项目时再次 `/project load` 会被拒绝（需先 `/project unload`），避免半残状态。
 
-**注入行为**：加载成功后，system_prompt 末尾会追加"优先使用 codegraph 工具"指引，引导 LLM 在该项目中调用 `codegraph_explore` 进行语义搜索（codegraph ≥ 1.5 默认仅暴露该工具），而不是退而使用低效的 `astrbot_file_grep_tool`。
+**注入行为**：加载成功后，system_prompt 末尾会追加"优先使用 codegraph 工具"指引，引导 LLM 在该项目中调用 `codegraph_explore` 进行语义搜索（codegraph ≥ 1.5 默认仅暴露该工具），而不是退而使用低效的 `astrbot_file_grep_tool`。该指引不依赖加载时初始化索引——索引由用户手动建立，未建立时 `codegraph_explore` 会返回可诊断的错误。
 
 ### /plan 与 /build - Plan/Build 模式（v2.8）
 

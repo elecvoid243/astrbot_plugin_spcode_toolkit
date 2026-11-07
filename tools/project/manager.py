@@ -1,28 +1,24 @@
 """/project 命令 handler(load/unload/status 流水线,PR-7 2026-06-23)。
 
-3 步 load 流水线:
-1. agentsmd (init 条件性 + load)  (委托 self._plugin.agentsmd.init/load)
-2. codegraph (init)  (委托 self._plugin.codegraph.init; 2026-08-15 起仅 init 建索引,
-   不再 set 切换 MCP 默认项目)
-3. state.put(umo, info)  记录状态
+2026-11-07 重设计后的 load 流水线只有两步:
+1. 路径校验 + 目录登记;
+2. 若目录内已存在 ``AGENTS.md``,注入到 system_prompt。
 
-任一失败 → 抛 ProjectLoadAbort → load_impl 捕获 → return。
+不再自动生成 ``AGENTS.md``(不调用 ``agentsmd.init``),也不再初始化
+codegraph 索引 —— 两者都是用户的显式动作(聊天命令或 WebUI 的
+Codegraph 管理页)。这条单一流水线同时服务 ``/project load`` 聊天命令
+与 ``POST /spcode/project-load`` webapi,避免两端语义漂移。
 
-可选 flag(2026-07-25 增强):
-- ``no_agentsmd``:跳过步骤 1/3(完整跳过 init+load)
-- ``no_codegraph``:跳过步骤 2/3(完整跳过 init)
-不传任何 flag → 完整执行全部 3 个子步骤。两个 flag 同时给 → 仅做
-路径校验 + 状态登记(空壳 load)。flag 顺序无关,允许放在 directory 之后。
-
-业务从 main.py:382-718(_project_router + project_load + _project_load_step
-+ _project_load_impl + project_unload + _project_unload_impl + project_status
-+ _project_status_impl + get_loaded_project)整段搬过来。
+`no_agentsmd` 仍作为显式 opt-out 保留;`no_codegraph` 仅保留参数以兼容
+旧调用方,实际不再有对应步骤。`replace=True` 时旧项目只在新路径完成
+校验与 AGENTS.md 注入后才被替换,失败的加载不会丢掉已加载项目。
 """
 
 from __future__ import annotations
 
 import asyncio
 import datetime as _datetime
+import logging
 import time as _time
 from pathlib import Path
 
@@ -35,6 +31,8 @@ from ..operation_progress import ProgressList
 from ..operation_progress import finish as _progress_finish
 from . import state as _state
 from .pipeline import ProjectLoadAbort, project_load_step
+
+logger = logging.getLogger(__name__)
 
 
 async def _ensure_project_dir(target: Path) -> tuple[bool, str]:
@@ -205,195 +203,43 @@ class ProjectManager:
     ):
         """Implementation of ``/project load <dir> [flags...]``.
 
-        Performs the multi-step project load: feature-flag check, duplicate
-        load guard, path safety, agentsmd init+load, codegraph init,
-        records the load into state, and finally yields a summary message.
+        Project load only registers the working directory and, when the
+        directory already contains an ``AGENTS.md``, injects that file into
+        the session's system prompt. It never generates ``AGENTS.md`` and
+        never initializes the codegraph index; both are explicit user
+        actions.
 
-        任一子步骤失败(yield 任何以 ``❌`` 开头的消息)→ 立即中止整个 load:
-        后续子方法不会被调用,state 不会被填充,
-        也不会 yield "✅ 项目已加载"。``⚠️`` 不算失败
-        (见 :func:`project_load_step`)。
-
-        跳过参数(均默认 ``False``,即完整执行):
-        - ``no_agentsmd``:跳过步骤 1/3 的 init + load(不动 agentsmd 子系统)。
-          对应的 feature-flag 校验(``agentsmd_enabled``)对该步骤不再生效,
-          用户显式选择跳过即跳过,与全局开关解耦。
-        - ``no_codegraph``:跳过步骤 2/3 的 init + set(不动 codegraph 子系统)。
-          同上,``codegraph_enabled`` 对该步骤不再生效。
-        两个 flag 同时给 → 仅做路径校验 + 状态登记(空壳 load)。
+        The chat command and the silent webapi path share
+        :meth:`_load_impl_silent_core`, so there is exactly one pipeline.
+        Results are collected first and yielded as a batch because the
+        remaining work is a single file read (no multi-minute steps to
+        stream).
 
         Args:
-            event: AstrBot 事件对象。
-            directory: 用户提供的项目目录路径。
-            no_agentsmd: 是否跳过 AGENTS.md 子步骤。
-            no_codegraph: 是否跳过 codegraph 子步骤。
-            create: 目录不存在时是否自动创建(含父目录)。默认 False。
-            git_init: 目录非 Git 仓库时是否自动 ``git init``。默认 False。
-            replace: 已加载其他项目时是否先卸载再加载(原子覆盖)。默认 False。
+            event: AstrBot event object.
+            directory: Project directory supplied by the user.
+            no_agentsmd: Skip AGENTS.md injection (legacy explicit opt-out).
+            no_codegraph: Accepted for backward compatibility; codegraph is
+                no longer part of the project-load pipeline.
+            create: Create the directory (with parents) when missing.
+            git_init: Run ``git init`` when the directory is not a repository.
+            replace: Replace an already-loaded project once the new path has
+                been validated and its AGENTS.md loaded.
 
         Yields:
-            Plain text messages for the user。
+            Plain text messages for the user.
         """
-        umo = event.unified_msg_origin
-        # 1. Feature flag 校验(仅校验"用户希望执行"的子集)
-        #    当用户显式 no_xxx 时,即使全局开关关闭也不应阻拦
-        #    (本步"该功能未启用"的判断就被用户主动 opt-out 取代了)。
-        if not no_agentsmd:
-            agentsmd_on = self._plugin._config.get("agentsmd_enabled", True)
-            if not agentsmd_on:
-                yield event.plain_result(
-                    "❌ AGENTS.md 功能未启用,但 /project load 仍请求执行 agentsmd 步骤。\n"
-                    "请在插件配置中打开 agentsmd_enabled,或加 no_agentsmd flag。"
-                )
-                return
-        if not no_codegraph:
-            codegraph_on = self._plugin._config.get("codegraph_enabled", True)
-            if not codegraph_on:
-                yield event.plain_result(
-                    "❌ codegraph 功能未启用,但 /project load 仍请求执行 codegraph 步骤。\n"
-                    "请在插件配置中打开 codegraph_enabled,或加 no_codegraph flag。"
-                )
-                return
-
-        # 2. 重复 load 处理(replace=True 时原子卸载旧项目以覆盖)
-        existing = _state.get(umo)
-        if existing is not None:
-            if not replace:
-                yield event.plain_result(
-                    f"❌ 当前会话已加载项目: {existing['directory']}\n"
-                    f"请先执行 /project unload,再 load 新项目。"
-                )
-                return
-            # replace: 在同一执行流里先卸载旧项目, 避免前端连发
-            # unload+load 两条命令的竞态(unload 的 state 清理是异步的,
-            # 紧随其后的 load 可能仍看到旧项目而触发上面的拦截)。
-            old_dir = existing.get("directory", "")
-            yield event.plain_result(f"⏳ 覆盖模式: 正在卸载旧项目 {old_dir} …")
-            # 与 unload_impl / webapi _silent_unload 一致: agentsmd.unload
-            # 是同步方法; 不调 codegraph.set_project(load 流程已不含 set
-            # 子步骤, 旧默认项目残留由用户后续 /codegraph set 管理)。
-            yield self._plugin.agentsmd.unload(event)
-            _state.pop(umo)
-            yield event.plain_result(f"✅ 旧项目已卸载, 继续加载新项目: {old_dir}")
-
-        # 3. 路径解析与安全校验
-        directory = strip_surrounding_quotes(directory)
-        target = Path(directory).resolve()
-        ok, reason = is_path_safe(
-            target,
-            user_blacklist=self._plugin._config.get("file_remove_blacklist"),
+        result = await self._load_impl_silent_core(
+            event,
+            directory,
+            no_agentsmd=no_agentsmd,
+            no_codegraph=no_codegraph,
+            create=create,
+            git_init=git_init,
+            replace=replace,
         )
-        if not ok:
-            yield event.plain_result(f"❌ 路径不允许: {reason}")
-            return
-
-        # 3.5 可选的目录创建 / Git 初始化(在路径安全校验之后、子步骤
-        #     流水线之前)。放在 is_path_safe 之后是为了先确认 resolve 后
-        #     的路径形态安全, 再 mkdir / git init, 避免对黑名单路径建目录。
-        #     create / git_init 默认 False, 加载已存在项目时这两步整体跳过,
-        #     行为与历史完全一致。
-        if create:
-            ok_create, msg_create = await _ensure_project_dir(target)
-            yield event.plain_result(msg_create)
-            if not ok_create:
-                return
-        if git_init:
-            ok_git, msg_git = await _ensure_git_repo(target)
-            yield event.plain_result(msg_git)
-            if not ok_git:
-                return
-
-        # 4. 多步加载(任一子步骤失败 → 立即中止,不再登记 state)
-        try:
-            # 步骤 1/3: agentsmd(init 条件性 + load)
-            if no_agentsmd:
-                yield event.plain_result(
-                    "⏭️ [1/3] AGENTS.md 步骤已跳过(用户指定 no_agentsmd)。"
-                )
-            else:
-                agents_md_path = target / "AGENTS.md"
-                if not agents_md_path.exists():
-                    yield event.plain_result(
-                        f"⏳ [1/3] AGENTS.md 不存在,正在 init: {target}"
-                    )
-                    async for msg in project_load_step(
-                        event,
-                        self._plugin.agentsmd.init(event, str(target)),
-                        "[1/3] AGENTS.md 初始化",
-                    ):
-                        yield msg
-                else:
-                    yield event.plain_result(
-                        f"ℹ️ [1/3] AGENTS.md 已存在,跳过 init: {agents_md_path}"
-                    )
-                yield event.plain_result(f"⏳ [1/3] 正在 load AGENTS.md: {target}")
-                async for msg in project_load_step(
-                    event,
-                    self._plugin.agentsmd.load(event, str(target)),
-                    "[1/3] AGENTS.md 加载",
-                ):
-                    yield msg
-
-            # 步骤 2/3: codegraph init(PR-6 委托给 manager; 2026-08-15 起
-            # 仅 init 建索引, 不再 set 切换 MCP 默认项目)
-            if no_codegraph:
-                yield event.plain_result(
-                    "⏭️ [2/3] codegraph 步骤已跳过(用户指定 no_codegraph)。"
-                )
-            else:
-                yield event.plain_result(f"⏳ [2/3] codegraph init: {target}")
-                async for msg in project_load_step(
-                    event,
-                    self._plugin.codegraph.init(event, str(target)),
-                    "[2/3] codegraph init",
-                ):
-                    yield msg
-        except ProjectLoadAbort:
-            return
-
-        # 5. 记录状态(仅在所有子步骤都成功后才登记)
-        #    同步记录用户显式 opt-out 的子步骤(2026-07-25),
-        #    on_llm_request 钩子据此决定是否注入对应子系统的提示文本。
-        loaded_at_ts = _time.time()
-        skipped: set[str] = set()
-        if no_agentsmd:
-            skipped.add("agentsmd")
-        if no_codegraph:
-            skipped.add("codegraph")
-        _state.put(
-            umo,
-            {
-                "directory": str(target),
-                "loaded_at": loaded_at_ts,
-                "skipped_substeps": skipped,
-            },
-        )
-
-        # 6. 总结消息(根据跳过的步骤动态调整)
-        if no_agentsmd and no_codegraph:
-            summary_lines = "  - 设定工作目录(无子步骤)"
-        elif no_agentsmd:
-            summary_lines = (
-                "  - 设定工作目录\n  - 载入 codegraph 索引\n  - (已跳过) AGENTS.md 注入"
-            )
-        elif no_codegraph:
-            summary_lines = (
-                "  - 设定工作目录\n"
-                "  - AGENTS.md 注入到 system_prompt\n"
-                "  - (已跳过) codegraph 索引"
-            )
-        else:
-            summary_lines = (
-                "  - 设定工作目录\n"
-                "  - AGENTS.md 注入到 system_prompt\n"
-                "  - 载入 codegraph 索引"
-            )
-        yield event.plain_result(
-            f"✅ 项目已加载: {target}\n"
-            f"已自动进行如下步骤:\n"
-            f"{summary_lines}\n"
-            f"\n若要卸载，请执行`/project unload`\n"
-        )
+        for message in result["substep_messages"]:
+            yield event.plain_result(message)
 
     async def unload_impl(self, event: AstrMessageEvent):
         """Implementation of ``/project unload``.
@@ -547,13 +393,15 @@ class ProjectManager:
         no_codegraph: bool = False,
         create: bool = False,
         git_init: bool = False,
+        replace: bool = False,
     ) -> dict:
         """``/project load`` 的静默变体,供 webapi 端点调用(2026-07-28 引入)。
 
         2026-08-06: 执行期间把每条子步骤消息镜像到
         :mod:`tools.operation_progress`(若端点层已 ``begin``),返回前写终态。
         未 ``begin`` 的直接调用(旧测试/旧调用方)自动 no-op。签名与返回
-        schema 不变,前端 ``useSpcodeProjectAutoLoad`` 零改动。
+        schema 只做增量扩展:``replace`` 控制原子覆盖,``agents_md`` 回报
+        AGENTS.md 是否注入;旧字段保持不变。
         """
         result = await self._load_impl_silent_core(
             event,
@@ -562,6 +410,7 @@ class ProjectManager:
             no_codegraph=no_codegraph,
             create=create,
             git_init=git_init,
+            replace=replace,
         )
         # 2026-08-07 bugfix:project_already_loaded 是幂等良性结果(目标状态
         # 已达成),进度记录必须写 done 而非 failed——否则 dashboard 轮询会把
@@ -588,103 +437,61 @@ class ProjectManager:
         no_codegraph: bool = False,
         create: bool = False,
         git_init: bool = False,
+        replace: bool = False,
     ) -> dict:
-        """``/project load`` 的静默变体,供 webapi 端点调用(2026-07-28 引入)。
+        """Shared project-load pipeline for chat and webapi callers.
 
-        与 :meth:`load_impl` 行为完全一致(feature flag 校验、路径校验、
-        3 步流水线、state 登记),**唯一差异**是不向 ``event`` 产出任何
-        聊天框可见消息——所有步骤结果收集到返回的 ``dict`` 里,供
-        dashboard / API 调用方直接读取。
-
-        为什么需要这个方法?
-            ``/project load`` 是用户通过聊天框输入的交互式命令,需要逐步
-            反馈每个子步骤的进度(``⏳ [1/3] ...``、``❌ ... 失败``、
-            ``✅ 项目已加载``)。但 dashboard 在加载项目时同样需要走完整
-            流水线,如果直接调 ``load_impl``,会让 ``event.plain_result``
-            把这些进度消息注入聊天框,造成不必要的噪音。dashboard 只需要
-            最终结构化结果(成功 / 失败 + 原因 + 数据),由前端自行决定
-            渲染方式(toast / 状态 chip / 错误弹窗)。
-
-        设计:
-            - **不是** ``async generator``——返回 ``dict``,调用方直接
-              ``await plugin.project.load_impl_silent(...)`` 拿到结果。
-            - 内部**仍然**通过 ``project_load_step`` 走 3 步流水线,
-              复用 ProjectLoadAbort 行为。子步骤 yield 的每条消息被
-              收集到 ``substep_messages`` 字段(供调用方排查失败用),
-              **不**经过 ``event.plain_result``(走 ``MagicMock`` 化的
-              silent_event 让 ``plain_result`` 退化为字符串)。
+        Behaviour (2026-11-07 redesign):
+        - Register the working directory for the umo.
+        - Inject ``<directory>/AGENTS.md`` only when the file already exists.
+        - Never generate ``AGENTS.md`` and never initialize codegraph.
+        - ``replace=True`` swaps projects only after the new path has been
+          validated and its AGENTS.md (if any) loaded, so a failed load keeps
+          the previously loaded project intact.
 
         Args:
-            event: 兼容 ``AstrMessageEvent`` 接口的对象(仅需
-                ``unified_msg_origin`` 属性 + ``plain_result`` 调用)。
-                webapi 端点传 ``MagicMock(unified_msg_origin=umo,
-                plain_result=lambda x: x)`` 即可。
-            directory: 用户提供的项目目录路径。
-            no_agentsmd: 是否跳过 AGENTS.md 子步骤。
-            no_codegraph: 是否跳过 codegraph 子步骤。
-            create: 目录不存在时是否自动创建(含父目录)。默认 False。
-            git_init: 目录非 Git 仓库时是否自动 ``git init``。默认 False。
+            event: Event-like object exposing ``unified_msg_origin`` and
+                ``plain_result``.
+            directory: Project directory supplied by the caller.
+            no_agentsmd: Skip AGENTS.md injection.
+            no_codegraph: Legacy flag kept for API compatibility; ignored.
+            create: Create the directory when missing.
+            git_init: Run ``git init`` when the directory is not a repository.
+            replace: Replace an already-loaded project on success.
 
         Returns:
-            结构化结果 dict,字段::
-
-                {
-                    "ok": bool,                # 整体成功与否
-                    "directory": str,          # resolve 后的绝对路径(失败时为 "")
-                    "loaded_at": float,        # 成功时为 time.time(),失败为 0
-                    "skipped_substeps": list[str], # 跳过的子步骤名(已 sort)
-                    "substep_messages": list[str], # 全部子步骤 yield 的消息(供调试)
-                    "reason": str | None,      # 失败 reason 码
-                    "previous_directory": str,  # 失败且因"重复 load"时,返回已加载目录
-                }
+            Structured result dict with ``ok``, ``directory``, ``loaded_at``,
+            ``skipped_substeps``, ``substep_messages``, ``reason``,
+            ``previous_directory`` and ``agents_md``.
         """
         umo = event.unified_msg_origin
         messages = ProgressList(umo)
-        failed_reason: str | None = None
         target_str = ""
         skipped: set[str] = set()
-        previous_directory = ""
 
-        # 1. Feature flag 校验
-        if not no_agentsmd:
-            agentsmd_on = self._plugin._config.get("agentsmd_enabled", True)
-            if not agentsmd_on:
-                return {
-                    "ok": False,
-                    "directory": "",
-                    "loaded_at": 0.0,
-                    "skipped_substeps": [],
-                    "substep_messages": messages,
-                    "reason": "agentsmd_disabled",
-                    "previous_directory": "",
-                }
-        if not no_codegraph:
-            codegraph_on = self._plugin._config.get("codegraph_enabled", True)
-            if not codegraph_on:
-                return {
-                    "ok": False,
-                    "directory": "",
-                    "loaded_at": 0.0,
-                    "skipped_substeps": [],
-                    "substep_messages": messages,
-                    "reason": "codegraph_disabled",
-                    "previous_directory": "",
-                }
-
-        # 2. 重复 load 拦截
-        if _state.get(umo) is not None:
-            previous_directory = _state.get(umo).get("directory", "")
+        def _result(
+            ok: bool,
+            reason: str | None,
+            *,
+            directory: str | None = None,
+            loaded_at: float = 0.0,
+            previous_directory: str = "",
+            agents_md: bool = False,
+        ) -> dict:
+            """Build the common result envelope for every exit path."""
             return {
-                "ok": False,
-                "directory": "",
-                "loaded_at": 0.0,
-                "skipped_substeps": [],
+                "ok": ok,
+                "directory": target_str if directory is None else directory,
+                "loaded_at": loaded_at,
+                "skipped_substeps": sorted(skipped),
                 "substep_messages": messages,
-                "reason": "project_already_loaded",
+                "reason": reason,
                 "previous_directory": previous_directory,
+                "agents_md": agents_md,
             }
 
-        # 3. 路径解析与安全校验
+        # 1. Path resolution + safety. Everything after this point may touch
+        #    the filesystem, so the blacklist check must come first.
         directory = strip_surrounding_quotes(directory)
         target = Path(directory).resolve()
         target_str = str(target)
@@ -693,167 +500,129 @@ class ProjectManager:
             user_blacklist=self._plugin._config.get("file_remove_blacklist"),
         )
         if not ok:
-            return {
-                "ok": False,
-                "directory": target_str,
-                "loaded_at": 0.0,
-                "skipped_substeps": [],
-                "substep_messages": messages,
-                "reason": "path_unsafe",
-                "previous_directory": "",
-            }
+            messages.append(f"❌ 路径不允许: {reason}")
+            return _result(False, "path_unsafe")
 
-        # 3.5 可选 create / git_init(与 load_impl 对齐, 复用同一 helper)。
-        #     webapi 端点的"覆盖"语义由 handler 层的 force 预处理承担, 故
-        #     silent 路径不需要 replace 参数。
+        # 2. Duplicate load. With replace=True the old entry stays in place
+        #    until the new path has been fully validated and injected.
+        existing = _state.get(umo)
+        if existing is not None and not replace:
+            previous_directory = existing.get("directory", "")
+            messages.append(
+                f"❌ 当前会话已加载项目: {previous_directory}\n"
+                "请先执行 /project unload,再 load 新项目。"
+            )
+            return _result(
+                False,
+                "project_already_loaded",
+                previous_directory=previous_directory,
+            )
+
+        # 3. Optional create / git_init. `no_codegraph` is intentionally a
+        #    no-op now: codegraph is a manual action and never part of load.
         if create:
             ok_create, msg_create = await _ensure_project_dir(target)
             messages.append(msg_create)
             if not ok_create:
-                return {
-                    "ok": False,
-                    "directory": target_str,
-                    "loaded_at": 0.0,
-                    "skipped_substeps": [],
-                    "substep_messages": messages,
-                    "reason": "create_dir_failed",
-                    "previous_directory": "",
-                }
+                return _result(False, "create_dir_failed")
         if git_init:
             ok_git, msg_git = await _ensure_git_repo(target)
             messages.append(msg_git)
             if not ok_git:
-                return {
-                    "ok": False,
-                    "directory": target_str,
-                    "loaded_at": 0.0,
-                    "skipped_substeps": [],
-                    "substep_messages": messages,
-                    "reason": "git_init_failed",
-                    "previous_directory": "",
-                }
+                return _result(False, "git_init_failed")
 
-        # 4. 3 步流水线(子步骤 yield 全部收集,不回传 event)
-        try:
-            # 步骤 1/3: agentsmd
-            if no_agentsmd:
-                messages.append("⏭️ [1/3] AGENTS.md 步骤已跳过(用户指定 no_agentsmd)。")
-            else:
-                agents_md_path = target / "AGENTS.md"
-                if not agents_md_path.exists():
-                    messages.append(f"⏳ [1/3] AGENTS.md 不存在,正在 init: {target}")
-                    try:
-                        async for msg in project_load_step(
-                            event,
-                            self._plugin.agentsmd.init(event, str(target)),
-                            "[1/3] AGENTS.md 初始化",
-                        ):
-                            messages.append(_msg_to_text(msg))
-                    except ProjectLoadAbort:
-                        pass
-                    if _last_message_failed(messages):
-                        failed_reason = "agentsmd_init_failed"
-                else:
-                    messages.append(
-                        f"ℹ️ [1/3] AGENTS.md 已存在,跳过 init: {agents_md_path}"
-                    )
-                if failed_reason is None:
-                    messages.append(f"⏳ [1/3] 正在 load AGENTS.md: {target}")
-                    try:
-                        async for msg in project_load_step(
-                            event,
-                            self._plugin.agentsmd.load(event, str(target)),
-                            "[1/3] AGENTS.md 加载",
-                        ):
-                            messages.append(_msg_to_text(msg))
-                    except ProjectLoadAbort:
-                        pass
-                    if _last_message_failed(messages):
-                        failed_reason = "agentsmd_load_failed"
+        if not target.exists() or not target.is_dir():
+            messages.append(f"❌ 目录不存在或不是目录: {target}")
+            return _result(False, "directory_missing")
 
-            # 步骤 2/3: codegraph(仅 init; 2026-08-15 起移除 set 子步骤)
-            if failed_reason is None:
-                if no_codegraph:
-                    messages.append(
-                        "⏭️ [2/3] codegraph 步骤已跳过(用户指定 no_codegraph)。"
-                    )
-                else:
-                    messages.append(f"⏳ [2/3] codegraph init: {target}")
-                    try:
-                        async for msg in project_load_step(
-                            event,
-                            self._plugin.codegraph.init(event, str(target)),
-                            "[2/3] codegraph init",
-                        ):
-                            messages.append(_msg_to_text(msg))
-                    except ProjectLoadAbort:
-                        pass
-                    if _last_message_failed(messages):
-                        failed_reason = "codegraph_init_failed"
-        except ProjectLoadAbort:
-            # 2026-08-06: 各子步骤的 abort 已在步骤内被捕获并赋值
-            # failed_reason;此分支仅做最外层防御兜底(理论上不可达)。
-            if failed_reason is None:
-                failed_reason = "agentsmd_load_failed"
-
-        if failed_reason is not None:
-            return {
-                "ok": False,
-                "directory": target_str,
-                "loaded_at": 0.0,
-                "skipped_substeps": sorted(skipped),
-                "substep_messages": messages,
-                "reason": failed_reason,
-                "previous_directory": "",
-            }
-
-        # 5. 记录 state(仅在所有子步骤都成功后才登记)
-        loaded_at_ts = _time.time()
+        # 4. AGENTS.md: load only when it already exists. Never call init —
+        #    generating a project description behind the user's back is the
+        #    exact behaviour this redesign removes.
+        agents_md_path = target / "AGENTS.md"
+        agents_md_loaded = False
         if no_agentsmd:
+            messages.append("⏭️ AGENTS.md 注入已跳过(用户指定 no_agentsmd)。")
             skipped.add("agentsmd")
-        if no_codegraph:
-            skipped.add("codegraph")
+        elif not self._plugin._config.get("agentsmd_enabled", True):
+            messages.append("⏭️ AGENTS.md 功能未启用,已跳过注入。")
+            skipped.add("agentsmd")
+        elif not agents_md_path.exists():
+            messages.append(f"ℹ️ 未找到 AGENTS.md,已跳过注入(不会自动生成): {target}")
+            skipped.add("agentsmd")
+        else:
+            messages.append(f"⏳ 正在加载 AGENTS.md: {agents_md_path}")
+            agentsmd_failed = False
+            try:
+                async for msg in project_load_step(
+                    event,
+                    self._plugin.agentsmd.load(event, target_str),
+                    "AGENTS.md 加载",
+                ):
+                    messages.append(_msg_to_text(msg))
+            except ProjectLoadAbort:
+                # ProjectLoadAbort is the authoritative failure signal; do
+                # not infer it from the rendered message prefix, which may be
+                # decorated by the caller's event implementation.
+                agentsmd_failed = True
+            if agentsmd_failed:
+                return _result(False, "agentsmd_load_failed")
+            agents_md_loaded = True
+
+        # 5. Atomic swap: drop the old project only now. If the new project
+        #    has no AGENTS.md, also clear an injection that belonged to the
+        #    old project's directory (a manual /agentsmd load elsewhere is
+        #    left untouched).
+        if existing is not None:
+            previous_directory = existing.get("directory", "")
+            old_agents_state = self._plugin.agentsmd.state.get(umo)
+            if (
+                not agents_md_loaded
+                and old_agents_state is not None
+                and old_agents_state.directory == previous_directory
+            ):
+                try:
+                    self._plugin.agentsmd.unload(event)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning(
+                        "project-load: 清理旧 AGENTS.md 注入失败 (umo=%s): %s",
+                        umo,
+                        exc,
+                    )
+            _state.pop(umo)
+            messages.append(f"✅ 已替换旧项目: {previous_directory}")
+
+        # 6. Register the project state only after every step succeeded.
+        loaded_at_ts = _time.time()
         _state.put(
             umo,
             {
                 "directory": target_str,
                 "loaded_at": loaded_at_ts,
                 "skipped_substeps": skipped,
+                "agents_md": agents_md_loaded,
             },
         )
 
-        # 6. 总结消息(附加到 messages,供调用方调试,不写入聊天框)
-        if no_agentsmd and no_codegraph:
-            summary_lines = "  - 设定工作目录(无子步骤)"
-        elif no_agentsmd:
-            summary_lines = (
-                "  - 设定工作目录\n  - 载入 codegraph 索引\n  - (已跳过) AGENTS.md 注入"
-            )
-        elif no_codegraph:
-            summary_lines = (
-                "  - 设定工作目录\n"
-                "  - AGENTS.md 注入到 system_prompt\n"
-                "  - (已跳过) codegraph 索引"
-            )
+        summary_lines = ["  - 设定工作目录"]
+        if agents_md_loaded:
+            summary_lines.append("  - AGENTS.md 注入到 system_prompt")
         else:
-            summary_lines = (
-                "  - 设定工作目录\n"
-                "  - AGENTS.md 注入到 system_prompt\n"
-                "  - 载入 codegraph 索引"
+            summary_lines.append(
+                "  - 未注入 AGENTS.md(文件不存在 / 功能未启用 / 已跳过)"
             )
+        summary_lines.append("  - codegraph 索引未自动初始化(由用户手动执行)")
         messages.append(
-            f"✅ 项目已加载: {target}\n已自动进行如下步骤:\n{summary_lines}\n"
+            f"✅ 项目已加载: {target}\n"
+            f"已自动进行如下步骤:\n"
+            f"{chr(10).join(summary_lines)}\n"
         )
 
-        return {
-            "ok": True,
-            "directory": target_str,
-            "loaded_at": loaded_at_ts,
-            "skipped_substeps": sorted(skipped),
-            "substep_messages": messages,
-            "reason": None,
-            "previous_directory": "",
-        }
+        return _result(
+            True,
+            None,
+            loaded_at=loaded_at_ts,
+            agents_md=agents_md_loaded,
+        )
 
 
 def _msg_to_text(msg) -> str:
@@ -873,16 +642,3 @@ def _msg_to_text(msg) -> str:
         if isinstance(text, str):
             return text
     return str(msg)
-
-
-def _last_message_failed(messages: list[str]) -> bool:
-    """检查 :func:`project_load_step` 是否刚 yield 过 ``❌`` 开头的失败消息。
-
-    ``project_load_step`` 失败时会 yield 一条 ``❌ <step_label> 失败,/project
-    load 中止。`` 的总结消息,然后抛 ``ProjectLoadAbort``。silent 路径要复用
-    这条约定——把"上一条消息是否以 ❌ 开头"作为子步骤成败信号,避免在
-    silent 路径里重写一遍 step 流程。
-    """
-    if not messages:
-        return False
-    return messages[-1].startswith("❌")

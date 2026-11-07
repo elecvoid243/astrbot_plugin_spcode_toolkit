@@ -38,17 +38,13 @@ logger = logging.getLogger(__name__)
 # 不会被 silent 层的 reason 串变化影响(新增 silent 码时只更新本表)。
 #
 # 失败路径(messages 已有"❌ <step_label> 失败, /project load 中止。"
-# 总结 + ProjectLoadAbort)统一映射为 step 自身的 reason 码
-# (agentsmd_init_failed / agentsmd_load_failed / codegraph_init_failed),
+# 总结 + ProjectLoadAbort)统一映射为 step 自身的 reason 码,
 # 前端用 ``substep_messages`` 末尾的"❌"行显示具体错误。
 _SILENT_REASON_TO_ENVELOPE: dict[str, str] = {
-    "agentsmd_disabled": ReasonCode.FEATURE_DISABLED,
-    "codegraph_disabled": ReasonCode.FEATURE_DISABLED,
     "project_already_loaded": ReasonCode.NO_PROJECT_LOADED,
     "path_unsafe": ReasonCode.PATH_UNSAFE,
-    "agentsmd_init_failed": ReasonCode.GIT_ERROR,
+    "directory_missing": ReasonCode.DIRECTORY_MISSING,
     "agentsmd_load_failed": ReasonCode.GIT_ERROR,
-    "codegraph_init_failed": ReasonCode.GIT_ERROR,
     # 2026-07-30: create / git_init 步骤失败映射。create 是路径/文件系统
     # 操作失败,归 PATH_UNSAFE(最接近的现有码);git_init 是 git 子进程失败,
     # 归 GIT_ERROR。前端用 substep_messages 末尾行查看具体错误。
@@ -74,10 +70,12 @@ async def handle(
     Body (JSON):
         directory (str, required): 项目绝对路径。与 ``/project load`` 命令
             的位置参数一致;支持带/不带尾部 ``/``、单/双引号包裹。
-        no_agentsmd (bool, optional): 跳过 AGENTS.md init+load。默认 False。
-        no_codegraph (bool, optional): 跳过 codegraph init。默认 False。
-        force (bool, optional): (2026-07-28 引入) 若已加载项目,允许强制
-            覆盖为新项目。默认 False — 拒绝重复 load。
+        no_agentsmd (bool, optional): 跳过 AGENTS.md 注入。默认 False。
+        no_codegraph (bool, optional): 兼容旧客户端保留;codegraph 已不在
+            load 流水线中,该字段不再产生任何行为。
+        force (bool, optional): (2026-07-28 引入) 若已加载项目,允许覆盖为
+            新项目;2026-11-07 起为原子替换(新路径校验 + AGENTS.md 注入
+            成功后才替换旧项目)。默认 False — 拒绝重复 load。
         create (bool, optional): (2026-07-30 引入) 目录不存在时自动创建
             (含父目录)。默认 False。
         git_init (bool, optional): (2026-07-30 引入) 目录非 Git 仓库时
@@ -107,6 +105,7 @@ async def handle(
                         "umo": str,                   # 请求方传过来的 umo
                         "skipped_substeps": list[str],  # 用户 opt-out 的子步骤
                         "substep_messages": list[str], # 子步骤日志(供前端排查)
+                        "agents_md": bool,            # AGENTS.md 是否已注入
                     }
                 }
 
@@ -212,16 +211,8 @@ async def handle(
             umo=umo,
         )
 
-    # ── 3. force 时若已加载,先 unload ──
-    #    WHY: dashboard 在 "切换项目" 场景下需要支持无缝覆盖。``load_impl``
-    #    默认拒绝重复 load;但 webapi 端点的 ``force`` 标志允许 dashboard
-    #    显式表达"我知道当前已加载,就是要换"。卸载时**也**走静默路径——
-    #    不向聊天框 yield unload 进度。
-    if force:
-        _silent_unload(plugin, umo)
-
-    # ── 4. 构造 dummy event + 调 silent load ──
-    #    silent 路径的子方法(``agentsmd.init/load``、``codegraph.init/set``)
+    # ── 3. 构造 dummy event + 调 silent load ──
+    #    silent 路径的子方法(``agentsmd.load``)
     #    需要 ``event.unified_msg_origin`` 和 ``event.plain_result``。
     #    ``plain_result`` 用 ``lambda x: x`` 让 MagicMock 在
     #    ``project_load_step`` 内的 ``event.plain_result(...)`` 退化为
@@ -240,6 +231,7 @@ async def handle(
             no_codegraph=no_codegraph,
             create=create,
             git_init=git_init,
+            replace=force,
         )
     except Exception as exc:
         # 2026-08-06: silent 方法内部已写终态;此兜底仅防未预期异常把
@@ -255,7 +247,7 @@ async def handle(
             substep_messages=[str(exc)],
         )
 
-    # ── 5. 把 silent 内部 result 翻译为 envelope ──
+    # ── 4. 把 silent 内部 result 翻译为 envelope ──
     silent_reason = result.get("reason")
     envelope_reason: str | None = None
     if not result.get("ok"):
@@ -297,53 +289,5 @@ async def handle(
         umo=umo,
         skipped_substeps=result.get("skipped_substeps", []),
         substep_messages=result.get("substep_messages", []),
+        agents_md=bool(result.get("agents_md", False)),
     )
-
-
-def _silent_unload(plugin: SPCodeToolkit, umo: str) -> None:
-    """force=true 时静默卸载当前会话已加载的项目。
-
-    不走 :meth:`ProjectManager.unload_impl`(async generator,yield 用户消息),
-    直接同步执行最简的卸载逻辑:
-      1. 若 state[umo] 不存在 → no-op
-      2. 调 ``agentsmd.unload(event)``(同步方法,返回字符串,丢弃)
-      3. 跳过 codegraph.set_project(load 流程已不含 set 子步骤,
-         旧默认项目残留由用户后续 /codegraph set 管理)
-      4. ``state.pop(umo)``
-
-    设计权衡:
-        - 这是 sync 函数,不像 ``load_impl_silent`` 那样是 async def。
-          原因:dashboard 的 force-load 流程是"先清后装",整个流程
-          在 ``handle`` 一个 async 函数里串行执行,cleanest 写法是
-          把 unload 也 async 化。但 :meth:`ProjectManager.unload_impl`
-          已经是 generator,不能直接 await。最简方案:绕开 unload_impl,
-          直接调底层 ``agentsmd.unload``(同步)+ ``state.pop``,
-          并跳过 codegraph.set_project(load 流程已不含 set 子步骤,
-          旧默认项目残留由用户后续 /codegraph set 管理)。
-        - 这是"webapi force 路径"的特殊妥协,不污染主 ``/project unload``
-          路径(后者仍走原 unload_impl,带 yield 反馈)。
-    """
-    from ..project import state as _state
-
-    if _state.get(umo) is None:
-        return
-
-    # agentsmd.unload 是同步方法(返回字符串,直接丢弃)
-    try:
-        from unittest.mock import MagicMock
-
-        silent_event = MagicMock()
-        silent_event.unified_msg_origin = umo
-        silent_event.plain_result = lambda text: text
-        # 不 await 也不 collect — 直接调同步方法
-        unload_msg = plugin.agentsmd.unload(silent_event)
-        del unload_msg  # 显式不消费,避免 lint
-    except Exception as exc:  # pragma: no cover - 防御
-        logger.warning("project-load: force unload 阶段 agentsmd.unload 失败: %s", exc)
-
-    # 不调 codegraph.set_project — load 流程已不含 set 子步骤(2026-08-15),
-    # 旧默认项目残留由用户后续 /codegraph set 管理。跳过 set_project 既
-    # 避免 await 嵌套,又避免旧 MCP 进程的残留 path 触发"找不到目录"错误。
-
-    _state.pop(umo)
-    logger.info("project-load: force unload 完成 (umo=%s)", umo)

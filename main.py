@@ -142,7 +142,7 @@ _CORE_PROVIDES_FILE_REMOVE = False
     "astrbot_plugin_spcode_toolkit",
     "elecvoid243",
     ("spcode 开发工具箱 — 提供实用开发工具, 部分实现基于Irmia DevKit插件。"),
-    "v2.33.1",
+    "v2.34.0",
 )
 class SPCodeToolkit(star.Star):
     def __init__(self, context: star.Context, config: dict = None) -> None:
@@ -458,11 +458,15 @@ class SPCodeToolkit(star.Star):
     async def project_load(self, event):
         """/project load <directory> [no_agentsmd] [no_codegraph]
 
-        可选 flags(均放在 directory 之后,顺序无关):
-        - ``no_agentsmd``: 跳过 AGENTS.md 全部子步骤(步骤 1/3 的 init + load)
-        - ``no_codegraph``: 跳过 codegraph 全部子步骤(步骤 2/3 的 init + set)
+        加载语义(2026-11-07 重设计):
+        - 只登记工作目录;目录内已有 ``AGENTS.md`` 时注入到 system_prompt;
+        - 不存在时**不**自动生成;
+        - **不**自动执行 codegraph init(由用户通过 ``/codegraph init``
+          或 WebUI 的 Codegraph 管理页手动执行)。
 
-        不传任何 flag 时,完整执行 4 个子步骤 + 状态登记。
+        可选 flags(均放在 directory 之后,顺序无关):
+        - ``no_agentsmd``: 跳过 AGENTS.md 注入(显式 opt-out)
+        - ``no_codegraph``: 兼容旧脚本保留,当前无行为
 
         实现说明 (2026-07-26):
         - 仅签名 ``(self, event)``,**不**在 args 列表里声明
@@ -472,7 +476,7 @@ class SPCodeToolkit(star.Star):
           抛 ``TypeError`` 并把整个 handler 拒绝。
         - 从 ``event.get_message_str()`` 拿全部 tokens,内部 ``.split()``,
           第一个非 flag 元素作为 directory,其余 in ``{"no_agentsmd",
-          "no_codegraph"}`` 作为 flag。
+          "no_codegraph", "create", "git_init", "replace"}`` 作为 flag。
         - 委托给 :meth:`tools.project.ProjectManager.handle_subcommand`,
           保持 ``load_impl`` 的单入口语义。
 

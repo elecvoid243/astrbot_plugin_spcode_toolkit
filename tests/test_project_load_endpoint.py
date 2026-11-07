@@ -293,23 +293,28 @@ async def test_force_wrong_type_returns_invalid_param() -> None:
 
 @requires_webapi
 @pytest.mark.asyncio
-async def test_successful_load_full_path(plugin_with_mocks) -> None:
-    """完整 3 步流水线成功 → success=True + loaded=True + 完整 envelope。"""
+async def test_successful_load_full_path(plugin_with_mocks, tmp_path) -> None:
+    """目录已存在且无 AGENTS.md → 成功登记,不生成、不初始化 codegraph。"""
     _reset_state()
     plugin = plugin_with_mocks
+    target = tmp_path / "repo"
+    target.mkdir()
     result = await _project_load_webapi.handle(
         plugin,
         umo="webchat:success:1",
         worktree=None,
-        body={"directory": "/tmp/some/repo"},
+        body={"directory": str(target)},
     )
     assert result["data"]["success"] is True
     assert result["data"]["reason"] is None
     data = result["data"]
     assert data["loaded"] is True
-    assert data["directory"] == str(Path("/tmp/some/repo").resolve())
+    assert data["directory"] == str(target)
     assert data["umo"] == "webchat:success:1"
-    assert data["skipped_substeps"] == []  # 无 flag = 未跳过任何
+    # No AGENTS.md → the only skipped subsystem is agentsmd. codegraph is
+    # not part of load any more, so it is not listed as "skipped".
+    assert data["skipped_substeps"] == ["agentsmd"]
+    assert data["agents_md"] is False
     assert data["loaded_at"] > 0
     # substep_messages 至少应包含 "✅ 项目已加载" 总结
     assert any("项目已加载" in m for m in data["substep_messages"])
@@ -324,7 +329,7 @@ async def test_successful_load_full_path(plugin_with_mocks) -> None:
 
 @requires_webapi
 @pytest.mark.asyncio
-async def test_silent_load_does_not_yield_to_event(plugin_with_mocks) -> None:
+async def test_silent_load_does_not_yield_to_event(plugin_with_mocks, tmp_path) -> None:
     """**核心需求**:静默 load 不得向 event 写任何用户可见消息。
 
     验证:handler 内部构造的 silent_event 在整个调用过程中,plain_result
@@ -335,11 +340,13 @@ async def test_silent_load_does_not_yield_to_event(plugin_with_mocks) -> None:
     """
     _reset_state()
     plugin = plugin_with_mocks
+    target = tmp_path / "silent"
+    target.mkdir()
     result = await _project_load_webapi.handle(
         plugin,
         umo="webchat:silent:1",
         worktree=None,
-        body={"directory": "/tmp/silent"},
+        body={"directory": str(target)},
     )
     assert result["data"]["success"] is True
     # 关键断言:handler 内部构造的 silent_event 是局部变量,不在 plugin
@@ -356,36 +363,36 @@ async def test_silent_load_does_not_yield_to_event(plugin_with_mocks) -> None:
 
 @requires_webapi
 @pytest.mark.asyncio
-async def test_agentsmd_disabled_returns_feature_disabled() -> None:
-    """agentsmd_enabled=False 且无 no_agentsmd → feature_disabled。"""
+async def test_agentsmd_disabled_skips_injection_but_loads(tmp_path) -> None:
+    """agentsmd_enabled=False → 仍然登记项目,只是不注入 AGENTS.md。"""
+    (tmp_path / "AGENTS.md").write_text("# project\n", encoding="utf-8")
     plugin = _make_plugin()
     plugin._config["agentsmd_enabled"] = False
     result = await _project_load_webapi.handle(
         plugin,
         umo="webchat:off:1",
         worktree=None,
-        body={"directory": "/tmp/x"},
+        body={"directory": str(tmp_path)},
     )
-    assert result["data"]["success"] is False
-    assert result["data"]["reason"] == "feature_disabled"
-    assert result["data"]["silent_reason"] == "agentsmd_disabled"
+    assert result["data"]["success"] is True
+    assert result["data"]["agents_md"] is False
+    assert result["data"]["skipped_substeps"] == ["agentsmd"]
 
 
 @requires_webapi
 @pytest.mark.asyncio
-async def test_codegraph_disabled_returns_feature_disabled() -> None:
-    """codegraph_enabled=False 且无 no_codegraph → feature_disabled。"""
+async def test_codegraph_disabled_does_not_block_load(tmp_path) -> None:
+    """codegraph_enabled=False → 项目加载不受影响。"""
     plugin = _make_plugin()
     plugin._config["codegraph_enabled"] = False
     result = await _project_load_webapi.handle(
         plugin,
         umo="webchat:off:2",
         worktree=None,
-        body={"directory": "/tmp/x"},
+        body={"directory": str(tmp_path)},
     )
-    assert result["data"]["success"] is False
-    assert result["data"]["reason"] == "feature_disabled"
-    assert result["data"]["silent_reason"] == "codegraph_disabled"
+    assert result["data"]["success"] is True
+    assert result["data"]["loaded"] is True
 
 
 @requires_webapi
@@ -442,56 +449,41 @@ async def test_path_unsafe_returns_path_unsafe(monkeypatch) -> None:
 
 @requires_webapi
 @pytest.mark.asyncio
-async def test_agentsmd_init_failure_returns_git_error() -> None:
-    """agentsmd.init 失败 → reason=git_error + silent_reason=agentsmd_init_failed。"""
+async def test_agentsmd_load_failure_returns_git_error(tmp_path) -> None:
+    """AGENTS.md 读取失败 → reason=git_error + silent_reason=agentsmd_load_failed。"""
     _reset_state()
+    (tmp_path / "AGENTS.md").write_text("# project\n", encoding="utf-8")
     plugin = _make_plugin()
-    _patch_substeps_fail_at(plugin, fail_step="agentsmd_init")
-    # agentsmd 路径上需要"AGENTS.md 不存在"才会调 init。我们 mock
-    # Path.is_file 但更简单:让 target/AGENTS.md 不存在的"路径存在"是
-    # 真实的 — 但 Path("...").resolve() 在测试环境的 /tmp 不一定存在。
-    # 这里我们改走:resolve 后用一个不存在的子目录,触发 init 路径。
-    # 因 _patch_substeps_fail_at 已经把 init mock 为 _fail,_ok 顺序下
-    # project_load_step 会拿到"❌ 模拟子步骤失败" → 中止。
-    # 唯一可能:AGENTS.md 已存在的分支不调 init。
-    # 解决:用 monkeypatch 让 target.exists() 返 True 但 AGENTS.md 不存在。
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as td:
-        result = await _project_load_webapi.handle(
-            plugin,
-            umo="webchat:fail:1",
-            worktree=None,
-            body={"directory": td},
-        )
-        assert result["data"]["success"] is False
-        assert result["data"]["reason"] == "git_error"
-        assert result["data"]["silent_reason"] == "agentsmd_init_failed"
-        # substep_messages 应包含"❌"失败信号
-        assert any(
-            m.startswith("❌") for m in result["data"]["substep_messages"]
-        )
+    _patch_substeps_fail_at(plugin, fail_step="agentsmd_load")
+    result = await _project_load_webapi.handle(
+        plugin,
+        umo="webchat:fail:1",
+        worktree=None,
+        body={"directory": str(tmp_path)},
+    )
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "git_error"
+    assert result["data"]["silent_reason"] == "agentsmd_load_failed"
+    assert any(m.startswith("❌") for m in result["data"]["substep_messages"])
+    _reset_state()
 
 
 @requires_webapi
 @pytest.mark.asyncio
-async def test_codegraph_init_failure_returns_git_error() -> None:
-    """codegraph.init 失败 → git_error。"""
+async def test_missing_directory_returns_directory_missing(tmp_path) -> None:
+    """目录不存在 → directory_missing,不登记状态。"""
     _reset_state()
     plugin = _make_plugin()
-    _patch_substeps_fail_at(plugin, fail_step="codegraph_init")
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as td:
-        result = await _project_load_webapi.handle(
-            plugin,
-            umo="webchat:fail:2",
-            worktree=None,
-            body={"directory": td},
-        )
-        assert result["data"]["success"] is False
-        assert result["data"]["reason"] == "git_error"
-        assert result["data"]["silent_reason"] == "codegraph_init_failed"
+    result = await _project_load_webapi.handle(
+        plugin,
+        umo="webchat:missing:1",
+        worktree=None,
+        body={"directory": str(tmp_path / "missing")},
+    )
+    assert result["data"]["success"] is False
+    assert result["data"]["reason"] == "directory_missing"
+    assert result["data"]["silent_reason"] == "directory_missing"
+    _reset_state()
 
 
 # ── no_agentsmd / no_codegraph / force 行为 ───────────────────────
@@ -499,92 +491,83 @@ async def test_codegraph_init_failure_returns_git_error() -> None:
 
 @requires_webapi
 @pytest.mark.asyncio
-async def test_no_agentsmd_skips_agentsmd_step() -> None:
+async def test_no_agentsmd_skips_agentsmd_step(tmp_path) -> None:
     """no_agentsmd=true → agentsmd 子方法不被调用,skipped_substeps=["agentsmd"]。"""
     _reset_state()
+    (tmp_path / "AGENTS.md").write_text("# project\n", encoding="utf-8")
     plugin = _make_plugin()
     _patch_substeps_success(plugin)
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as td:
-        result = await _project_load_webapi.handle(
-            plugin,
-            umo="webchat:skip:1",
-            worktree=None,
-            body={"directory": td, "no_agentsmd": True},
-        )
-        assert result["data"]["success"] is True
-        assert result["data"]["skipped_substeps"] == ["agentsmd"]
-        # agentsmd.init / load 都不应被调用
-        plugin.agentsmd.init.assert_not_called()
-        plugin.agentsmd.load.assert_not_called()
-        # codegraph.init 被调用;set_project 不参与 load
-        plugin.codegraph.init.assert_called_once()
-        plugin.codegraph.set_project.assert_not_called()
+    result = await _project_load_webapi.handle(
+        plugin,
+        umo="webchat:skip:1",
+        worktree=None,
+        body={"directory": str(tmp_path), "no_agentsmd": True},
+    )
+    assert result["data"]["success"] is True
+    assert result["data"]["skipped_substeps"] == ["agentsmd"]
+    assert result["data"]["agents_md"] is False
+    plugin.agentsmd.init.assert_not_called()
+    plugin.agentsmd.load.assert_not_called()
+    plugin.codegraph.init.assert_not_called()
+    plugin.codegraph.set_project.assert_not_called()
     _reset_state()
 
 
 @requires_webapi
 @pytest.mark.asyncio
-async def test_no_codegraph_skips_codegraph_step() -> None:
-    """no_codegraph=true → codegraph 子方法不被调用。"""
+async def test_no_codegraph_has_no_effect(tmp_path) -> None:
+    """no_codegraph 只为旧客户端兼容保留,不再影响加载。"""
     _reset_state()
+    (tmp_path / "AGENTS.md").write_text("# project\n", encoding="utf-8")
     plugin = _make_plugin()
     _patch_substeps_success(plugin)
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as td:
-        result = await _project_load_webapi.handle(
-            plugin,
-            umo="webchat:skip:2",
-            worktree=None,
-            body={"directory": td, "no_codegraph": True},
-        )
-        assert result["data"]["success"] is True
-        assert result["data"]["skipped_substeps"] == ["codegraph"]
-        plugin.codegraph.init.assert_not_called()
-        plugin.codegraph.set_project.assert_not_called()
-        plugin.agentsmd.init.assert_called_once()
-        plugin.agentsmd.load.assert_called_once()
+    result = await _project_load_webapi.handle(
+        plugin,
+        umo="webchat:skip:2",
+        worktree=None,
+        body={"directory": str(tmp_path), "no_codegraph": True},
+    )
+    assert result["data"]["success"] is True
+    assert result["data"]["skipped_substeps"] == []
+    assert result["data"]["agents_md"] is True
+    plugin.agentsmd.init.assert_not_called()
+    plugin.agentsmd.load.assert_called_once()
+    plugin.codegraph.init.assert_not_called()
+    plugin.codegraph.set_project.assert_not_called()
     _reset_state()
 
 
 @requires_webapi
 @pytest.mark.asyncio
-async def test_both_no_flags_makes_shell_load() -> None:
-    """no_agentsmd + no_codegraph 双跳过 → 仍登记 state(空壳 load)。"""
+async def test_both_no_flags_still_registers_state(tmp_path) -> None:
+    """no_agentsmd + no_codegraph → 仍登记 state,但两个子系统都不动。"""
     _reset_state()
+    (tmp_path / "AGENTS.md").write_text("# project\n", encoding="utf-8")
     plugin = _make_plugin()
     _patch_substeps_success(plugin)
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as td:
-        result = await _project_load_webapi.handle(
-            plugin,
-            umo="webchat:skip:3",
-            worktree=None,
-            body={
-                "directory": td,
-                "no_agentsmd": True,
-                "no_codegraph": True,
-            },
-        )
-        assert result["data"]["success"] is True
-        assert sorted(result["data"]["skipped_substeps"]) == [
-            "agentsmd",
-            "codegraph",
-        ]
-        # 全部子方法跳过
-        plugin.agentsmd.init.assert_not_called()
-        plugin.agentsmd.load.assert_not_called()
-        plugin.codegraph.init.assert_not_called()
-        plugin.codegraph.set_project.assert_not_called()
+    result = await _project_load_webapi.handle(
+        plugin,
+        umo="webchat:skip:3",
+        worktree=None,
+        body={
+            "directory": str(tmp_path),
+            "no_agentsmd": True,
+            "no_codegraph": True,
+        },
+    )
+    assert result["data"]["success"] is True
+    assert result["data"]["skipped_substeps"] == ["agentsmd"]
+    assert result["data"]["agents_md"] is False
+    plugin.agentsmd.init.assert_not_called()
+    plugin.agentsmd.load.assert_not_called()
+    plugin.codegraph.init.assert_not_called()
+    plugin.codegraph.set_project.assert_not_called()
     _reset_state()
 
 
 @requires_webapi
 @pytest.mark.asyncio
-async def test_force_overrides_existing_load() -> None:
+async def test_force_overrides_existing_load(tmp_path) -> None:
     """force=true 覆盖已加载项目,state 切换到新目录。"""
     _reset_state()
     from tools.project import state as _proj_state
@@ -595,45 +578,38 @@ async def test_force_overrides_existing_load() -> None:
     )
     plugin = _make_plugin()
     _patch_substeps_success(plugin)
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as td:
-        result = await _project_load_webapi.handle(
-            plugin,
-            umo="webchat:force:1",
-            worktree=None,
-            body={"directory": td, "force": True},
-        )
-        assert result["data"]["success"] is True
-        # 新目录被登记
-        info = _proj_state.get("webchat:force:1")
-        assert info is not None
-        assert info["directory"] == str(Path(td).resolve())
-        assert info["directory"] != "/tmp/old"
+    target = tmp_path / "new"
+    target.mkdir()
+    result = await _project_load_webapi.handle(
+        plugin,
+        umo="webchat:force:1",
+        worktree=None,
+        body={"directory": str(target), "force": True},
+    )
+    assert result["data"]["success"] is True
+    # 新目录被登记
+    info = _proj_state.get("webchat:force:1")
+    assert info is not None
+    assert info["directory"] == str(target)
+    assert info["directory"] != "/tmp/old"
     _reset_state()
 
 
 @requires_webapi
 @pytest.mark.asyncio
-async def test_force_with_no_existing_load_is_noop_unload() -> None:
+async def test_force_with_no_existing_load_is_noop_unload(tmp_path) -> None:
     """force=true 但未加载 → unload 阶段是 no-op,正常 load 新项目。"""
     _reset_state()
     plugin = _make_plugin()
     _patch_substeps_success(plugin)
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as td:
-        result = await _project_load_webapi.handle(
-            plugin,
-            umo="webchat:force:2",
-            worktree=None,
-            body={"directory": td, "force": True},
-        )
-        assert result["data"]["success"] is True
-        # agentsmd.unload 在 no-op 路径上仍被调(因为 _silent_unload
-        # 不查 state 直接调)? 实际:no-op 路径 _silent_unload 提前 return
-        # → unload 不被调
-        plugin.agentsmd.unload.assert_not_called()
+    result = await _project_load_webapi.handle(
+        plugin,
+        umo="webchat:force:2",
+        worktree=None,
+        body={"directory": str(tmp_path), "force": True},
+    )
+    assert result["data"]["success"] is True
+    plugin.agentsmd.unload.assert_not_called()
 
 
 # ── envelope 字段完整性 ───────────────────────────────────────────
@@ -656,13 +632,15 @@ async def test_envelope_has_elapsed_ms(plugin_with_mocks) -> None:
 
 @requires_webapi
 @pytest.mark.asyncio
-async def test_envelope_data_includes_all_fields(plugin_with_mocks) -> None:
+async def test_envelope_data_includes_all_fields(plugin_with_mocks, tmp_path) -> None:
     """成功路径 data 字段应有完整字段集。"""
+    target = tmp_path / "env"
+    target.mkdir()
     result = await _project_load_webapi.handle(
         plugin_with_mocks,
         umo="webchat:env:2",
         worktree=None,
-        body={"directory": "/tmp/x"},
+        body={"directory": str(target)},
     )
     data = result["data"]
     expected_keys = {
@@ -672,6 +650,7 @@ async def test_envelope_data_includes_all_fields(plugin_with_mocks) -> None:
         "umo",
         "skipped_substeps",
         "substep_messages",
+        "agents_md",
     }
     assert expected_keys.issubset(data.keys())
 
@@ -683,13 +662,16 @@ async def test_envelope_data_includes_all_fields(plugin_with_mocks) -> None:
 @pytest.mark.asyncio
 async def test_directory_with_surrounding_quotes_is_stripped(
     plugin_with_mocks,
+    tmp_path,
 ) -> None:
     """directory 带引号(用户从聊天框粘路径)→ strip 后再 resolve。"""
+    target = tmp_path / "quoted"
+    target.mkdir()
     result = await _project_load_webapi.handle(
         plugin_with_mocks,
         umo="webchat:quote:1",
         worktree=None,
-        body={"directory": '"/tmp/quoted"'},
+        body={"directory": f'"{target}"'},
     )
     assert result["data"]["success"] is True
     # strip_surrounding_quotes 应当去掉引号

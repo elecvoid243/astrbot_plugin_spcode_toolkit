@@ -1,7 +1,7 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: spcode 工具箱
-version: v2.33.1
+version: v2.34.0
 description: |
   ## 主要能力
 
@@ -63,6 +63,7 @@ description: |
 
   ## 版本历程（最近 8 个）
 
+  - **v2.34.0** (2026-11-07) 项目加载改为“选路径即加载”：仅登记目录并在 `AGENTS.md` 存在时注入，不自动生成、不自动初始化 codegraph；`force`/`replace` 改为原子替换，`GET /spcode/project-status` 新增 `agents_md`。
   - **v2.33.1** (2026-11-04) 为运行包中的 Vivado MCP、ruff、clang-format、cppcheck 子进程补齐 Windows 无控制台标志，构建时自动应用源码补丁；增加 pythonw 回归验证。
   - **v2.33.0** (2026-11-04) 新增 Windows x64 独立工具运行包：包含 CPython、Vivado MCP、代码格式化与检查依赖及 MSVC DLL；工具操作统一使用自带运行环境，支持离线部署与目录迁移，不再回退到 AstrBot 宿主环境。
   - **v2.32.1** (2026-10-31) 统一插件元数据、README、AGENTS.md 与更新日志的版本标识，补齐 v2.32.0 渐进式 Git Diff 的发布说明；运行行为保持不变。

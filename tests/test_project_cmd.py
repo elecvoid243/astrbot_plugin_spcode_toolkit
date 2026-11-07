@@ -217,12 +217,8 @@ def test_project_subcommands_bound_to_instance():
 # ── 2. Feature flag 校验 ──────────────────────────
 
 
-def test_project_load_refuses_when_agentsmd_disabled(tmp_path):
-    """agentsmd_enabled=False → 立即拒绝,不动状态,也不调子方法。
-
-    2026-07-25: 错误消息从合在一起说"启用 codegraph 和 AGENTS.md"
-    拆成按子系统精准提示 + 给出 no_xxx flag 替代方案。
-    """
+def test_agentsmd_disabled_still_loads_without_injection(tmp_path):
+    """agentsmd_enabled=False → 项目仍然加载,只是跳过 AGENTS.md 注入。"""
     p = tmp_path / "proj"
     p.mkdir()
     plugin = _make_plugin(agentsmd_enabled=False, codegraph_enabled=True)
@@ -231,42 +227,31 @@ def test_project_load_refuses_when_agentsmd_disabled(tmp_path):
 
     msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
-    # 拆分后的提示:精准指向 AGENTS.md + 提示可加 no_agentsmd flag 绕过
-    assert any("AGENTS.md" in m and "agentsmd_enabled" in m for m in msgs), (
-        f"应提示 AGENTS.md 未启用,实际: {msgs}"
-    )
-    assert any("no_agentsmd" in m for m in msgs), (
-        f"应提示可用 no_agentsmd flag 绕过,实际: {msgs}"
-    )
-    # 任一子方法都不该被调
-    for name, mock in mocks.items():
-        mock.assert_not_called(), f"{name} 不应被调用"
-    # 状态不应被记录
-    assert _get_loaded(event.unified_msg_origin) is None
+    assert any("功能未启用" in m for m in msgs)
+    assert any("项目已加载" in m for m in msgs)
+    mocks["init"].assert_not_called()
+    mocks["load"].assert_not_called()
+    mocks["codegraph_init"].assert_not_called()
+    assert _get_loaded(event.unified_msg_origin) is not None
+    assert _get_loaded(event.unified_msg_origin)["skipped_substeps"] == {"agentsmd"}
 
 
-def test_project_load_refuses_when_codegraph_disabled(tmp_path):
-    """codegraph_enabled=False → 同样拒绝。
-
-    2026-07-25: 同上,消息拆分 + 提示 no_codegraph flag 绕过。
-    """
+def test_codegraph_disabled_does_not_block_load(tmp_path):
+    """codegraph_enabled=False → 项目加载不受影响(codegraph 已不在 load 里)。"""
     p = tmp_path / "proj"
     p.mkdir()
+    (p / "AGENTS.md").write_text("# project\n", encoding="utf-8")
     plugin = _make_plugin(agentsmd_enabled=True, codegraph_enabled=False)
     mocks = _patch_internal_methods(plugin)
     event = _make_event()
 
     msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
-    # 拆分后的提示:精准指向 codegraph + 提示可加 no_codegraph flag 绕过
-    assert any("codegraph" in m and "codegraph_enabled" in m for m in msgs), (
-        f"应提示 codegraph 未启用,实际: {msgs}"
-    )
-    assert any("no_codegraph" in m for m in msgs), (
-        f"应提示可用 no_codegraph flag 绕过,实际: {msgs}"
-    )
-    for name, mock in mocks.items():
-        mock.assert_not_called()
+    assert any("项目已加载" in m for m in msgs)
+    mocks["init"].assert_not_called()
+    mocks["load"].assert_called_once()
+    mocks["codegraph_init"].assert_not_called()
+    assert _get_loaded(event.unified_msg_origin) is not None
 
 
 def test_project_unload_refuses_when_agentsmd_disabled():
@@ -360,49 +345,31 @@ def test_project_load_rejects_user_blacklisted_path(tmp_path):
 # ── 5. 正常加载流程 ──────────────────────────────
 
 
-def test_project_load_happy_path_calls_all_steps(tmp_path):
-    """全新加载: 依次调 agentsmd init+load + codegraph init,记录状态。
-
-    2026-08-15: codegraph set 子步骤已从 load 流水线移除, 只保留 init。
-    """
+def test_project_load_calls_agentsmd_load_without_init_or_codegraph(tmp_path):
+    """加载只读取已存在的 AGENTS.md,不生成、不初始化 codegraph。"""
     p = tmp_path / "proj"
     p.mkdir()
+    (p / "AGENTS.md").write_text("# project\n", encoding="utf-8")
     plugin = _make_plugin()
     mocks = _patch_internal_methods(plugin)
     event = _make_event(umo="test:umo")
 
     msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
-    # 3 个核心方法都被调用(顺序: agentsmd_init, agentsmd_load, codegraph_init)
-    mocks["init"].assert_called_once()
+    mocks["init"].assert_not_called()
     mocks["load"].assert_called_once()
-    mocks["codegraph_init"].assert_called_once()
-    # set_project 不再属于 load 流程(仅 unload 使用)
+    mocks["codegraph_init"].assert_not_called()
     mocks["codegraph_set_project"].assert_not_called()
-    # _agentsmd_unload 不该被调
     mocks["unload"].assert_not_called()
-    # 调用顺序: 严格按 spec 1→2→3
-    # 通过 mock_calls 顺序验证(同一 plugin 上多次调用的时间戳会区分)
-    all_calls = []
-    for name in [
-        "init",
-        "load",
-        "codegraph_init",
-    ]:
-        all_calls.extend((name, c) for c in mocks[name].mock_calls)
-    actual_order = [n for n, _ in all_calls]
-    assert actual_order == [
-        "init",
-        "load",
-        "codegraph_init",
-    ], f"调用顺序不符 spec,实际: {actual_order}"
 
     # 状态已记录
     assert _get_loaded("test:umo") is not None
     assert _get_loaded("test:umo")["directory"] == str(p)
+    assert _get_loaded("test:umo")["agents_md"] is True
 
     # 汇总消息
     assert any("项目已加载" in m for m in msgs)
+    assert any("codegraph 索引未自动初始化" in m for m in msgs)
 
 
 # ── 5.5 子步骤失败 → 中止(回归测试 v2.7.1)───────────────
@@ -414,55 +381,11 @@ def test_project_load_happy_path_calls_all_steps(tmp_path):
 # "⚠️" 不算失败(codegraph.init 内部 retry 路径会用到)。
 
 
-def test_project_load_aborts_on_agentsmd_init_error(tmp_path):
-    """agentsmd_init yield ❌ → 立刻中止,不调后续方法,不登记 _loaded_projects。
-
-    验证:
-    - 错误消息被转发
-    - 后续 2 个子方法(agentsmd_load / codegraph_init)**未被调**
-    - "✅ 项目已加载" 不出现
-    - _loaded_projects[umo] 未被填充
-    - 中止总结消息出现
-    """
-    p = tmp_path / "proj"
-    p.mkdir()
-    plugin = _make_plugin()
-    mocks = _patch_internal_methods(
-        plugin,
-        custom_async_gens={
-            "init": _make_error_gen("❌ 模拟:目录无代码文件"),
-        },
-    )
-    event = _make_event(umo="test:umo")
-
-    msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
-
-    # 1. 失败消息被原样转发
-    assert any("❌ 模拟:目录无代码文件" in m for m in msgs), (
-        f"应转发 init 错误消息,实际: {msgs}"
-    )
-    # 2. init 确实被调了一次
-    mocks["init"].assert_called_once()
-    # 3. 后续 2 个子方法**未被调**(stop at first error)
-    mocks["load"].assert_not_called()
-    mocks["codegraph_init"].assert_not_called()
-    mocks["codegraph_set_project"].assert_not_called()
-    # 4. 中止总结消息出现
-    assert any("失败" in m and "中止" in m for m in msgs), (
-        f"应出现 abort 总结消息,实际: {msgs}"
-    )
-    # 5. 成功消息不出现
-    assert not any("项目已加载" in m for m in msgs), f"不应出现成功消息,实际: {msgs}"
-    # 6. 状态未登记
-    assert "test:umo" not in _loaded_items(), (
-        "失败时 _loaded_projects 不应被填充,避免幽灵 load 阻塞后续 /project load"
-    )
-
-
 def test_project_load_aborts_on_agentsmd_load_error(tmp_path):
-    """agentsmd_init 成功,agentsmd_load 失败 → 中止,codegraph 方法不被调。"""
+    """AGENTS.md 存在但读取失败 → 中止,不登记项目状态。"""
     p = tmp_path / "proj"
     p.mkdir()
+    (p / "AGENTS.md").write_text("# project\n", encoding="utf-8")
     plugin = _make_plugin()
     mocks = _patch_internal_methods(
         plugin,
@@ -474,11 +397,11 @@ def test_project_load_aborts_on_agentsmd_load_error(tmp_path):
 
     msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
 
-    # init 仍被调(load 之前 init 完成)
-    mocks["init"].assert_called_once()
+    # 不再调用 init(不会自动生成 AGENTS.md)
+    mocks["init"].assert_not_called()
     # load 被调了一次
     mocks["load"].assert_called_once()
-    # codegraph 步骤**未启动**
+    # codegraph 不参与 load
     mocks["codegraph_init"].assert_not_called()
     mocks["codegraph_set_project"].assert_not_called()
     # 错误消息 + 中止总结
@@ -490,79 +413,8 @@ def test_project_load_aborts_on_agentsmd_load_error(tmp_path):
     assert _get_loaded("test:umo") is None
 
 
-def test_project_load_aborts_on_codegraph_init_error(tmp_path):
-    """agentsmd init+load 都成功,codegraph_init 失败 → 中止,状态不登记。"""
-    p = tmp_path / "proj"
-    p.mkdir()
-    plugin = _make_plugin()
-    mocks = _patch_internal_methods(
-        plugin,
-        custom_async_gens={
-            "codegraph_init": _make_error_gen("❌ 模拟:codegraph CLI 找不到"),
-        },
-    )
-    event = _make_event(umo="test:umo")
-
-    msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
-
-    # 前 3 步都被调
-    mocks["init"].assert_called_once()
-    mocks["load"].assert_called_once()
-    mocks["codegraph_init"].assert_called_once()
-    # set_project 不属于 load 流程, 不应被调
-    mocks["codegraph_set_project"].assert_not_called()
-    # 错误消息 + 中止总结
-    assert any("❌ 模拟:codegraph CLI 找不到" in m for m in msgs)
-    assert any("失败" in m and "中止" in m for m in msgs)
-    # 无成功消息
-    assert not any("项目已加载" in m for m in msgs)
-    # 状态未登记
-    assert _get_loaded("test:umo") is None
-
-
-def test_project_load_does_not_abort_on_warning(tmp_path):
-    """⚠️ 不触发中止 — codegraph.init 内部 retry 路径会用到。
-
-    _codegraph_init_or_uninit 在 "目标已初始化 → 自动 --force 重试" 路径上
-    以 "⚠️ ..." 起头,但最终会成功(返回 ✅)。这期间不能被误判为失败。
-    """
-    p = tmp_path / "proj"
-    p.mkdir()
-
-    async def _warning_gen(*args, **kwargs):
-        yield "⚠️ 模拟:目标已初始化,自动用 --force 重试..."
-
-    plugin = _make_plugin()
-    mocks = _patch_internal_methods(
-        plugin,
-        custom_async_gens={
-            "codegraph_init": _warning_gen,
-        },
-    )
-    event = _make_event(umo="test:umo")
-
-    msgs = _collect_async_gen(plugin.project.load_impl(event, str(p)))
-
-    # 后续方法**全部被调**(warning 不中止)
-    mocks["init"].assert_called_once()
-    mocks["load"].assert_called_once()
-    mocks["codegraph_init"].assert_called_once()
-    # set_project 不属于 load 流程, 不应被调
-    mocks["codegraph_set_project"].assert_not_called()
-    # 状态已登记
-    assert _get_loaded("test:umo") is not None
-    # 成功消息
-    assert any("项目已加载" in m for m in msgs)
-    # warning 消息被透传
-    assert any("⚠️" in m and "重试" in m for m in msgs)
-    # 不应出现 abort 总结
-    assert not any("失败" in m and "中止" in m for m in msgs), (
-        f"⚠️ 不应触发中止,实际: {msgs}"
-    )
-
-
 def test_project_load_skips_agentsmd_init_if_md_exists(tmp_path):
-    """AGENTS.md 已存在 → 跳过 init,只调 load。"""
+    """AGENTS.md 已存在 → 只调 load,不调 init。"""
     p = tmp_path / "proj"
     p.mkdir()
     (p / "AGENTS.md").write_text("# existing", encoding="utf-8")
@@ -578,8 +430,8 @@ def test_project_load_skips_agentsmd_init_if_md_exists(tmp_path):
     mocks["load"].assert_called_once()
     # 状态记录
     assert _get_loaded(event.unified_msg_origin) is not None
-    # 提示信息
-    assert any("AGENTS.md 已存在" in m and "跳过 init" in m for m in msgs)
+    # 提示信息:直接进入加载,不再有 init 阶段
+    assert any("正在加载 AGENTS.md" in m for m in msgs)
 
 
 # ── 6. 卸载流程 ────────────────────────────────

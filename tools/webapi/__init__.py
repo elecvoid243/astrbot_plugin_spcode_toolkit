@@ -5,7 +5,8 @@ This package owns the 25 ``/spcode/*`` HTTP endpoints consumed by the
 Dashboard / WebUI:
 
   * ``/spcode/project-status``  (GET)
-  * ``/spcode/project-load``    (POST)  # 2026-07-28 — 静默加载项目
+  * ``/spcode/project-load``    (POST)  # 2026-07-28 — 静默加载项目(2026-11-07:
+                                        #   仅登记目录 + 注入已存在的 AGENTS.md)
   * ``/spcode/plan-mode``       (GET)
   * ``/spcode/git-worktrees``   (GET)
   * ``/spcode/git-diff``        (GET)
@@ -166,7 +167,7 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         "/spcode/project-load",  # 2026-07-28 静默加载项目
         ["POST"],
         project_load.handle,
-        "静默加载项目(dashboard 调用,不在聊天框 yield 用户消息;仿照 plan-mode 切换模式)",
+        "静默加载项目(登记目录;AGENTS.md 存在则注入,不生成、不初始化 codegraph)",
     ),
     (
         "/spcode/project-unload",  # 2026-08-06 静默卸载项目

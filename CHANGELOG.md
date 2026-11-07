@@ -4,6 +4,15 @@ spcode 工具箱的版本变更记录。格式参考 [Keep a Changelog](https://
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。本文件由 AstrBot Dashboard 插件页的
 「更新日志」按钮直接读取并渲染。
 
+## [v2.34.0] - 2026-11-07
+
+### 变更
+
+- 项目加载改为“选路径即加载”：只登记工作目录；目录内已有 `AGENTS.md` 时注入 system prompt，不存在时不再自动调用 LLM 生成。
+- 项目加载不再自动执行 codegraph init；索引改由 `/codegraph init` 或 WebUI 的 Codegraph 管理页手动初始化。
+- `/project load` 与 `POST /spcode/project-load` 共用同一条流水线；`force` / `replace` 改为原子替换，新路径校验与 AGENTS.md 注入成功后才替换旧项目，失败时保留旧项目。
+- `GET /spcode/project-status` 新增 `agents_md` 字段；`no_codegraph` 仅保留兼容、不再产生行为。
+
 ## [v2.33.1] - 2026-11-04
 
 ### 修复

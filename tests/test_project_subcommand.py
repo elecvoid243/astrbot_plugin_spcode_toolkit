@@ -158,7 +158,7 @@ def plugin():
     return _make_plugin()
 
 
-def test_project_load_registers_loaded_directory(plugin_with_mocks):
+def test_project_load_registers_loaded_directory(plugin_with_mocks, tmp_path):
     """``/project load <dir>`` should register the directory under the
     event's umo so subsequent ``status`` queries succeed.
 
@@ -167,7 +167,8 @@ def test_project_load_registers_loaded_directory(plugin_with_mocks):
     """
     plugin = plugin_with_mocks
     event = _make_event()
-    path = "/tmp/some/repo"
+    path = str(tmp_path / "repo")
+    Path(path).mkdir()
     msgs = _run(_drive(plugin, event, "load", path))
     text = "".join(msgs)
     assert "已加载" in text or path in text
@@ -186,7 +187,7 @@ def test_project_load_without_directory_arg_reports_error(plugin):
     assert _get_loaded(event.unified_msg_origin) is None
 
 
-def test_project_unload_clears_directory(plugin_with_mocks):
+def test_project_unload_clears_directory(plugin_with_mocks, tmp_path):
     """``/project unload`` should remove the entry so ``status`` reports
     nothing loaded.
 
@@ -194,25 +195,23 @@ def test_project_unload_clears_directory(plugin_with_mocks):
     """
     plugin = plugin_with_mocks
     event = _make_event()
-    _run(_drive(plugin, event, "load", "/tmp/x"))
+    _run(_drive(plugin, event, "load", str(tmp_path)))
     assert _get_loaded(event.unified_msg_origin) is not None
     _run(_drive(plugin, event, "unload"))
     assert _get_loaded(event.unified_msg_origin) is None
 
 
-def test_project_status_reports_loaded_project(plugin_with_mocks):
+def test_project_status_reports_loaded_project(plugin_with_mocks, tmp_path):
     """``/project status`` should mention the directory when one is loaded.
 
     v2.7.1: 改用 mock 子步骤,见 ``test_project_load_registers_loaded_directory``。
     """
     plugin = plugin_with_mocks
     event = _make_event()
-    _run(_drive(plugin, event, "load", "/tmp/y"))
+    _run(_drive(plugin, event, "load", str(tmp_path)))
     msgs = _run(_drive(plugin, event, "status"))
     text = "".join(msgs)
-    # The directory is resolved via Path.resolve(), which on Windows turns
-    # "/tmp/y" into "<Drive>:\\tmp\\y". Assert against the resolved form.
-    assert str(Path("/tmp/y").resolve()) in text
+    assert str(tmp_path) in text
     assert "spcode-status" not in text
 
 

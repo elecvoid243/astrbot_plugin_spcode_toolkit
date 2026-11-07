@@ -199,7 +199,9 @@ def test_replace_unloads_old_then_loads_new(env, tmp_path):
         _drive(plugin, event, str(new), "replace", "no_agentsmd", "no_codegraph")
     )
     joined = "".join(str(m) for m in msgs)
-    assert "卸载旧项目" in joined
+    # 2026-11-07: replace is atomic — the old entry is swapped only after
+    # the new path has been validated.
+    assert "已替换旧项目" in joined
     assert _proj_state.get(UMO)["directory"] == str(new.resolve())
 
 

@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.33.1** · Author: elecvoid243 · 最后更新: 2026-11-04
+> **当前版本: v2.34.0** · Author: elecvoid243 · 最后更新: 2026-11-07
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -521,7 +521,7 @@ AstrBot 主仓库（`all` 分支）已内置 `astrbot_file_remove` 工具（`loc
 10. **路径安全**：任何涉及用户输入路径的代码，先调用 `_path_safety` 校验，**不要**自己实现路径判断
 11. **Web API 参数安全**：`?worktree=` 等用户控制的路径参数，必须经过 `_validate_worktree_param`（位于 `tools/_helpers.py`）的 6 步防御链：**关键不变量 - git-common-dir 不匹配 = 直接拒绝**
 12. **配置拍平**：`_conf_schema.json` 是分组结构，`main.py._flatten_config()` 会把嵌套分组拍平为顶层键（如 `codegraph.codegraph_enabled` -> `codegraph_enabled`）。新增配置项时保持此约定
-13. **版本号统一**：当前版本统一为 **v2.33.1**。发布时同步更新 `metadata.yaml` 的 `version` 字段、`main.py` 的 `@register` 版本、README 与本文档的当前版本，并在 `CHANGELOG.md` 补一条对应版本的记录（Dashboard 插件页的「更新日志」直接读该文件）
+13. **版本号统一**：当前版本统一为 **v2.34.0**。发布时同步更新 `metadata.yaml` 的 `version` 字段、`main.py` 的 `@register` 版本、README 与本文档的当前版本，并在 `CHANGELOG.md` 补一条对应版本的记录（Dashboard 插件页的「更新日志」直接读该文件）
 
 ## Project 加载 — 静默变体 (2026-07-28)
 
@@ -533,12 +533,17 @@ dashboard 的 plan/build chip 直调），
 ### 关键组件
 
 - `tools/project/manager.py:ProjectManager.load_impl_silent` — `async def`（非 generator）
-  变体，行为与 `load_impl` 完全一致（feature flag、路径校验、3 步流水线、state 登记），
-  返回结构化 `dict` 而非 yield 用户消息。
+  变体，与 `load_impl` 共用 `_load_impl_silent_core` 单一流水线：路径校验 +
+  目录登记 + “AGENTS.md 存在则注入”。返回结构化 `dict` 而非 yield 用户消息。
+- **2026-11-07 重设计**：load 不再调用 `agentsmd.init`（不自动生成 AGENTS.md），
+  也不再调用 `codegraph.init`。codegraph 索引由用户通过 `/codegraph init`
+  或 WebUI 的 Codegraph 管理页手动执行。
 - `tools/webapi/project_load.py` — POST handler，body 校验后调
   `plugin.project.load_impl_silent(...)` 并把内部 reason 翻译为 `ReasonCode`。
-- `force=true` 时静默卸载已加载项目（绕开 `unload_impl` 的 yield 反馈，
-  走 `_silent_unload` 同步 helper）。
+- `force=true` 时以原子替换语义覆盖已加载项目：新路径校验与 AGENTS.md
+  注入成功后才卸载旧项目；失败的加载保留旧项目。
+- `no_agentsmd` 保留为显式 opt-out；`no_codegraph` 仅为兼容旧客户端保留，
+  不再产生行为。
 
 ### Envelope
 
@@ -553,7 +558,8 @@ dashboard 的 plan/build chip 直调），
     "directory": "/abs/path",
     "loaded_at": 1700000000.0,
     "umo": "webchat:...",
-    "skipped_substeps": [],
+    "skipped_substeps": ["agentsmd"],
+    "agents_md": false,
     "substep_messages": ["...", "✅ 项目已加载: ..."]
   }
 }
@@ -584,7 +590,7 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | 端点 | 方法 | 用途 | 关键参数 |
 |------|------|------|---------|
 | `/spcode/project-status` | GET | 当前加载项目状态 | `umo?` |
-| `/spcode/project-load` | POST | 静默加载项目（2026-07-28，仿照 plan-mode 切换模式） | body: `{directory, no_agentsmd?, no_codegraph?, force?, umo}` |
+| `/spcode/project-load` | POST | 静默加载项目；仅登记目录 + 注入已存在的 AGENTS.md，不生成、不初始化 codegraph（2026-11-07 重设计） | body: `{directory, no_agentsmd?, no_codegraph?, force?, umo}` |
 | `/spcode/plan-mode` | GET | 当前 plan-mode 状态（严格 per-session，不回退） | `umo?` |
 | `/spcode/git-worktrees` | GET | 列出 worktree | `umo?` |
 | `/spcode/git-diff` | GET | 工作区 diff（ETag/304） | `umo?`, `worktree?` |
@@ -766,4 +772,4 @@ pytest tests/ --cov=tools                    # 覆盖率
 
 ---
 
-> Author: elecvoid243 · 本文档同步至 v2.33.1 (2026-11-04)
+> Author: elecvoid243 · 本文档同步至 v2.34.0 (2026-11-07)
