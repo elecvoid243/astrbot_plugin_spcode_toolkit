@@ -279,7 +279,7 @@ async def test_git_worktrees_prunes_stale_activation(tmp_path):
     plugin.get_loaded_project.side_effect = lambda umo: _proj_state.get(umo)
     _activation.put(UMO, path=str(linked), branch="feat", directory=str(primary))
 
-    subprocess.run(
+    subprocess.run(  # noqa: ASYNC221 - 测试内同步清理真实 worktree
         ["git", "-C", str(primary), "worktree", "remove", "--force", str(linked)],
         check=True,
         capture_output=True,
@@ -377,10 +377,11 @@ def test_hook_injects_persisted_text_part(tmp_path):
     状态必须写进 main.py 相对导入的那个模块实例
     (``astrbot_plugin_spcode_toolkit.tools.worktree_activation``),
     否则钩子读到的是另一份空 dict。"""
-    from astrbot.core.agent.message import TextPart
     from astrbot_plugin_spcode_toolkit.tools import (
         worktree_activation as _pkg_activation,
     )
+
+    from astrbot.core.agent.message import TextPart
 
     wt_dir = tmp_path / "linked"
     wt_dir.mkdir()
@@ -399,6 +400,58 @@ def test_hook_injects_persisted_text_part(tmp_path):
     # 2026-09-30 起不使用 mark_as_temp:文本随历史持久化,
     # 保证 prefix cache 连续性(上一轮 assistant 输出缓存不被丢弃)
     assert getattr(part, "_no_save", False) is False
+
+
+def test_worktree_guidance_not_duplicated_when_unchanged(tmp_path):
+    """同一 worktree 连续请求:上一轮注入已落盘 → 本轮不再追加。"""
+    from astrbot_plugin_spcode_toolkit.tools import (
+        worktree_activation as _pkg_activation,
+    )
+
+    wt_dir = tmp_path / "linked"
+    wt_dir.mkdir()
+    _proj_state.put(UMO, {"directory": str(tmp_path), "loaded_at": 1.0})
+    _pkg_activation.put(UMO, path=str(wt_dir), branch="feat", directory=str(tmp_path))
+    plugin = _make_hook_plugin()
+
+    first = _make_req()
+    first.contexts = []
+    asyncio.run(plugin._worktree_activation_inject(_make_event(), first))
+    assert len(first.extra_user_content_parts) == 1
+    injected = first.extra_user_content_parts[0].text
+
+    # 第二轮:上一轮注入已持久化到会话历史,内容一致 → 跳过。
+    second = _make_req()
+    second.contexts = [{"role": "user", "content": injected}]
+    asyncio.run(plugin._worktree_activation_inject(_make_event(), second))
+    assert second.extra_user_content_parts == []
+
+
+def test_worktree_guidance_reinjected_after_switch_back(tmp_path):
+    """切到另一个 worktree 再切回:最新一块不同,必须重新注入。"""
+    from astrbot_plugin_spcode_toolkit.tools import (
+        worktree_activation as _pkg_activation,
+    )
+    from tools._guidance_text import ACTIVE_WORKTREE_GUIDANCE_TEMPLATE
+
+    wt_dir = tmp_path / "linked"
+    wt_dir.mkdir()
+    _proj_state.put(UMO, {"directory": str(tmp_path), "loaded_at": 1.0})
+    _pkg_activation.put(UMO, path=str(wt_dir), branch="feat", directory=str(tmp_path))
+    plugin = _make_hook_plugin()
+
+    other = ACTIVE_WORKTREE_GUIDANCE_TEMPLATE.format(
+        worktree=str(tmp_path / "other"), branch="dev"
+    )
+    req = _make_req()
+    req.contexts = [
+        {"role": "user", "content": other},
+        {"role": "assistant", "content": "ok"},
+    ]
+    asyncio.run(plugin._worktree_activation_inject(_make_event(), req))
+
+    assert len(req.extra_user_content_parts) == 1
+    assert _norm(wt_dir) in _norm(req.extra_user_content_parts[0].text)
 
 
 def test_hook_no_injection_cases(tmp_path):

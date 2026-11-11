@@ -28,11 +28,14 @@ from astrbot.api.star import (  # noqa: F401  (re-export for test compat: tests/
 )
 from astrbot.core.agent.message import TextPart
 
+from .tools._branch_inherit import inherit_state
+
 # 业务子系统 import — 详见 docs/superpowers/specs/2026-06-23-main-py-refactor-design.md
 # main.py 在 PR-0~PR-7 拆分后只保留插件入口职责; 业务逻辑全部下沉到 tools/* 子包。
 from .tools._config_filter import ALL_TOOL_NAMES, filter_enabled_tools
 from .tools._external_tools import merge_external_tool_defaults
 from .tools._guidance_text import (
+    ACTIVE_WORKTREE_GUIDANCE_MARKER,
     ACTIVE_WORKTREE_GUIDANCE_TEMPLATE,
     CODE_CHECK_GUIDANCE,
     CODE_CHECK_GUIDANCE_MARKER,
@@ -80,7 +83,7 @@ from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
 )
 from .tools.function_tools.todo_base import _TodoToolBase
 from .tools.inta_shell.component import LocalInteractiveShellComponent
-from .tools.llm_inject import inject_guidance
+from .tools.llm_inject import already_injected, inject_guidance
 from .tools._branch_inherit import inherit_state
 from .tools.operation_progress import begin as _progress_begin
 from .tools.operation_progress import finish as _progress_finish
@@ -904,13 +907,14 @@ class SPCodeToolkit(star.Star):
         # WHY 不标 mark_as_temp: temp 文本不落库,下一轮请求的历史重建
         # 会在注入点分叉,上一轮 assistant 输出(及工具轮)的服务器侧
         # prefix cache 全部失效;持久化后历史连续,缓存命中得以延伸。
-        req.extra_user_content_parts.append(
-            TextPart(
-                text=ACTIVE_WORKTREE_GUIDANCE_TEMPLATE.format(
-                    worktree=worktree_path, branch=branch
-                )
-            )
+        guidance = ACTIVE_WORKTREE_GUIDANCE_TEMPLATE.format(
+            worktree=worktree_path, branch=branch
         )
+        # 只与最近一次注入比较:worktree 切换后再切回来,历史里的旧块不能让
+        # 新块被吞掉;路径与分支都没变时则不重复追加。
+        if already_injected(req, guidance, ACTIVE_WORKTREE_GUIDANCE_MARKER):
+            return
+        req.extra_user_content_parts.append(TextPart(text=guidance))
         logger.debug(
             f"[worktree-activation] 已向会话 {umo} 注入激活 worktree: {worktree_path}"
         )

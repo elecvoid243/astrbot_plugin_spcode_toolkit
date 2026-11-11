@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 def inject_guidance(
-    req: "ProviderRequest",
+    req: ProviderRequest,
     text: str,
     marker: str,
     *,
@@ -55,3 +55,64 @@ def inject_guidance(
         payload = payload.lstrip("\n")
     req.system_prompt = (current + payload) if current else payload
     return True
+
+
+def last_marked_text(req: ProviderRequest, marker: str) -> str | None:
+    """Return the most recent injected block carrying ``marker``.
+
+    Injected blocks are persisted with the conversation, so history can hold
+    several blocks from earlier states. Only the newest one describes the state
+    in effect now; comparing against older ones would suppress a legitimate
+    re-injection after the state changed and then changed back.
+
+    Args:
+        req: Request about to be handed to the agent runner.
+        marker: Stable text that identifies the injection.
+
+    Returns:
+        The newest marked text, or None when nothing was injected yet.
+    """
+    parts = getattr(req, "extra_user_content_parts", None)
+    if isinstance(parts, (list, tuple)):
+        for part in reversed(parts):
+            part_text = (
+                part.get("text")
+                if isinstance(part, dict)
+                else getattr(part, "text", None)
+            )
+            if isinstance(part_text, str) and marker in part_text:
+                return part_text
+
+    contexts = getattr(req, "contexts", None)
+    if isinstance(contexts, (list, tuple)):
+        for message in reversed(contexts):
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                if marker in content:
+                    return content
+            elif isinstance(content, list):
+                for block in reversed(content):
+                    if isinstance(block, dict):
+                        block_text = block.get("text")
+                        if isinstance(block_text, str) and marker in block_text:
+                            return block_text
+    return None
+
+
+def already_injected(req: ProviderRequest, text: str, marker: str) -> bool:
+    """Return whether the newest marked block already equals ``text``.
+
+    Args:
+        req: Request about to be handed to the agent runner.
+        text: Text about to be injected.
+        marker: Stable text that identifies the injection.
+
+    Returns:
+        True when the most recent marked block is this text.
+    """
+    last = last_marked_text(req, marker)
+    if last is None:
+        return False
+    return last == text or text in last

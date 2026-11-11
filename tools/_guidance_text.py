@@ -58,6 +58,9 @@ For file reads/writes, code changes and git operations on this project, use that
 </active_worktree>
 """
 
+# 防重复注入标记：与模板里的开标签一致，用于识别历史中已有的 worktree 块。
+ACTIVE_WORKTREE_GUIDANCE_MARKER: str = "<active_worktree>"
+
 
 # astrbot_file_remove_tool 启用时注入到 system_prompt 末尾的指引。
 # 设计目标:让 LLM 优先使用 file_remove 工具(自带路径安全 + 回收站)而非绕过。
