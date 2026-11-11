@@ -228,15 +228,13 @@ def test_run_cmd_internally_passes_no_window(monkeypatch):
 
 def test_no_production_subprocess_call_without_no_window():
     """扫描整个 tools/ + main.py,任何 spawn 都必须带 _NO_WINDOW_KWARGS
-    或位于 run_cmd / inta_shell Popen 的中央 wrapper 内部。
+    或位于 run_cmd 的中央 wrapper 内部。
 
     WHY: 这是"全量覆盖"规则的实现。规则来自用户:
         "插件内提供的一切 subprocess 相关的都请加上 creationflag"
 
-    实现在 tools._helpers.run_cmd / tools.inta_shell.component 中:
+    实现在 tools._helpers.run_cmd 中:
     - ``run_cmd`` 在 tools._helpers 内拼了 ``**_NO_WINDOW_KWARGS``
-    - ``subprocess.Popen`` 在 tools.inta_shell.component.py:632 显式设置
-      ``creationflags=CREATE_NO_WINDOW``,这两个调用点视为"间接受保护"
 
     此 test 用 AST 扫描源文件找 spawn 调用;不对应的就 fail,
     提示修复者加上 ``**_NO_WINDOW_KWARGS`` 或迁到 wrapper。
@@ -247,10 +245,9 @@ def test_no_production_subprocess_call_without_no_window():
     ROOT = Path(".")
     WRAPPER_FILES = {
         Path("tools/_helpers.py").resolve(),  # run_cmd
-        Path("tools/inta_shell/component.py").resolve(),  # Popen (component.py:632)
         # terminal 会话 spawn: 刻意 CREATE_NEW_CONSOLE + SW_HIDE(自有隐藏
         # 控制台,PS 5.1 标题更新语义,见 component.py 内注释),不走
-        # CREATE_NO_WINDOW 路径。与 inta_shell 同理视为"自管窗口策略"。
+        # CREATE_NO_WINDOW 路径。视为"自管窗口策略"。
         Path("tools/terminal/component.py").resolve(),
     }
 
@@ -320,8 +317,7 @@ def test_no_production_subprocess_call_without_no_window():
             window_text = "\n".join(lines[window_start:window_end])
 
             # 小写不敏感:匹配 _NO_WINDOW_KWARGS / _no_window
-            # 也匹配显式写死的 creationflags=(CREATE_NO_WINDOW ...)(
-            # inta_shell/component.py 不在此 wrapper 列表,显式条件单独处理)
+            # 也匹配显式写死的 creationflags=(CREATE_NO_WINDOW ...)
             has_no_window = "no_window" in window_text.lower() or (
                 "creationflags" in window_text and "CREATE_NO_WINDOW" in window_text
             )

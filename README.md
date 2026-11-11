@@ -1,6 +1,6 @@
 # spcode 工具箱
 
-> **当前版本: v2.34.1** · 作者: elecvoid243 · [更新日志](CHANGELOG.md)
+> **当前版本: v2.35.0** · 作者: elecvoid243 · [更新日志](CHANGELOG.md)
 
 AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用工具，并附带一套供 Dashboard 消费的 Web API。
 
@@ -15,7 +15,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | 文件操作 | `astrbot_file_remove` 沙箱化删除（v2.29.3 起已上移内核）；`astrbot_file_compare` 结构化差异比较 |
 | 文件搜索 | `es_search` Everything/locate/fd/Python 兜底文件名搜索 |
 | 任务管理 | `todo_*` 6 工具，LLM 自我管理跨会话持久化任务清单 |
-| 交互式 Shell | `astrbot_inta_shell_*` 5 工具，多轮双向 Shell 会话管理 |
+| 交互式 Shell | 由 AstrBot 核心 `astrbot_execute_shell` / `astrbot_shell_session` 提供（本插件已不再内置） |
 | 项目加载 | `/project load|unload|status` 加载目录；AGENTS.md 存在则注入，不自动生成、不自动初始化 codegraph |
 | Plan/Build 模式 | `/plan` 禁用写工具进入只读调研；`/build` 还原 |
 | Web API | 31 条 `/spcode/*` 路由，供 Dashboard 实时拉取项目状态/文件树/git 信息 |
@@ -24,7 +24,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 ## 工具清单
 
-### 本地 LLM 工具（16 个）
+### 本地 LLM 工具（12 个）
 
 通过 `enabled_tools` 配置项按需启用（默认全部禁用）。勾选快捷组名会自动展开为一组子工具。
 
@@ -36,7 +36,6 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | `astrbot_file_remove` | 文件操作（写入） | 沙箱化文件/目录删除，双层黑名单 + 批量确认提案机制。**v2.29.3 起已上移内核**：AstrBot 主仓库内置同名工具时插件让位不重复注册（旧核心仍由本插件提供），详见下节 |
 | `astrbot_file_compare` | 文件操作（只读） | 结构化文件差异（added/removed 行数 + unified diff），UTF-8/GBK 自适应 |
 | `todo_create` / `todo_query` / `todo_add` / `todo_update` / `todo_delete` / `todo_clear` | 任务管理（6 个，组别名 `todo_list`） | LLM 自我管理任务清单；v2.12 把 `todo_modify` 拆为 3 个独立工具，消除 `mode` 误用 |
-| `astrbot_inta_shell_start` / `_send` / `_read` / `_stop` / `_list` | 交互式 Shell（5 个，组别名 `inta_shell`） | 持久子进程多轮双向通信 |
 
 ### MCP 工具（codegraph，默认 1 个）
 
@@ -165,10 +164,6 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | `agentsmd_enabled` | 布尔 | `true` | AGENTS.md 管理总开关。设为 false 则 `/agentsmd` 命令和 LLM 注入均不生效 |
 | `init_template` | 文本 | `""` | AGENTS.md 初始生成模板。用于 `/agentsmd init` 和 `/agentsmd update` 时调 LLM 的 prompt。留空使用默认模板 |
 
-### inta_shell 配置（已隐藏，v2.23+）
-
-> v2.23 (2026-08-11) 起，inta_shell 配置项已从 `_conf_schema.json` 隐藏——AstrBot 官方核心已内置等价交互式 shell 工具（`astrbot_execute_shell` / `astrbot_shell_session`），建议以官方工具为主。运行时固定使用默认值：`max_sessions=10`、`session_timeout=1800s`、`block_unsafe=true`、`default_cwd` 空（AstrBot workspace）。
-
 ### plan_mode 配置（v2.8+）
 
 | 字段 | 类型 | 默认 | 说明 |
@@ -187,9 +182,6 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
   "todo_update",
   "todo_delete",
   "todo_clear",
-  "astrbot_inta_shell_start",
-  "astrbot_inta_shell_send",
-  "astrbot_inta_shell_stop",
   "astrbot_file_write_tool",
   "astrbot_file_edit_tool"
 ]
@@ -205,12 +197,11 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 `enabled_tools` 多选列表除独立工具外，还支持**快捷组名**（group alias）-- 勾选后系统一次性给 LLM 注入该组全部子工具，避免漏勾导致功能残缺：
 
-- `inta_shell` - 自动展开为 `astrbot_inta_shell_start`、`_send`、`_read`、`_stop`、`_list` 共 5 个工具。**v2.23 起从配置 UI 隐藏**（官方 `astrbot_execute_shell` / `astrbot_shell_session` 已覆盖同能力）；仅兼容老 config 中已勾选该组的用户，运行时固定默认参数
 - `todo_list` (v2.6.1+) - 自动展开为 `todo_create` / `todo_query` / `todo_add` / `todo_update` / `todo_delete` / `todo_clear` 共 6 个工具
 - `file_compare` - 展开为 `astrbot_file_compare`
 - `file_remove` - 展开为 `astrbot_file_remove`
 
-> v2.12 起 `todo_modify` 工具已删除，老 config 中显式列出的 `todo_modify` 会被 `filter_enabled_tools()` 报告为 `unknown` 提示升级，不会静默忽略。
+> v2.12 起 `todo_modify` 工具已删除，老 config 中显式列出的 `todo_modify` 会被 `filter_enabled_tools()` 报告为 `unknown` 提示升级，不会静默忽略。`inta_shell` 组别名同样已移除，老 config 中的该条目会报 `unknown`。
 
 ## 前置依赖
 
@@ -386,23 +377,6 @@ todo_clear()
 - `/plan` 激活后，`plan_mode_blocked_tools` 列出的工具的执行被禁用（schema 仍可见，调用返回 Permission denied 错误），LLM 只能使用只读工具调研；并在第一轮 LLM 调用时向 user message 注入 plan 模式 reminder。工具 schema 在 /plan 与 /build 之间保持字节不变，prefix cache 不会因模式切换失效
 - `/build` 退出 plan 模式，恢复全部工具可用。默认状态下完全不修改 LLM 请求，与 AstrBot 默认行为一致
 - plan 模式状态严格 per-session（按 umo 隔离），不回退
-
-### astrbot_inta_shell_* - 交互式 Shell
-
-支持多轮双向通信的持久子进程管理：
-
-- **`_start`**：启动交互式进程（如 `npm init`、`python REPL`、`git add -p`），返回 `session_id`
-- **`_send`**：向会话发送输入（自动补换行），支持 `send_eof` 关闭 stdin
-- **`_read`**：阻塞读取输出，支持 timeout 和 max_chars 控制
-- **`_stop`**：终止会话（默认 Ctrl+C 优雅退出，超时后强制 kill；`force=true` 立即 kill）
-- **`_list`**：列出所有活跃会话
-
-安全特性：
-- 启动时检查高危命令（`rm -rf`、`shutdown`、`mkfs`、`sudo`、`kill -9`、fork 炸弹等），固定开启（v2.23 起配置项已隐藏）
-- 后台清理协程周期性回收已退出/空闲超时会话
-- Windows 兼容（UTF-8 代码页，GBK 降级解码）
-
-> 不支持完整 TTY 程序（如 vim、nano、less）。对于一次性非交互命令，优先使用 AstrBot 内置的 `astrbot_execute_shell` 工具；交互式 Shell 会话管理同样建议使用官方 `astrbot_execute_shell` + `astrbot_shell_session`（v2.23 起本插件 inta_shell 配置项已隐藏）。
 
 ## codegraph 集成
 
@@ -604,7 +578,7 @@ astrbot_plugin_spcode_toolkit/
     │   ├── admin.py              #   L1 管理员鉴权
     │   └── plan_mode.py          #   plan/build 模式控制器（禁用工具执行 + reminder 注入）
     │
-    ├── function_tools/           # 16 个 LLM FunctionTool 类（一文件一工具）
+    ├── function_tools/           # 12 个 LLM FunctionTool 类（一文件一工具）
     │   ├── __init__.py           #   ALL_TOOL_CLASSES 集中注册表
     │   ├── _common.py            #   record_and_run 模板
     │   ├── code_check.py
@@ -614,16 +588,7 @@ astrbot_plugin_spcode_toolkit/
     │   ├── file_remove.py
     │   ├── todo_base.py          #   _TodoToolBase 共用基类
     │   ├── todo_create.py / todo_query.py / todo_add.py / todo_update.py / todo_delete.py / todo_clear.py
-    │   ├── todo_modify.py        #   legacy（v2.12 已从注册表移除，保留后端兼容）
-    │   └── inta_shell_{start,send,read,stop,list}.py
-    │
-    ├── inta_shell/               # 交互式 Shell 复合工具集
-    │   ├── __init__.py
-    │   ├── component.py          #   持久子进程管理组件
-    │   ├── tools.py              #   5 个 Shell 工具的纯函数实现
-    │   ├── session_models.py     #   会话数据模型
-    │   ├── paths.py              #   workspace 路径解析
-    │   └── runtime.py            #   模块级单例（component + default_cwd）
+    │   └── todo_modify.py        #   legacy（v2.12 已从注册表移除，保留后端兼容）
     │
     ├── llm_inject/               # system_prompt 指引注入辅助
     │   └── __init__.py           #   inject_guidance（marker 防重复）
@@ -675,8 +640,7 @@ astrbot_plugin_spcode_toolkit/
 1. **入口层** `main.py`：在 AstrBot 启动时被加载；注册 AstrBot 工具（供 LLM 调用）+ 命令（`/codegraph`(+别名 `/cg`)、`/agentsmd`、`/project`、`/vivado`、`/plan`、`/build`）+ 多个 `@filter.on_llm_request()` 钩子（AGENTS.md 注入、codegraph 指引、todo/file_remove/code_check/code_format 指引、vivado 指引、L1 鉴权、plan 模式过滤）；读取 `_conf_schema.json` 配置；**L1 鉴权**：整个 spcode 工具箱为管理员工具集，非管理员不可见任何工具
 
 2. **工具层** `tools/`（PR-0~PR-7 拆分自 main.py，子包化）：
-   - `function_tools/` - 16 个 LLM FunctionTool 类，一文件一工具，`ALL_TOOL_CLASSES` 集中注册表
-   - `inta_shell/` - 交互式 Shell 复合工具集（component + tools + session_models + paths + runtime 单例）
+   - `function_tools/` - 12 个 LLM FunctionTool 类，一文件一工具，`ALL_TOOL_CLASSES` 集中注册表
    - `agentsmd/` / `codegraph/` / `vivado/` / `project/` / `security/` / `llm_inject/` - 各业务子系统
    - 下划线前缀模块（`_xxx.py`）：内部模块，不直接注册为 AstrBot 工具
    - 顶层 `xxx.py`（如 `code_check.py`、`file_remove.py`）：legacy 业务实现入口，被 function_tools/ 引用

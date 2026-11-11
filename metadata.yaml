@@ -1,6 +1,6 @@
 name: astrbot_plugin_spcode_toolkit
 author: elecvoid243
 display_name: SPZX工具箱
-version: v2.34.1
+version: v2.35.0
 description: 为Astrbot提供C/Python/逻辑开发、自动化测试、项目管理能力，以及供Dashboard消费的多个Web API
 repo: https://github.com/elecvoid243/astrbot_plugin_spcode_toolkit

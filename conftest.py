@@ -21,11 +21,10 @@ WHY:
       - 改为 **lazy main.py 加载**:只在首次 ``import astrbot_plugin_spcode_toolkit.main``
         时才 exec_module,而不是 conftest 收集阶段 eager load。
         Eager load 会触发整条 main.py → tools.webapi → tools.function_tools
-        → tools.inta_shell 导入链,这条链在 standalone pytest 下会撞上多个
+        导入链,这条链在 standalone pytest 下会撞上多个
         AstrBot 运行时注入点(``astrbot.core.utils.astrbot_path`` 等)。
-      - **运行时 stub 注入**:为 standalone 测试所需的 4 个模块注入最小 stub
-        (astrbot.api.web / python_ripgrep / send2trash /
-         astrbot.core.utils.astrbot_path.get_astrbot_workspaces_path)。
+      - **运行时 stub 注入**:为 standalone 测试所需的 3 个模块注入最小 stub
+        (astrbot.api.web / python_ripgrep / send2trash)。
 """
 
 from __future__ import annotations
@@ -309,42 +308,6 @@ def _stub_missing_runtime_modules() -> None:
 
         _s2t.send2trash = _send2trash_stub
         sys.modules["send2trash"] = _s2t
-
-    # ── astrbot.core.utils.astrbot_path.get_astrbot_workspaces_path ──
-    # WHY: v2.17.0 (2026-07-16) — tools/inta_shell/paths.py 在 import 时执行
-    # ``from astrbot.core.utils.astrbot_path import get_astrbot_workspaces_path``,
-    # 新版 AstrBot 已删除该函数(改为 ``get_astrbot_data_path()``),导致整条
-    # main.py → tools.webapi → tools.function_tools → tools.inta_shell 导入链
-    # 在 standalone pytest 下崩溃。注入最小 stub 返回项目内 data/workspaces。
-    try:
-        from astrbot.core.utils.astrbot_path import (  # noqa: F401  (probe)
-            get_astrbot_workspaces_path,
-        )
-    except ImportError:
-        try:
-            import astrbot.core.utils.astrbot_path as _ap_module
-        except ImportError:
-            # astrbot 完全不存在,创建一个空模块壳
-            _ap_module = types.ModuleType("astrbot.core.utils.astrbot_path")
-            _ap_pkg = types.ModuleType("astrbot.core.utils")
-            _ap_pkg.__path__ = []  # type: ignore[attr-defined]
-            _ap_core = types.ModuleType("astrbot.core")
-            _ap_core.__path__ = []  # type: ignore[attr-defined]
-            # 若 astrbot 已被前面的 api stub 创建,保留它(不覆盖 logger 等属性)
-            if "astrbot" not in sys.modules:
-                _ap_astrbot = types.ModuleType("astrbot")
-                _ap_astrbot.__path__ = []  # type: ignore[attr-defined]
-                sys.modules["astrbot"] = _ap_astrbot
-            sys.modules["astrbot.core"] = _ap_core
-            sys.modules["astrbot.core.utils"] = _ap_pkg
-            sys.modules["astrbot.core.utils.astrbot_path"] = _ap_module
-
-        def _get_astrbot_workspaces_path_stub() -> Path:
-            """Standalone pytest stub returning the in-repo data/workspaces."""
-            return _WORKTREE_ROOT / "data" / "workspaces"
-
-        _ap_module.get_astrbot_workspaces_path = _get_astrbot_workspaces_path_stub
-
 
 _pkg_name = "astrbot_plugin_spcode_toolkit"
 if _pkg_name not in sys.modules:

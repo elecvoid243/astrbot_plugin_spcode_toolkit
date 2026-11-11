@@ -2,7 +2,7 @@
 
 覆盖:
 - 基础过滤(全部禁用 / 显式启用 / 未知工具名)
-- 组别名展开(inta_shell / todo_list)
+- 组别名展开(todo_list)
 - 混合场景(组别名 + 显式工具名 + 未知名)
 - 边界场景(None / 空列表 / 重复)
 - 迁移路径:旧 config 里有 "todo_list" 条目时,新代码应自动展开为 6 个工具
@@ -78,35 +78,7 @@ def test_duplicate_tool_names_deduplicated():
     assert unknown == set()
 
 
-# ── 2. 组别名展开(inta_shell) ──────────────────────
-
-
-def test_inta_shell_group_expands_to_5_tools():
-    """勾选 inta_shell → 展开为 5 个 shell 工具。"""
-    enabled, unknown = filter_enabled_tools(ALL_TOOL_NAMES, ["inta_shell"])
-    expected = {
-        "astrbot_inta_shell_start",
-        "astrbot_inta_shell_send",
-        "astrbot_inta_shell_read",
-        "astrbot_inta_shell_stop",
-        "astrbot_inta_shell_list",
-    }
-    assert set(enabled) == expected
-    assert "inta_shell" not in enabled, "组别名本身不应出现在启用列表中"
-    assert unknown == set()
-
-
-def test_inta_shell_group_mixed_with_explicit_tools():
-    """组别名 + 显式工具名可同时启用(展开 + 合并)。"""
-    enabled, unknown = filter_enabled_tools(
-        ALL_TOOL_NAMES, ["inta_shell", "code_check"]
-    )
-    assert "code_check" in enabled
-    assert "astrbot_inta_shell_start" in enabled
-    assert len(enabled) == 6  # 5 shell + 1 code_check
-
-
-# ── 3. 组别名展开(todo_list) ────────────────────────
+# ── 2. 组别名展开(todo_list) ────────────────────────
 
 
 def test_todo_list_group_expands_to_6_tools():
@@ -161,28 +133,20 @@ def test_todo_list_group_mixed_with_explicit_tools():
     assert unknown == set()
 
 
-# ── 4. 混合组别名 ───────────────────────────────────
+# ── 3. 已移除工具的契约保护 ─────────────────────────
 
 
-def test_both_groups_expand_together():
-    """inta_shell + todo_list 一起勾选 → 展开为 11 个工具。
+def test_legacy_inta_shell_group_entry_now_unknown():
+    """inta_shell 5 个工具已移除(核心 astrbot_execute_shell 取代)。
 
-    v2.12 (PR-split-modify): 5 shell + 6 todo = 11(原 5 + 4 = 9)。
+    老用户 config 中若仍列出 "inta_shell" 组名,filter_enabled_tools() 必须
+    把它报为 unknown(不静默忽略),以便在日志中提醒用户清理配置。
     """
-    enabled, unknown = filter_enabled_tools(ALL_TOOL_NAMES, ["inta_shell", "todo_list"])
-    # 5 shell + 6 todo = 11
-    assert len(enabled) == 11
-    assert "astrbot_inta_shell_start" in enabled
-    assert "astrbot_inta_shell_list" in enabled
-    assert "todo_create" in enabled
-    assert "todo_clear" in enabled
-    assert "todo_add" in enabled
-    assert "todo_update" in enabled
-    assert "todo_delete" in enabled
-    assert unknown == set()
-
-
-# ── 4b. v2.12 拆分后:旧显式 todo_modify 失效(契约保护) ─────
+    enabled, unknown = filter_enabled_tools(ALL_TOOL_NAMES, ["inta_shell"])
+    assert enabled == [], f"inta_shell 已移除,不应启用任何工具,实际得到 {enabled}"
+    assert "inta_shell" in unknown, (
+        "已移除的组别名 inta_shell 应被报告为 unknown,让用户从 config 移除"
+    )
 
 
 def test_legacy_todo_modify_explicit_entry_now_unknown():
@@ -199,7 +163,7 @@ def test_legacy_todo_modify_explicit_entry_now_unknown():
 
 
 # 2026-06-21: 删除 test_all_options_enabled_returns_all_group_children
-# 这是旧版本(_TOOL_GROUPS 只有 2 个组别名 inta_shell/todo_list)的遗留测试,
+# 这是旧版本(_TOOL_GROUPS 只有 todo_list 一个组别名)的遗留测试,
 # 自从加入了 file_remove/file_compare/code_check 等独立工具后永远失败。
 # 配置过滤行为本身被下方的 no_options / single_option / unknown_alias 等
 # 用例充分覆盖。
@@ -236,7 +200,7 @@ def test_all_tool_names_excludes_group_aliases():
     """ALL_TOOL_NAMES 不应包含组别名本身(组别名只属于 _TOOL_GROUPS)。
 
     这是关键不变量:组别名在 ALL_TOOL_NAMES 中会被当作"独立工具"通过校验,
-    但实际 main.py 中没有注册名为 todo_list / inta_shell 的 FunctionTool,
+    但实际 main.py 中没有注册名为 todo_list 的 FunctionTool,
     会导致 enabled_set & valid 通过,但 tools_to_register 找不到对应类。
 
     这个测试是契约保护:如果有人不慎把 "todo_list" 加回 ALL_TOOL_NAMES,
@@ -244,9 +208,6 @@ def test_all_tool_names_excludes_group_aliases():
     """
     assert "todo_list" not in ALL_TOOL_NAMES, (
         "todo_list 是组别名,只应存在于 _TOOL_GROUPS,不应在 ALL_TOOL_NAMES 中"
-    )
-    assert "inta_shell" not in ALL_TOOL_NAMES, (
-        "inta_shell 是组别名,只应存在于 _TOOL_GROUPS,不应在 ALL_TOOL_NAMES 中"
     )
 
 

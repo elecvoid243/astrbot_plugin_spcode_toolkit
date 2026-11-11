@@ -69,11 +69,6 @@ from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
     EsSearchTool,
     FileDiffTool,
     FileRemoveTool,
-    IntaShellListTool,
-    IntaShellReadTool,
-    IntaShellSendTool,
-    IntaShellStartTool,
-    IntaShellStopTool,
     TodoAddTool,
     TodoClearTool,
     TodoCreateTool,
@@ -82,7 +77,6 @@ from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
     TodoUpdateTool,
 )
 from .tools.function_tools.todo_base import _TodoToolBase
-from .tools.inta_shell.component import LocalInteractiveShellComponent
 from .tools.llm_inject import already_injected, inject_guidance
 from .tools._branch_inherit import inherit_state
 from .tools.operation_progress import begin as _progress_begin
@@ -145,7 +139,7 @@ _CORE_PROVIDES_FILE_REMOVE = False
     "astrbot_plugin_spcode_toolkit",
     "elecvoid243",
     ("spcode 开发工具箱 — 提供实用开发工具, 部分实现基于Irmia DevKit插件。"),
-    "v2.34.1",
+    "v2.35.0",
 )
 class SPCodeToolkit(star.Star):
     def __init__(self, context: star.Context, config: dict = None) -> None:
@@ -161,16 +155,6 @@ class SPCodeToolkit(star.Star):
                     _config[k] = v
         self._config = _config
 
-        # inta_shell 配置快照(initialize 前暂存)
-        # v2.23 (2026-08-11): inta_shell 配置项已从 _conf_schema.json 隐藏 —
-        # AstrBot 官方核心已内置等价交互式 shell 工具(astrbot_execute_shell /
-        # astrbot_shell_session)。此处固定使用默认值,不再读取用户配置。
-        self._inta_shell_cfg = {
-            "max_sessions": 10,
-            "session_timeout": 1800,
-            "block_unsafe": True,
-            "default_cwd": "",
-        }
         # 注入环境变量供子模块读取
         if _config.get("es_path"):
             os.environ["ES_PATH"] = _config["es_path"]
@@ -353,26 +337,6 @@ class SPCodeToolkit(star.Star):
         """插件激活(AstrBot 框架在 __init__ 后调用)。"""
         self._webapi_active = True
         register_webapi_routes(self)
-
-        # 构造 inta_shell 组件并写入 tools.inta_shell.runtime 模块级单例
-        cfg = self._inta_shell_cfg
-        component = LocalInteractiveShellComponent(
-            max_sessions=cfg["max_sessions"],
-            session_timeout_seconds=cfg["session_timeout"],
-            enable_block=cfg["block_unsafe"],
-        )
-        from .tools.inta_shell import runtime as _inta_runtime
-
-        _inta_runtime.component = component
-        _inta_runtime.default_cwd = cfg["default_cwd"]
-        logger.info(
-            "[inta_shell] initialized: max_sessions=%d, session_timeout=%ds, "
-            "block_unsafe=%s, default_cwd=%s",
-            cfg["max_sessions"],
-            cfg["session_timeout"],
-            cfg["block_unsafe"],
-            cfg["default_cwd"] or "(auto)",
-        )
 
         # 构造 terminal 会话管理器并写入 tools.terminal.runtime 模块级单例
         from .tools.terminal import runtime as _terminal_runtime
@@ -746,7 +710,6 @@ class SPCodeToolkit(star.Star):
         """Star 框架在插件卸载/重载时调用。"""
         # Registered callbacks can outlive the plugin instance's active lifecycle.
         self._webapi_active = False
-        from .tools.inta_shell import runtime as _inta_runtime
 
         # 清空 agentsmd 子系统 per-umo state
         try:
@@ -756,23 +719,6 @@ class SPCodeToolkit(star.Star):
 
         # 清空 worktree 激活状态(2026-08-20 worktree-activate)
         _reset_worktree_activation()
-
-        # 停 inta_shell 交互式 Shell 组件
-        if _inta_runtime.component is not None:
-            try:
-                logger.info("[inta_shell] terminating component...")
-                summary = await _inta_runtime.component.shutdown()
-                logger.info(
-                    "[inta_shell] terminated: %d session(s) cleaned (graceful=%d forced=%d)",
-                    summary.get("total", 0),
-                    summary.get("graceful", 0),
-                    summary.get("forced", 0),
-                )
-            except Exception as e:
-                logger.warning("[inta_shell] shutdown error: %s", e)
-            finally:
-                _inta_runtime.component = None
-                _inta_runtime.default_cwd = ""
 
         # 停 terminal 管理器:终止所有残留终端进程
         from .tools.terminal import runtime as _terminal_runtime

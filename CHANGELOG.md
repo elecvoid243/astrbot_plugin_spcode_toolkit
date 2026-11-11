@@ -4,6 +4,18 @@ spcode 工具箱的版本变更记录。格式参考 [Keep a Changelog](https://
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。本文件由 AstrBot Dashboard 插件页的
 「更新日志」按钮直接读取并渲染。
 
+## [v2.35.0] - 2026-11-11
+
+### 移除
+
+- 移除 `inta_shell` 交互式 Shell 工具集（5 个工具：`astrbot_inta_shell_start` / `_send` / `_read` / `_stop` / `_list`）及其运行时组件、配置项与测试。AstrBot 核心已内置等价的 `astrbot_execute_shell` / `astrbot_shell_session`，本插件不再重复提供。
+- `enabled_tools` 的 `inta_shell` 组别名一并移除；老配置中残留的该条目会被 `filter_enabled_tools()` 报告为 `unknown` 并忽略。
+- `plan_mode_blocked_tools` 默认值移除 3 个 inta_shell 写工具名。
+
+### 变更
+
+- 本地 LLM 工具数由 17 个减为 12 个（独立工具 6 + todo 6）。
+
 ## [v2.34.1] - 2026-11-08
 
 ### 修复

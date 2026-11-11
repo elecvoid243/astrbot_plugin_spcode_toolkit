@@ -45,11 +45,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "codegraph_install_dir": "",  # 留空依次查 tc_memory standalone 和 AstrBot external_tools
     "codegraph_project": "",  # codegraph daemon 默认操作的工程根目录
     "agentsmd_enabled": True,  # 是否启用 AGENTS.md 管理
-    # inta_shell 配置(v2.5)
-    "inta_shell_max_sessions": 10,  # 最大并发会话数
-    "inta_shell_session_timeout": 1800,  # 会话空闲超时(秒)
-    "inta_shell_block_unsafe": True,  # 是否阻止危险命令
-    "inta_shell_default_cwd": "",  # 默认工作目录
     "allowed_ids": "",  # 逗号分隔额外允许的用户 ID
     "enabled_tools": [],  # 启用的工具名列表;空 = 全部禁用(安全默认)
     "file_remove_blacklist": [],  # file_remove 用户自定义黑名单:绝对路径前缀列表

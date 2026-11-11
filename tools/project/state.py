@@ -18,7 +18,7 @@
 设计意图:从 main.py 的 self._loaded_projects 改为模块级单例。
 - plugin 单例本身,模块级与实例级在功能上等价(都是进程内唯一)
 - 子系统代码不应回写 main.py 实例属性 — 模块级更解耦
-- 与 tools.codegraph.state / tools.inta_shell.runtime 一致
+- 与 tools.codegraph.state / tools.terminal.runtime 一致
 
 向后兼容:
 - 旧调用方只读 ``directory`` / ``loaded_at`` 仍正常。

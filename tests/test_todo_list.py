@@ -1542,7 +1542,7 @@ def test_store_adopt_contract_writes_now_timestamp(tmp_path: Path):
 
 # ── TodoCreateTool 工具层 from_path 测试 (v2.9 新增) ────────
 # 工具类本身在 main.py 里,这里通过 mock ContextWrapper 验证 call() 的 XOR 路径。
-# mock 模板来自 tests/test_inta_shell.py:7 (AsyncMock + MagicMock 模式)。
+# mock 模板沿用 AsyncMock + MagicMock 模式。
 
 
 def _mock_context(

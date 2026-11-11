@@ -1,4 +1,4 @@
-"""Terminal manager module-level singleton (mirrors inta_shell/runtime.py)."""
+"""Terminal manager module-level singleton (plugin-wide singleton convention)."""
 
 from __future__ import annotations
 

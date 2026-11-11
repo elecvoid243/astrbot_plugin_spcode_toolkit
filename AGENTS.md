@@ -1,6 +1,6 @@
 # AGENTS.md - spcode 工具箱
 
-> **当前版本: v2.34.1** · Author: elecvoid243 · 最后更新: 2026-11-08
+> **当前版本: v2.35.0** · Author: elecvoid243 · 最后更新: 2026-11-11
 
 本文件供在本仓库工作的编程代理（coding agent / LLM agent）使用，描述项目结构、构建/测试命令与代码规范。修改任何代码前请先通读本文件。
 
@@ -94,7 +94,6 @@ pytest tests/test_helpers_commit_ref.py
 pytest tests/test_helpers_encoding.py
 pytest tests/test_helpers_git.py
 pytest tests/test_helpers_worktree.py
-pytest tests/test_inta_shell.py
 pytest tests/test_llm_inject.py
 pytest tests/test_no_window_kwargs.py
 pytest tests/test_path_safety.py
@@ -124,7 +123,7 @@ pytest tests/test_webapi_helpers_smoke.py
 pytest tests/test_file_remove.py::test_specific_function_name
 
 # 单个测试用例（按类+方法）
-pytest tests/test_inta_shell.py::TestClassName::test_method_name
+pytest tests/test_todo_list.py::TestClassName::test_method_name
 
 # 按关键字筛选
 pytest tests/ -k "todo"
@@ -241,7 +240,7 @@ astrbot_plugin_spcode_toolkit/
     │   ├── admin.py              #   L1 管理员鉴权
     │   └── plan_mode.py          #   plan/build 模式控制器（过滤工具 + reminder 注入）
     │
-    ├── function_tools/           # 17 个 LLM FunctionTool 类（一文件一工具，PR-2 拆分）
+    ├── function_tools/           # 12 个 LLM FunctionTool 类（一文件一工具，PR-2 拆分）
     │   ├── __init__.py           #   ALL_TOOL_CLASSES 集中注册表
     │   ├── _common.py            #   record_and_run 模板
     │   ├── code_check.py
@@ -257,16 +256,7 @@ astrbot_plugin_spcode_toolkit/
     │   ├── todo_update.py        #   v2.12 拆分自 todo_modify
     │   ├── todo_delete.py        #   v2.12 拆分自 todo_modify
     │   ├── todo_clear.py
-    │   ├── todo_modify.py        #   legacy（v2.12 已从注册表移除，保留后端兼容）
-    │   └── inta_shell_{start,send,read,stop,list}.py
-    │
-    ├── inta_shell/               # 交互式 Shell 复合工具集
-    │   ├── __init__.py
-    │   ├── component.py          #   持久子进程管理组件
-    │   ├── tools.py              #   5 个 Shell 工具的纯函数实现
-    │   ├── session_models.py     #   会话数据模型
-    │   ├── paths.py              #   workspace 路径解析
-    │   └── runtime.py            #   模块级单例（component + default_cwd）
+    │   └── todo_modify.py        #   legacy（v2.12 已从注册表移除，保留后端兼容）
     │
     ├── llm_inject/               # system_prompt 指引注入辅助
     │   └── __init__.py           #   inject_guidance（marker 防重复）
@@ -332,15 +322,14 @@ astrbot_plugin_spcode_toolkit/
 
 1. **入口层** `main.py`
    - 在 AstrBot 启动时被加载
-   - 注册 AstrBot **工具**（17 个本地 LLM 工具，经 `enabled_tools` 过滤；v2.29.3 起若核心已内置 `astrbot_file_remove` 则 shim 让位、跳过注册，见下节）
+   - 注册 AstrBot **工具**（12 个本地 LLM 工具，经 `enabled_tools` 过滤；v2.29.3 起若核心已内置 `astrbot_file_remove` 则 shim 让位、跳过注册，见下节）
    - 注册 AstrBot **命令**（`/codegraph`(+别名`/cg`)、`/agentsmd`、`/project`、`/vivado`、`/plan`、`/build`）
    - 注册多个 `@filter.on_llm_request()` 钩子：AGENTS.md 注入、codegraph 指引、todo/file_remove/code_check/code_format 指引、L1 鉴权、plan 模式工具禁用
    - 读取 `_conf_schema.json` 配置（`_flatten_config` 拍平嵌套分组）
    - **L1 鉴权**：整个 spcode 工具箱为管理员工具集，非管理员不可见任何工具（`_auth_guard` 钩子）
 
 2. **工具层** `tools/`（PR-0~PR-7 拆分自 main.py，子包化）
-   - `function_tools/` - 16 个 LLM FunctionTool 类，一文件一工具，`ALL_TOOL_CLASSES` 集中注册表；`main.py` 迭代此列表传给 `context.add_llm_tools(...)`
-   - `inta_shell/` - 交互式 Shell 复合工具集（component + tools + session_models + paths + runtime 模块级单例）
+   - `function_tools/` - 12 个 LLM FunctionTool 类，一文件一工具，`ALL_TOOL_CLASSES` 集中注册表；`main.py` 迭代此列表传给 `context.add_llm_tools(...)`
    - `agentsmd/` / `codegraph/` / `vivado/` / `project/` / `security/` / `llm_inject/` - 各业务子系统，对外暴露 facade 类
    - 下划线前缀模块（`_xxx.py`）：内部模块，不直接注册为 AstrBot 工具，供其他模块复用
    - 顶层 `xxx.py`（如 `code_check.py`、`file_remove.py`）：legacy 业务实现入口，被 `function_tools/` 引用
@@ -470,7 +459,7 @@ AstrBot 主仓库（`all` 分支）已内置 `astrbot_file_remove` 工具（`loc
 | 变量 | `snake_case` | `workspace_root`、`max_depth` |
 | 常量 | `UPPER_SNAKE_CASE` | `MAX_FILE_SIZE`、`DEFAULT_TIMEOUT` |
 | 私有成员 | 下划线前缀 | `_internal_state`、`_validate()` |
-| AstrBot 工具名 | 业务前缀 + 功能 | `astrbot_file_remove`、`astrbot_inta_shell_start` |
+| AstrBot 工具名 | 业务前缀 + 功能 | `astrbot_file_remove`、`astrbot_file_compare` |
 | MCP 工具名 | 无 `astrbot_` 前缀 | `codegraph_search`、`codegraph_explore` |
 
 ### 错误处理 (Error Handling)
@@ -521,7 +510,7 @@ AstrBot 主仓库（`all` 分支）已内置 `astrbot_file_remove` 工具（`loc
 10. **路径安全**：任何涉及用户输入路径的代码，先调用 `_path_safety` 校验，**不要**自己实现路径判断
 11. **Web API 参数安全**：`?worktree=` 等用户控制的路径参数，必须经过 `_validate_worktree_param`（位于 `tools/_helpers.py`）的 6 步防御链：**关键不变量 - git-common-dir 不匹配 = 直接拒绝**
 12. **配置拍平**：`_conf_schema.json` 是分组结构，`main.py._flatten_config()` 会把嵌套分组拍平为顶层键（如 `codegraph.codegraph_enabled` -> `codegraph_enabled`）。新增配置项时保持此约定
-13. **版本号统一**：当前版本统一为 **v2.34.1**。发布时同步更新 `metadata.yaml` 的 `version` 字段、`main.py` 的 `@register` 版本、README 与本文档的当前版本，并在 `CHANGELOG.md` 补一条对应版本的记录（Dashboard 插件页的「更新日志」直接读该文件）
+13. **版本号统一**：当前版本统一为 **v2.35.0**。发布时同步更新 `metadata.yaml` 的 `version` 字段、`main.py` 的 `@register` 版本、README 与本文档的当前版本，并在 `CHANGELOG.md` 补一条对应版本的记录（Dashboard 插件页的「更新日志」直接读该文件）
 
 ## Project 加载 — 静默变体 (2026-07-28)
 
@@ -772,4 +761,4 @@ pytest tests/ --cov=tools                    # 覆盖率
 
 ---
 
-> Author: elecvoid243 · 本文档同步至 v2.34.1 (2026-11-08)
+> Author: elecvoid243 · 本文档同步至 v2.35.0 (2026-11-11)

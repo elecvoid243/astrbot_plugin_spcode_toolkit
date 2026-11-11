@@ -1,6 +1,6 @@
 """模块级工具调用统计(defaultdict + time.time())。
 
-设计:与现有 ``_inta_component`` / ``_inta_default_cwd`` 模块级单例风格一致。
+设计:沿用插件内模块级单例约定(如 ``tools.terminal.runtime``)。
 所有 FunctionTool.call() 通过 ``_record(self.name)`` 上报调用次数与时间戳,
 供调试 / Dashboard 展示。
 
