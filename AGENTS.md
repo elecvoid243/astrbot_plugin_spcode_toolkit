@@ -97,7 +97,6 @@ pytest tests/test_helpers_worktree.py
 pytest tests/test_llm_inject.py
 pytest tests/test_no_window_kwargs.py
 pytest tests/test_path_safety.py
-pytest tests/test_plan_mode.py
 pytest tests/test_plugin_release.py
 pytest tests/test_project_cmd.py
 pytest tests/test_project_status.py
@@ -106,7 +105,6 @@ pytest tests/test_reason_code.py
 pytest tests/test_reason_codes_spec_b.py
 pytest tests/test_run_git_async.py
 pytest tests/test_security_admin.py
-pytest tests/test_security_plan_mode.py
 pytest tests/test_smoke_todo_refactor.py
 pytest tests/test_stats.py
 pytest tests/test_todo_guidance_inject.py
@@ -235,12 +233,11 @@ astrbot_plugin_spcode_toolkit/
     │   ├── pipeline.py           #   load/unload 流水线
     │   └── state.py              #   per-umo 已加载项目 state（模块级单例）
     │
-    ├── security/                 # 鉴权 + plan/build 模式
-    │   ├── __init__.py           #   check_is_admin / PlanModeController
-    │   ├── admin.py              #   L1 管理员鉴权
-    │   └── plan_mode.py          #   plan/build 模式控制器（过滤工具 + reminder 注入）
+    ├── security/                 # L1 管理员鉴权
+    │   ├── __init__.py           #   check_is_admin 导出
+    │   └── admin.py              #   L1 管理员鉴权
     │
-    ├── function_tools/           # 12 个 LLM FunctionTool 类（一文件一工具，PR-2 拆分）
+    ├── function_tools/           # 7 个 LLM FunctionTool 类（一文件一工具，PR-2 拆分）
     │   ├── __init__.py           #   ALL_TOOL_CLASSES 集中注册表
     │   ├── _common.py            #   record_and_run 模板
     │   ├── code_check.py
@@ -250,13 +247,7 @@ astrbot_plugin_spcode_toolkit/
     │   ├── file_diff.py          #   astrbot_file_compare
     │   ├── file_remove.py        #   上移核心(v2.29.3);核心内置同名工具时 shim 让位不注册
     │   ├── todo_base.py          #   _TodoToolBase 共用基类 + scope 注入（v2.28.0）
-    │   ├── todo_create.py
-    │   ├── todo_query.py
-    │   ├── todo_add.py           #   v2.12 拆分自 todo_modify
-    │   ├── todo_update.py        #   v2.12 拆分自 todo_modify
-    │   ├── todo_delete.py        #   v2.12 拆分自 todo_modify
-    │   ├── todo_clear.py
-    │   └── todo_modify.py        #   legacy（v2.12 已从注册表移除，保留后端兼容）
+    │   └── todo_manage.py        #   v2.35: 6 个 action 单工具（create/query/add/update/delete/clear）
     │
     ├── llm_inject/               # system_prompt 指引注入辅助
     │   └── __init__.py           #   inject_guidance（marker 防重复）
@@ -277,7 +268,6 @@ astrbot_plugin_spcode_toolkit/
         │                         #   _run_git_async / _JSONResponseCompat /
         │                         #   _compute_git_etag / _compute_porcelain_diffs
         ├── project_status.py     #   GET    /spcode/project-status
-        ├── plan_mode.py          #   GET    /spcode/plan-mode
         ├── git_worktrees.py      #   GET    /spcode/git-worktrees
         ├── git_diff.py           #   GET    /spcode/git-diff
         ├── git_status.py         #   GET    /spcode/git-status          (v2.13)
@@ -322,14 +312,14 @@ astrbot_plugin_spcode_toolkit/
 
 1. **入口层** `main.py`
    - 在 AstrBot 启动时被加载
-   - 注册 AstrBot **工具**（12 个本地 LLM 工具，经 `enabled_tools` 过滤；v2.29.3 起若核心已内置 `astrbot_file_remove` 则 shim 让位、跳过注册，见下节）
-   - 注册 AstrBot **命令**（`/codegraph`(+别名`/cg`)、`/agentsmd`、`/project`、`/vivado`、`/plan`、`/build`）
-   - 注册多个 `@filter.on_llm_request()` 钩子：AGENTS.md 注入、codegraph 指引、todo/file_remove/code_check/code_format 指引、L1 鉴权、plan 模式工具禁用
+   - 注册 AstrBot **工具**（7 个本地 LLM 工具，经 `enabled_tools` 过滤；v2.29.3 起若核心已内置 `astrbot_file_remove` 则 shim 让位、跳过注册，见下节）
+   - 注册 AstrBot **命令**（`/codegraph`(+别名`/cg`)、`/agentsmd`、`/project`、`/vivado`）
+   - 注册多个 `@filter.on_llm_request()` 钩子：AGENTS.md 注入、codegraph 指引、todo/file_remove/code_check/code_format 指引、L1 鉴权
    - 读取 `_conf_schema.json` 配置（`_flatten_config` 拍平嵌套分组）
    - **L1 鉴权**：整个 spcode 工具箱为管理员工具集，非管理员不可见任何工具（`_auth_guard` 钩子）
 
 2. **工具层** `tools/`（PR-0~PR-7 拆分自 main.py，子包化）
-   - `function_tools/` - 12 个 LLM FunctionTool 类，一文件一工具，`ALL_TOOL_CLASSES` 集中注册表；`main.py` 迭代此列表传给 `context.add_llm_tools(...)`
+   - `function_tools/` - 7 个 LLM FunctionTool 类，一文件一工具，`ALL_TOOL_CLASSES` 集中注册表；`main.py` 迭代此列表传给 `context.add_llm_tools(...)`
    - `agentsmd/` / `codegraph/` / `vivado/` / `project/` / `security/` / `llm_inject/` - 各业务子系统，对外暴露 facade 类
    - 下划线前缀模块（`_xxx.py`）：内部模块，不直接注册为 AstrBot 工具，供其他模块复用
    - 顶层 `xxx.py`（如 `code_check.py`、`file_remove.py`）：legacy 业务实现入口，被 `function_tools/` 引用
@@ -514,9 +504,8 @@ AstrBot 主仓库（`all` 分支）已内置 `astrbot_file_remove` 工具（`loc
 
 ## Project 加载 — 静默变体 (2026-07-28)
 
-仿照 `plan/build` 模式切换的 webapi 端点设计（`POST /spcode/plan-mode` 的 `handle_set`，
-dashboard 的 plan/build chip 直调），
-新增 `POST /spcode/project-load` 端点供 dashboard 在用户点 "Load Project" 按钮时调用，
+仿照 `POST /spcode/plan-mode` 的静默端点设计（2026-07-27 引入；该端点已在 v2.35.0
+迁移到核心 `/mode`），新增 `POST /spcode/project-load` 端点供 dashboard 在用户点 "Load Project" 按钮时调用，
 **不**向聊天框 yield 任何用户可见消息。
 
 ### 关键组件
@@ -574,13 +563,12 @@ dashboard 的 plan/build chip 直调），
 
 ## Web API 端点（供 Dashboard 消费）
 
-Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()` 中注册，挂载前缀 `/spcode`。当前共 **46 条路由记录**（44 个唯一路径，`/spcode/docs` 一路径复用 POST/PATCH/DELETE 三方法）：
+Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initialize()` 中注册，挂载前缀 `/spcode`。当前共 **79 条路由记录**（77 个唯一路径，`/spcode/docs` 一路径复用 POST/PATCH/DELETE 三方法）：
 
 | 端点 | 方法 | 用途 | 关键参数 |
 |------|------|------|---------|
 | `/spcode/project-status` | GET | 当前加载项目状态 | `umo?` |
 | `/spcode/project-load` | POST | 静默加载项目；仅登记目录 + 注入已存在的 AGENTS.md，不生成、不初始化 codegraph（2026-11-07 重设计） | body: `{directory, no_agentsmd?, no_codegraph?, force?, umo}` |
-| `/spcode/plan-mode` | GET | 当前 plan-mode 状态（严格 per-session，不回退） | `umo?` |
 | `/spcode/git-worktrees` | GET | 列出 worktree | `umo?` |
 | `/spcode/git-diff` | GET | 工作区 diff（ETag/304） | `umo?`, `worktree?` |
 | `/spcode/git-status` | GET | 工作区状态（branch/upstream/staged/unstaged/untracked，ETag/304） | `umo?`, `worktree?` |

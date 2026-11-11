@@ -40,15 +40,8 @@ TODO_GUIDANCE_MARKER = _main.TODO_GUIDANCE_MARKER  # noqa: E402
 TODO_GUIDANCE = _main.TODO_GUIDANCE  # noqa: E402
 SPCodeToolkit = _main.SPCodeToolkit
 
-# 6 个 todo_* 工具,任一启用即触发注入。与 main.py _todo_inject_guidance 一致。
-_TODO_TOOL_NAMES = (
-    "todo_create",
-    "todo_query",
-    "todo_add",
-    "todo_update",
-    "todo_delete",
-    "todo_clear",
-)
+# v2.35 起只有 1 个 todo 工具(todo_manage),启用即触发注入。
+_TODO_TOOL_NAMES = ("todo_manage",)
 
 
 def _make_plugin(enabled_tools: set[str] | None = None) -> SPCodeToolkit:
@@ -68,11 +61,11 @@ def _make_event(umo: str = "test:umo") -> MagicMock:
     return ev
 
 
-# ── 1. todo_create 启用时注入关键句与 marker ─────────
+# ── 1. todo_manage 启用时注入关键句与 marker ─────────
 
 
-def test_inject_when_todo_create_enabled():
-    plugin = _make_plugin(enabled_tools={"todo_create"})
+def test_inject_when_todo_manage_enabled():
+    plugin = _make_plugin(enabled_tools={"todo_manage"})
     req = MagicMock()
     req.system_prompt = "base"
 
@@ -83,19 +76,18 @@ def test_inject_when_todo_create_enabled():
     assert TODO_GUIDANCE_MARKER in req.system_prompt, "marker 应在"
     # 关键句断言(Anthropic 强约束措辞至少出现一条)
     assert "VERY frequently" in req.system_prompt
-    # v2.12 起 todo_add/todo_update/todo_delete 支持批量(item_ids 为列表),
+    # v2.35 起批量更新由 todo_manage(action="update", item_ids=[...]) 承担,
     # 旧版 "Do NOT batch" 文案已移除;改为断言当前的防遗忘强约束句。
     assert "unacceptable" in req.system_prompt
     # 工具名提示(让 LLM 知道调哪个)
-    assert "todo_create" in req.system_prompt
-    assert "todo_update" in req.system_prompt
+    assert "todo_manage" in req.system_prompt
 
 
 # ── 2. 任一 todo_* 工具启用都触发注入 ─────────────
 
 
 def test_inject_when_any_todo_tool_enabled():
-    """gate 是'任一 todo_* 工具启用'——逐个验证 6 个工具都能触发。"""
+    """gate 是"todo_manage 已启用"。"""
     for tool_name in _TODO_TOOL_NAMES:
         plugin = _make_plugin(enabled_tools={tool_name})
         req = MagicMock()
@@ -142,7 +134,7 @@ def test_no_inject_when_tool_set_empty():
 
 def test_inject_idempotent():
     """已注入 marker 后,二次调用应被 inject_guidance 防重复机制阻止。"""
-    plugin = _make_plugin(enabled_tools={"todo_create"})
+    plugin = _make_plugin(enabled_tools={"todo_manage"})
     req = MagicMock()
     req.system_prompt = "base"
 
@@ -163,7 +155,7 @@ def test_inject_idempotent():
 
 def test_inject_handles_none_system_prompt():
     """system_prompt 为 None 时(inject_guidance 内部用 `or ""` 兜底),正常注入。"""
-    plugin = _make_plugin(enabled_tools={"todo_create"})
+    plugin = _make_plugin(enabled_tools={"todo_manage"})
     req = MagicMock()
     req.system_prompt = None
 
@@ -175,7 +167,7 @@ def test_inject_handles_none_system_prompt():
 
 def test_inject_handles_empty_string_system_prompt():
     """system_prompt 为空字符串时,正常注入(不留前缀空行——inject_guidance 会 strip)。"""
-    plugin = _make_plugin(enabled_tools={"todo_update"})
+    plugin = _make_plugin(enabled_tools={"todo_manage"})
     req = MagicMock()
     req.system_prompt = ""
 

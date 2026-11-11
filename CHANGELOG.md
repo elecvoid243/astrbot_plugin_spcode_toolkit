@@ -6,15 +6,22 @@ spcode 工具箱的版本变更记录。格式参考 [Keep a Changelog](https://
 
 ## [v2.35.0] - 2026-11-11
 
+### 变更
+
+- `/plan` / `/build` 迁移到 AstrBot 核心：改用核心 `/mode readonly|workspace|full` 三态命令，模式状态与 ChatUI 文件访问模式 chip 共享同一份 per-umo 持久化状态。只读模式下的工具黑名单改由核心 `provider_settings.file_access_readonly_blocked_tools` 控制（不含 `astrbot_execute_shell` / `astrbot_execute_python`）。
+- 6 个 todo 工具（`todo_create` / `todo_query` / `todo_add` / `todo_update` / `todo_delete` / `todo_clear`）合并为单一 `todo_manage`，通过 `action` 参数分发（query / create / add / update / delete / clear）。
+- `action` 与参数的对应关系逐行写入工具 description；`call()` 内做参数矩阵校验，缺参数时返回可执行的 proposal。
+- `enabled_tools` 的 `todo_list` 组别名保留，展开为 `todo_manage`。
+- `TodoStore` 的 6 个方法签名不变（行为等价锚在 store 层），`TodoStore.modify()` 保留为 store 层 legacy 入口。
+- 本地 LLM 工具数由 17 个减为 7 个（独立工具 6 + todo 1）。
+
 ### 移除
 
 - 移除 `inta_shell` 交互式 Shell 工具集（5 个工具：`astrbot_inta_shell_start` / `_send` / `_read` / `_stop` / `_list`）及其运行时组件、配置项与测试。AstrBot 核心已内置等价的 `astrbot_execute_shell` / `astrbot_shell_session`，本插件不再重复提供。
 - `enabled_tools` 的 `inta_shell` 组别名一并移除；老配置中残留的该条目会被 `filter_enabled_tools()` 报告为 `unknown` 并忽略。
-- `plan_mode_blocked_tools` 默认值移除 3 个 inta_shell 写工具名。
-
-### 变更
-
-- 本地 LLM 工具数由 17 个减为 12 个（独立工具 6 + todo 6）。
+- `plan_mode` 配置分组随 `/plan` `/build` 迁移一并删除（其默认黑名单曾移除 3 个 inta_shell 写工具名）。
+- 删除 6 个 todo 工具文件与 `tools/function_tools/todo_modify.py`（v2.6 的 3-in-1 legacy 工具）。
+- 删除 `tools/security/plan_mode.py`、`tools/webapi/plan_mode.py`、`/spcode/plan-mode` GET+POST 两条路由，以及 3 个专属测试文件（43 用例）。
 
 ## [v2.34.1] - 2026-11-08
 

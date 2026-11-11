@@ -14,17 +14,17 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | 代码理解 | 通过 codegraph 官方 MCP server 注入 `codegraph_explore` 语义搜索工具（codegraph ≥ 1.5 默认仅暴露该工具） |
 | 文件操作 | `astrbot_file_remove` 沙箱化删除（v2.29.3 起已上移内核）；`astrbot_file_compare` 结构化差异比较 |
 | 文件搜索 | `es_search` Everything/locate/fd/Python 兜底文件名搜索 |
-| 任务管理 | `todo_*` 6 工具，LLM 自我管理跨会话持久化任务清单 |
+| 任务管理 | `todo_manage` 单工具（6 个 action），LLM 自我管理跨会话持久化任务清单 |
 | 交互式 Shell | 由 AstrBot 核心 `astrbot_execute_shell` / `astrbot_shell_session` 提供（本插件已不再内置） |
 | 项目加载 | `/project load|unload|status` 加载目录；AGENTS.md 存在则注入，不自动生成、不自动初始化 codegraph |
-| Plan/Build 模式 | `/plan` 禁用写工具进入只读调研；`/build` 还原 |
+| 文件访问模式 | 由核心 `/mode readonly\|workspace\|full` 提供（v2.35.0 起从本插件迁移） |
 | Web API | 31 条 `/spcode/*` 路由，供 Dashboard 实时拉取项目状态/文件树/git 信息 |
 
 > **L1 鉴权**: spcode 工具箱是**管理员工具集**。非管理员用户看不到上述任何工具；管理员可见全部。codegraph MCP 工具同样受此鉴权约束。
 
 ## 工具清单
 
-### 本地 LLM 工具（12 个）
+### 本地 LLM 工具（7 个）
 
 通过 `enabled_tools` 配置项按需启用（默认全部禁用）。勾选快捷组名会自动展开为一组子工具。
 
@@ -35,7 +35,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | `es_search` | 文件搜索 | Windows Everything (es.exe) 毫秒级搜索；Linux/macOS `locate`→`fd`→Python `os.walk` 三层 fallback |
 | `astrbot_file_remove` | 文件操作（写入） | 沙箱化文件/目录删除，双层黑名单 + 批量确认提案机制。**v2.29.3 起已上移内核**：AstrBot 主仓库内置同名工具时插件让位不重复注册（旧核心仍由本插件提供），详见下节 |
 | `astrbot_file_compare` | 文件操作（只读） | 结构化文件差异（added/removed 行数 + unified diff），UTF-8/GBK 自适应 |
-| `todo_create` / `todo_query` / `todo_add` / `todo_update` / `todo_delete` / `todo_clear` | 任务管理（6 个，组别名 `todo_list`） | LLM 自我管理任务清单；v2.12 把 `todo_modify` 拆为 3 个独立工具，消除 `mode` 误用 |
+| `todo_manage` | 任务管理（1 个，组别名 `todo_list`） | LLM 自我管理任务清单；v2.35 把 6 个独立工具合并为单个 `action` 分发工具 |
 
 ### MCP 工具（codegraph，默认 1 个）
 
@@ -54,9 +54,9 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 **Web API**: `GET /spcode/vivado-status` — 完整快照 (enabled / mcp_running / vivado_path / sessions)
 
 **注意**:
-- 11 个写工具（含烧板 `program_device`）在 plan 模式下被隐藏
+- 11 个写工具（含烧板 `program_device`）在只读模式下被禁用执行
 - 管理员鉴权: 非管理员看不到 `mcp_vivado__*` 工具（含只读）
-- 烧板操作后果不可逆，务必在 plan 模式调研后切到 build 模式执行
+- 烧板操作后果不可逆，务必在只读模式调研后切到完全权限执行
 - `GET /spcode/vivado-status` 返回 `enabled / mcp_running / vivado_path / install_missing / degraded / sessions` 6 字段；前端 Dashboard 据此把徽章渲染为 6 个状态（`ok` 绿 / `degraded` 黄 / `not_installed` / `toolchain_missing` 红 / `not_running` / `disabled` 中性空心）
 
 ## 命令清单
@@ -86,12 +86,18 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | `/project unload` | 清掉 AGENTS.md 注入，把 codegraph 默认项目指回配置值 |
 | `/project status` | 查看当前会话已加载项目信息 |
 
-### `/plan` 与 `/build`（v2.8）
+### 文件访问模式（v2.35.0 起由核心提供）
+
+`/plan` / `/build` 已在 v2.35.0 迁移到 AstrBot 核心，改用统一的三态命令：
 
 | 命令 | 描述 |
 |------|------|
-| `/plan` | 进入 plan 模式：按 `plan_mode_blocked_tools` 配置禁用写工具的执行调用（schema 保持可见，prefix-cache 友好），并在首轮 LLM 调用时注入 plan 模式 reminder |
-| `/build` | 退出 plan 模式，恢复全部工具可用（默认状态） |
+| `/mode readonly` | 只读：写工具的执行被禁用，shell/Python 在写受限沙盒内运行 |
+| `/mode workspace` | 工作区写入：写操作限制在会话工作区、临时目录与配置的额外根 |
+| `/mode full` | 完全权限：无文件访问限制（默认） |
+| `/mode` | 查看当前模式 |
+
+模式状态由核心按 umo 持久化，与 ChatUI 输入框的文件访问模式 chip 共享同一份状态；只读模式下的工具黑名单由核心配置 `provider_settings.file_access_readonly_blocked_tools` 控制。
 
 > `/project`、`/agentsmd`、`/codegraph` 命令均受 L1 鉴权约束，非管理员调用会被拦截。
 
@@ -109,7 +115,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `enabled_tools` | 多选列表 | `[]` | 启用的工具名（含快捷组名）。勾选 `todo_list` 自动启用 6 个 todo 工具。修改后需重启 AstrBot。默认全部禁用（安全默认） |
+| `enabled_tools` | 多选列表 | `[]` | 启用的工具名（含快捷组名）。勾选 `todo_list` 自动启用 `todo_manage`。修改后需重启 AstrBot。默认全部禁用（安全默认） |
 | `allowed_ids` | 字符串 | `""` | 额外允许使用本插件的用户 ID（逗号分隔），与 AstrBot 全局管理员并集生效 |
 
 ### code_check 配置
@@ -133,7 +139,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 > 以上风格/缩进/选项参数均为**显式覆盖**，叠加在 `BasedOnStyle` 之上，且仅在项目内无 `.clang-format` 文件时随内联 style 生效（与 `code_check` 的格式检查同源共享）。
 
-> `code_format` 是**写入工具**（可能修改文件），plan 模式下默认被禁用。默认不在 `enabled_tools` 中勾选，需显式启用。
+> `code_format` 是**写入工具**（可能修改文件），只读模式下默认被禁用。默认不在 `enabled_tools` 中勾选，需显式启用。
 
 ### file_remove 配置
 
@@ -164,29 +170,6 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 | `agentsmd_enabled` | 布尔 | `true` | AGENTS.md 管理总开关。设为 false 则 `/agentsmd` 命令和 LLM 注入均不生效 |
 | `init_template` | 文本 | `""` | AGENTS.md 初始生成模板。用于 `/agentsmd init` 和 `/agentsmd update` 时调 LLM 的 prompt。留空使用默认模板 |
 
-### plan_mode 配置（v2.8+）
-
-| 字段 | 类型 | 默认 | 说明 |
-|------|------|------|------|
-| `plan_mode_blocked_tools` | 字符串列表 | 见下 | `/plan` 激活时禁用执行的工具名（schema 仍对 LLM 可见，调用返回 Permission denied）。默认走 strict 模式，禁用所有 spcode 写工具 + AstrBot 内建文件写编辑工具；`astrbot_execute_shell` / `astrbot_shell_session` 始终保留（Windows 下在只读沙盒内运行，其他平台由工具自身拒绝写入） |
-| `plan_mode_reminder` | 文本 | 内置英文模板 | 切换到 plan 模式时给 LLM 的提醒文本，作为 `<system-reminder>` 注入。支持 `{blocked}` 占位符替换为实际黑名单列表。留空则不注入 |
-
-默认 `plan_mode_blocked_tools`：
-
-```json
-[
-  "astrbot_file_remove",
-  "code_format",
-  "todo_create",
-  "todo_add",
-  "todo_update",
-  "todo_delete",
-  "todo_clear",
-  "astrbot_file_write_tool",
-  "astrbot_file_edit_tool"
-]
-```
-
 ### git_diff 配置
 
 | 字段 | 类型 | 默认 | 说明 |
@@ -197,7 +180,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 `enabled_tools` 多选列表除独立工具外，还支持**快捷组名**（group alias）-- 勾选后系统一次性给 LLM 注入该组全部子工具，避免漏勾导致功能残缺：
 
-- `todo_list` (v2.6.1+) - 自动展开为 `todo_create` / `todo_query` / `todo_add` / `todo_update` / `todo_delete` / `todo_clear` 共 6 个工具
+- `todo_list` (v2.6.1+) - 自动展开为 `todo_manage` 共 1 个工具（v2.35 起 6 个 action 覆盖原 6 个工具）
 - `file_compare` - 展开为 `astrbot_file_compare`
 - `file_remove` - 展开为 `astrbot_file_remove`
 
@@ -231,7 +214,7 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 ### code_format - 源码自动格式化（v2.14+）
 
-与 `code_check` 的关系：`code_check` 是**只读**检查，`code_format` 是**写**工具（可能修改文件）。LLM 在 plan 模式下不应调用本工具。
+与 `code_check` 的关系：`code_check` 是**只读**检查，`code_format` 是**写**工具（可能修改文件）。LLM 在只读模式下不应调用本工具。
 
 - **formatter = "auto" 路由**：`.py` → ruff format；`.c/.cpp/.cc/.cxx/.h/.hpp/.hxx/.hh/.java/.js/.jsx/.mjs/.cjs/.cs` → clang-format
 - **clang-format 原生参数可配置**（2026-09-12）：`column_limit` / `tab_width` / `use_tab` / `break_before_braces` / `pointer_alignment` 随 `default_style`/`default_indent` 一起作为内联 style 兜底（项目内 `.clang-format` 文件优先），详见上文配置表与 `docs/superpowers/specs/2026-09-12-code-format-clang-native-config-design.md`
@@ -290,18 +273,18 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 
 比较两个文本文件，返回结构化 diff（added/removed 行数 + unified diff，最多 100 行）。超过 50MB 的文件会被拒绝。编码自动检测：UTF-8 优先，GBK 兜底。
 
-### todo_create / todo_query / todo_add / todo_update / todo_delete / todo_clear - LLM 自我管理任务清单
+### todo_manage - LLM 自我管理任务清单
 
-跨会话持久化的任务清单系统。**v2.6** 起拆分为独立 LLM 工具；**v2.12** 进一步把 `todo_modify(mode=...)` 拆为 3 个独立工具（`todo_add` / `todo_update` / `todo_delete`），消除 LLM 误用 `mode` 字段的高发错误。
+跨会话持久化的任务清单系统。**v2.35** 起 6 个独立工具合并为单一 `todo_manage`，通过 `action` 参数覆盖全部能力（create / query / add / update / delete / clear）。
 
-**6 工具分工：**
+**6 个 action：**
 
-- `todo_create(items?, title?, from_path?)` - 创建/覆盖当前用户的列表（v2.9+ 新增 `from_path` 从 .md 领养）
-- `todo_query()` - 读取当前列表（含 `stats` + `attention_items`）
-- `todo_add(items=[{...}, ...])` - **v2.12 新增** 追加一个或多个 item 到现有列表
-- `todo_update(item_ids, status?, notes?)` - **v2.12 新增** 更新一个或多个 item 的 status / notes
-- `todo_delete(item_ids)` - **v2.12 新增** 删除一个或多个 item
-- `todo_clear()` - 删除整个列表
+- `todo_manage(action="create", items?, title?, from_path?)` - 创建/覆盖当前用户的列表（`from_path` 从 .md 领养，与 `items` 互斥）
+- `todo_manage(action="query")` - 读取当前列表（含 `stats` + `attention_items`）
+- `todo_manage(action="add", items=[{...}, ...])` - 追加一个或多个 item 到现有列表
+- `todo_manage(action="update", item_ids, status?, notes?)` - 更新一个或多个 item 的 status / notes
+- `todo_manage(action="delete", item_ids)` - 删除一个或多个 item
+- `todo_manage(action="clear")` - 删除整个列表
 
 **通用语义：**
 - 4 种状态：`pending [ ]` / `in_progress [~]` / `done [x]` / `cancelled [-]`
@@ -310,44 +293,44 @@ AstrBot 插件，为 LLM Agent 提供一组面向 C/C++/Python 开发的实用�
 - `in_progress` + `notes` → 在 query 结果中标记为 `attention`
 - 总计超过 100 项 → 拒绝添加
 
-**notes 三态**（仅 `todo_update`）：未传=保留旧值 / `""`=清空 / `"xxx"`=覆盖。注意不要传 `null`（当前实现按"未传"处理）。
+**notes 三态**（仅 `action="update"`）：未传=保留旧值 / `""`=清空 / `"xxx"`=覆盖。注意不要传 `null`（当前实现按"未传"处理）。
 
-**v2.9+ 从 .md 文件领养清单（`from_path`）：** 参数与 `items` 互斥；路径必须是绝对路径；文件大小上限 1MB；解析后 0 个 item 报错；领养（adopt）语义：保留 `status` / `notes`，但重排 ID 从 1、改写 `umo` 为当前会话、`updated_at = now()`。
+**v2.9+ 从 .md 文件领养清单（`action="create"` + `from_path`）：** 参数与 `items` 互斥；路径必须是绝对路径；文件大小上限 1MB；解析后 0 个 item 报错；领养（adopt）语义：保留 `status` / `notes`，但重排 ID 从 1、改写 `umo` 为当前会话、`updated_at = now()`。
 
 ```python
-# A) items 模式
-todo_create(title="重构模块", items=[
+# A) 创建（items 模式）
+todo_manage(action="create", title="重构模块", items=[
     {"title": "分析代码"},
     {"title": "切分函数"},
     {"title": "补测试"},
 ])
 
-# B) from_path 模式 - 从 .md 领养
-todo_create(from_path="/abs/path/to/webchat_plan.md", title="我的 v1.0 计划")
+# B) 从 .md 领养
+todo_manage(action="create", from_path="/abs/path/to/webchat_plan.md", title="我的 v1.0 计划")
 
 # C) 查询当前清单（含 stats + attention_items）
-todo_query()
+todo_manage(action="query")
 
-# D) v2.12 批量追加（独立工具，不再需要 mode="add"）
-todo_add(items=[
+# D) 批量追加
+todo_manage(action="add", items=[
     {"title": "写测试", "status": "in_progress"},
     {"title": "补文档", "status": "pending"},
 ])
 
-# E) v2.12 更新状态（item_ids 可为单个 int 或 list[int]）
-todo_update(item_ids=[1, 3], status="done")
-todo_update(item_ids=2, status="in_progress",
+# E) 更新状态（item_ids 必须是 list[int]）
+todo_manage(action="update", item_ids=[1, 3], status="done")
+todo_manage(action="update", item_ids=[2], status="in_progress",
             notes="等待用户确认函数切分边界")
 
-# F) v2.12 删除单个 / 批量
-todo_delete(item_ids=1)
-todo_delete(item_ids=[2, 3])
+# F) 删除单个 / 批量
+todo_manage(action="delete", item_ids=[1])
+todo_manage(action="delete", item_ids=[2, 3])
 
 # G) 清空整个列表
-todo_clear()
+todo_manage(action="clear")
 ```
 
-**迁移说明：** v2.6 之前的单工具 `todo_list(action=...)` 已废弃为 stub。`todo_modify` 仅在 v2.6 ~ v2.11 之间存在，v2.12 起彻底删除。升级到 v2.12 后，老 config 中显式列出的 `todo_modify` 会被 `filter_enabled_tools()` 报告为 `unknown`，引导用户改用 `todo_list` 组别名。
+**迁移说明：** `todo_modify` 仅在 v2.6 ~ v2.11 之间存在，v2.12 起彻底删除；v2.35 起 6 个独立 todo 工具（create / query / add / update / delete / clear）合并为 `todo_manage`。老 config 中显式列出的 `todo_modify` 或已删除的工具名会被 `filter_enabled_tools()` 报告为 `unknown`，引导改用 `todo_list` 组别名。
 
 ### /project load & /project unload & /project status - 项目加载/卸载（v2.7+，2026-11-07 重设计）
 
@@ -369,14 +352,6 @@ todo_clear()
 **重复 load 防护**：当前会话已加载项目时再次 `/project load` 会被拒绝（需先 `/project unload`），避免半残状态。
 
 **注入行为**：加载成功后，system_prompt 末尾会追加"优先使用 codegraph 工具"指引，引导 LLM 在该项目中调用 `codegraph_explore` 进行语义搜索（codegraph ≥ 1.5 默认仅暴露该工具），而不是退而使用低效的 `astrbot_file_grep_tool`。该指引不依赖加载时初始化索引——索引由用户手动建立，未建立时 `codegraph_explore` 会返回可诊断的错误。
-
-### /plan 与 /build - Plan/Build 模式（v2.8）
-
-借鉴 opencode 的 plan/build 模式：
-
-- `/plan` 激活后，`plan_mode_blocked_tools` 列出的工具的执行被禁用（schema 仍可见，调用返回 Permission denied 错误），LLM 只能使用只读工具调研；并在第一轮 LLM 调用时向 user message 注入 plan 模式 reminder。工具 schema 在 /plan 与 /build 之间保持字节不变，prefix cache 不会因模式切换失效
-- `/build` 退出 plan 模式，恢复全部工具可用。默认状态下完全不修改 LLM 请求，与 AstrBot 默认行为一致
-- plan 模式状态严格 per-session（按 umo 隔离），不回退
 
 ## codegraph 集成
 
@@ -452,8 +427,6 @@ Web 路由由 `tools/webapi/register_webapi_routes(plugin)` 在 `main.py.initial
 | 端点 | 方法 | 用途 | 关键参数 |
 |------|------|------|---------|
 | `/spcode/project-status` | GET | 当前加载项目状态 | `umo?` |
-| `/spcode/plan-mode` | GET | 当前 plan-mode 状态（严格 per-session，不回退） | `umo?` |
-| `/spcode/plan-mode` | POST | 切换当前会话 plan/build 模式（dashboard chip 直调，不产生聊天消息；v2.22.0+） | body: `umo`, `active`(bool) |
 | `/spcode/git-worktrees` | GET | 列出 worktree | `umo?` |
 | `/spcode/git-diff` | GET | 工作区 diff（ETag/304） | `umo?`, `worktree?` |
 | `/spcode/git-status` | GET | 工作区状态（branch/upstream/staged/unstaged/untracked，ETag/304） | `umo?`, `worktree?` |
@@ -573,12 +546,11 @@ astrbot_plugin_spcode_toolkit/
     │   ├── pipeline.py           #   load/unload 流水线
     │   └── state.py              #   per-umo 已加载项目 state
     │
-    ├── security/                 # 鉴权 + plan/build 模式
-    │   ├── __init__.py           #   check_is_admin / PlanModeController
-    │   ├── admin.py              #   L1 管理员鉴权
-    │   └── plan_mode.py          #   plan/build 模式控制器（禁用工具执行 + reminder 注入）
+    ├── security/                 # L1 管理员鉴权
+    │   ├── __init__.py           #   check_is_admin 导出
+    │   └── admin.py              #   L1 管理员鉴权
     │
-    ├── function_tools/           # 12 个 LLM FunctionTool 类（一文件一工具）
+    ├── function_tools/           # 7 个 LLM FunctionTool 类（一文件一工具）
     │   ├── __init__.py           #   ALL_TOOL_CLASSES 集中注册表
     │   ├── _common.py            #   record_and_run 模板
     │   ├── code_check.py
@@ -587,8 +559,7 @@ astrbot_plugin_spcode_toolkit/
     │   ├── file_diff.py          #   astrbot_file_compare
     │   ├── file_remove.py
     │   ├── todo_base.py          #   _TodoToolBase 共用基类
-    │   ├── todo_create.py / todo_query.py / todo_add.py / todo_update.py / todo_delete.py / todo_clear.py
-    │   └── todo_modify.py        #   legacy（v2.12 已从注册表移除，保留后端兼容）
+    │   └── todo_manage.py        #   v2.35: 6 个 action 单工具
     │
     ├── llm_inject/               # system_prompt 指引注入辅助
     │   └── __init__.py           #   inject_guidance（marker 防重复）
@@ -599,11 +570,10 @@ astrbot_plugin_spcode_toolkit/
     ├── file_compare.py           # [legacy 入口] 文件差异业务实现
     ├── file_remove.py            # [legacy 入口] 删除业务实现
     ├── todo_list.py              # [legacy 入口] v2.6+ stub，保留兼容
-    └── webapi/                   # Web API 层（38 条路由，每端点一文件）
+    └── webapi/                   # Web API 层（79 条路由，每端点一文件）
         ├── __init__.py           #   ROUTES 路由表 + HANDLERS 别名 + _wrap() 适配器 + register_webapi_routes()
         ├── _helpers.py           #   ReasonCode / _make_envelope / _git_endpoint_preflight / _validate_repo_relative_file / _run_git_async / _JSONResponseCompat / _compute_git_etag / _compute_porcelain_diffs / _git_init_preflight
         ├── project_status.py     #   GET    /spcode/project-status
-        ├── plan_mode.py          #   GET    /spcode/plan-mode; POST /spcode/plan-mode (v2.22.0 切换)
         ├── git_worktrees.py      #   GET    /spcode/git-worktrees
         ├── git_diff.py           #   GET    /spcode/git-diff
         ├── git_status.py         #   GET    /spcode/git-status          (v2.13)
@@ -637,10 +607,10 @@ astrbot_plugin_spcode_toolkit/
 
 ### 架构分层
 
-1. **入口层** `main.py`：在 AstrBot 启动时被加载；注册 AstrBot 工具（供 LLM 调用）+ 命令（`/codegraph`(+别名 `/cg`)、`/agentsmd`、`/project`、`/vivado`、`/plan`、`/build`）+ 多个 `@filter.on_llm_request()` 钩子（AGENTS.md 注入、codegraph 指引、todo/file_remove/code_check/code_format 指引、vivado 指引、L1 鉴权、plan 模式过滤）；读取 `_conf_schema.json` 配置；**L1 鉴权**：整个 spcode 工具箱为管理员工具集，非管理员不可见任何工具
+1. **入口层** `main.py`：在 AstrBot 启动时被加载；注册 AstrBot 工具（供 LLM 调用）+ 命令（`/codegraph`(+别名 `/cg`)、`/agentsmd`、`/project`、`/vivado`）+ 多个 `@filter.on_llm_request()` 钩子（AGENTS.md 注入、codegraph 指引、todo/file_remove/code_check/code_format 指引、vivado 指引、L1 鉴权）；读取 `_conf_schema.json` 配置；**L1 鉴权**：整个 spcode 工具箱为管理员工具集，非管理员不可见任何工具
 
 2. **工具层** `tools/`（PR-0~PR-7 拆分自 main.py，子包化）：
-   - `function_tools/` - 12 个 LLM FunctionTool 类，一文件一工具，`ALL_TOOL_CLASSES` 集中注册表
+   - `function_tools/` - 7 个 LLM FunctionTool 类，一文件一工具，`ALL_TOOL_CLASSES` 集中注册表
    - `agentsmd/` / `codegraph/` / `vivado/` / `project/` / `security/` / `llm_inject/` - 各业务子系统
    - 下划线前缀模块（`_xxx.py`）：内部模块，不直接注册为 AstrBot 工具
    - 顶层 `xxx.py`（如 `code_check.py`、`file_remove.py`）：legacy 业务实现入口，被 function_tools/ 引用

@@ -1,9 +1,9 @@
 """POST /spcode/project-load — 静默加载项目(dashboard 调用,不在聊天框 yield)。
 
-仿照 ``/spcode/plan-mode`` 的 POST handler(2026-07-27 引入):dashboard 直接
-调本端点切换会话状态,而不是向聊天框注入 ``/plan`` / ``/build`` 用户消息。
-本端点是该模式的"项目加载"版本——dashboard 在用户点 "Load Project" 按钮
-时,直接调本端点,而不是向聊天框发 ``/project load <dir>``。
+仿照 ``POST /spcode/plan-mode`` 的静默端点设计(2026-07-27 引入;该端点已在
+v2.35.0 迁移到核心 ``/mode``):dashboard 直接调本端点切换会话状态,而不是
+向聊天框注入用户命令。本端点是该模式的"项目加载"版本——dashboard 在用户点
+"Load Project" 按钮时,直接调本端点,而不是向聊天框发 ``/project load <dir>``。
 
 设计要点:
 - 不调 :meth:`ProjectManager.load_impl`(async generator,yield 用户消息)
@@ -83,8 +83,8 @@ async def handle(
 
     协议:
         - umo 必传(无 umo → invalid_body)。dashboard 必须告诉端点
-          "这是哪个会话的 load"。这与 ``/spcode/plan-mode`` 的 umo
-          必传策略一致(plan/build 切换是 per-session)。
+          "这是哪个会话的 load"。会话级状态(项目加载、文件访问模式)
+          都按 per-session 的 umo 寻址。
         - ``worktree`` 字段被 _wrap 适配器注入,但本端点不使用
           (project load 总是作用于 primary directory,不针对 worktree)。
         - 成功返回 ``success=True`` + 完整 state 字段;失败返回

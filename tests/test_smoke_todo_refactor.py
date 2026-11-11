@@ -94,7 +94,7 @@ def test_query_returns_proposal_when_no_list(tmp_path: Path):
     r = store.query("test:noone:PrivateMessage:test-noone")
     assert r["ok"] is False
     assert "proposal" in r
-    assert "todo_create" in r["proposal"]
+    assert "todo_manage" in r["proposal"]
 
 
 def test_clear_returns_proposal_when_no_list(tmp_path: Path):

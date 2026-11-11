@@ -6,7 +6,7 @@
 不变量:
     INV-1: main.py < 600 行(目标 ~290)
     INV-2: main.py 中无 FunctionTool 子类(@dataclass + class *Tool)
-    INV-3: ALL_TOOL_CLASSES 包含 13 个
+    INV-3: ALL_TOOL_CLASSES 包含 7 个
     INV-4: 5 个子包都已创建(agentsmd / codegraph / project / security / llm_inject)
     INV-5: 2 个辅助模块都已创建(_stats / _guidance_text)
 """
@@ -60,7 +60,7 @@ def check_no_tool_class_in_main() -> bool:
 
 
 def check_all_tool_classes_count() -> bool:
-    """INV-3: ALL_TOOL_CLASSES == 12
+    """INV-3: ALL_TOOL_CLASSES == 7
 
     v2.12 (PR-split-modify): 原 13 个工具 = 独立 4 + todo 4 + inta_shell 5。
     拆分后 = 独立 4 + todo 6 + inta_shell 5 = 15。
@@ -68,6 +68,8 @@ def check_all_tool_classes_count() -> bool:
     v2.25 (code_crap): 独立 6 + todo 6 + inta_shell 5 = 17。
     2026-11-11: 移除 inta_shell 5 个工具(核心 astrbot_execute_shell 取代)
                 → 独立 6 + todo 6 = 12。
+    v2.35 (PR-merge-todo): 6 个 todo 工具合并为 todo_manage
+                → 独立 6 + todo 1 = 7。
     """
     try:
         from tools.function_tools import ALL_TOOL_CLASSES
@@ -76,9 +78,9 @@ def check_all_tool_classes_count() -> bool:
     except Exception as e:
         print(f"✗ INV-3: failed to import ALL_TOOL_CLASSES: {e}")
         return False
-    ok = n == 12
+    ok = n == 7
     status = "✓" if ok else "✗"
-    print(f"{status} INV-3: ALL_TOOL_CLASSES has {n} entries (target 12)")
+    print(f"{status} INV-3: ALL_TOOL_CLASSES has {n} entries (target 7)")
     return ok
 
 

@@ -41,7 +41,7 @@ MARK_STATUS = {v: k for k, v in STATUS_MARK.items()}
 
 
 # ── 缺失值标记 ──────────────────────────────────────
-# 用于 todo_modify 工具区分"未传 notes"与"传了空字符串"。
+# 用于 todo_manage(action='update') 区分"未传 notes"与"传了空字符串"。
 # 使用 None(JSON 安全)作为缺失值标记。
 # - None = 未传 → 保留旧值
 # - ""   = 传了空串 → 清空 notes
@@ -789,7 +789,7 @@ class TodoStore:
             return {
                 "ok": False,
                 "proposal": (
-                    "当前无 todo list，请先调用 todo_create(items=[...]) 创建"
+                    "当前无 todo list，请先调用 todo_manage(action='create', items=[...]) 创建"
                 ),
             }
         result = {"ok": True, "file": str(path)}
@@ -841,7 +841,7 @@ class TodoStore:
         if not path:
             return {
                 "ok": False,
-                "proposal": "当前无 todo list，请先 todo_create(items=[...])",
+                "proposal": "当前无 todo list，请先 todo_manage(action='create', items=[...])",
             }
 
         current = data["items"]
@@ -924,7 +924,7 @@ class TodoStore:
         if not path:
             return {
                 "ok": False,
-                "proposal": "当前无 todo list，请先 todo_create(items=[...])",
+                "proposal": "当前无 todo list，请先 todo_manage(action='create', items=[...])",
             }
 
         # 任何 status 校验必须在动数据之前
@@ -979,7 +979,7 @@ class TodoStore:
         - int > 0        → 删单条(回传完整 list/stats)
         - list[int > 0]  → 批量删多条(回传完整 list/stats)
 
-        v2.2.0: **不再接受 0** —— 清空整个 list 由独立的 todo_clear 工具负责。
+        v2.2.0: **不再接受 0** —— 清空整个 list 由 todo_manage(action='clear') 负责。
         `item_ids=0` 或 `item_ids=[..., 0, ...]` 都会返回 ok=False 错误。
         这样 update/delete 字段语义彻底统一,0 永远不是合法 ID。
 
@@ -1046,7 +1046,10 @@ class TodoStore:
         status: str = "",
         notes: str | None = UNSET_NOTES,
     ) -> dict:
-        """统一 add / update / delete 的分发入口。
+        """统一 add / update / delete 的分发入口(legacy)。
+
+        v2.35 起 LLM 工具层由 ``todo_manage`` 承担 action 分发;本方法
+        保留为 store 层兼容入口(仍被 store 级测试覆盖),不再有工具调用它。
 
         - mode='add':    调用 self.add(items=items)
         - mode='update': 调用 self.update(item_ids=item_ids, status=status, notes=notes)
@@ -1096,7 +1099,7 @@ class TodoStore:
 
         v2.2.0: 不再是 delete(0) 的别名,而是独立实现。delete() 已拒绝 ID=0,
         所以本方法直接 unlink 文件,语义保持不变以让 main.py 的 action=='clear'
-        继续可用。未来 todo_clear 工具可能进一步封装此方法。
+        继续可用。工具层由 todo_manage(action='clear') 调用。
         """
         path, data = self._load(umo)
         if not path:

@@ -77,20 +77,21 @@ Priority use 'astrbot_file_remove' for file or directory deletion. DO NOT use sh
 # 设计目标:让 LLM 在 multi-step 任务中"先建 list、再动手、逐条标 done",
 # 仿照 OpenCode anthropic.txt "Task Management" 段 + todowrite.txt 模板。
 # 措辞刻意用 "VERY frequently" / 粗体强调 / 防遗忘结尾句提升触发率。
-# 注: v2.12 起 todo_add/todo_update/todo_delete 支持批量(item_ids 列表),
-# 旧版 "Do NOT batch" 文案已移除(批量现在是官方推荐用法)。
-TODO_GUIDANCE_MARKER: str = "# Use `todo_*` to record tasks"
+# 注: v2.35 起 6 个 todo 工具合并为 todo_manage(action=...),批量更新由
+# action="update" + item_ids=[...] 承担;旧版 "Do NOT batch" 文案已移除。
+TODO_GUIDANCE_MARKER: str = "# Use `todo_manage` to record tasks"
 
 TODO_GUIDANCE: str = f"""
 {TODO_GUIDANCE_MARKER}
-You have access to the `todo_*` tools to plan and track multi-step tasks.
-Use these tools VERY frequently:
-- Call `todo_create(items=[...])` **before** starting the first step of a multi-step task (3+ steps).
-- Call `todo_update(item_ids=[N], status="in_progress")` when you start a step.
-- Call `todo_update(item_ids=[N], status="done")` **as soon as** you complete a step.
+You have access to the `todo_manage` tool to plan and track multi-step tasks.
+Use it VERY frequently:
+- Call `todo_manage(action="create", items=[...])` **before** starting the first step of a multi-step task (3+ steps).
+- Call `todo_manage(action="update", item_ids=[N], status="in_progress")` when you start a step.
+- Call `todo_manage(action="update", item_ids=[N], status="done")` **as soon as** you complete a step.
+- Call `todo_manage(action="query")` to re-read the current list.
 - Your todo list is per-agent: subagents keep their own separate list, and the main agent cannot see it (and vice versa). Never assume another agent's items are yours.
 
-If you do not use these tools when planning, you may forget important tasks — and that is unacceptable.
+If you do not use this tool when planning, you may forget important tasks — and that is unacceptable.
 """
 
 
@@ -148,7 +149,7 @@ VIVADO_GUIDANCE_TEMPLATE: str = """{marker}
 [vivado-mcp integration]
 This plugin integrates vivado-mcp ({tool_count} tools), communicating over the MCP protocol via Python stdio.
 - Default session_id = "{session_default}". Use a dedicated session for long-running tasks.
-- Write tools ({write_tool_count} of them: {write_tools_sample}) are callable only in build mode (i.e. not while /plan is active).
+- Write tools ({write_tool_count} of them: {write_tools_sample}) are callable only when the file access mode is not readonly.
 - Programming the device (program_device) is irreversible — verify the bitstream is correct first.
 - start_session supports GUI, Tcl, and attach modes. Choose the mode explicitly; attach reuses an existing instrumented Vivado session.
 - For vivado session status, use the chat command /vivado status or GET /spcode/vivado-status.

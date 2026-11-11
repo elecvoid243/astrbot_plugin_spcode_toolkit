@@ -1,13 +1,12 @@
 # tools/webapi/__init__.py
 """Web API endpoint handlers, extracted from main.py.
 
-This package owns the 25 ``/spcode/*`` HTTP endpoints consumed by the
+This package owns the ``/spcode/*`` HTTP endpoints consumed by the
 Dashboard / WebUI:
 
   * ``/spcode/project-status``  (GET)
   * ``/spcode/project-load``    (POST)  # 2026-07-28 — 静默加载项目(2026-11-07:
                                         #   仅登记目录 + 注入已存在的 AGENTS.md)
-  * ``/spcode/plan-mode``       (GET)
   * ``/spcode/git-worktrees``   (GET)
   * ``/spcode/git-diff``        (GET)
   * ``/spcode/git-status``      (GET)   # v2.13+
@@ -132,7 +131,6 @@ from . import (
     host_file_manage,
     home_directory,  # 2026-08-15 GET /spcode/home-directory(目录选择器起始目录)
     operation_progress,  # 2026-08-06 静默操作实时进度 (GET /spcode/operation-progress)
-    plan_mode,
     project_load,  # 2026-07-28 静默加载项目 (POST /spcode/project-load)
     project_status,
     project_unload,  # 2026-08-06 静默卸载项目 (POST /spcode/project-unload)
@@ -192,18 +190,6 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
         ["GET"],
         operation_progress.handle,
         "查询静默操作实时进度(供 dashboard 轮询)",
-    ),
-    (
-        "/spcode/plan-mode",
-        ["GET"],
-        plan_mode.handle,
-        "获取 spcode 当前 plan-mode 状态(只读)",
-    ),
-    (
-        "/spcode/plan-mode",  # v2.22.0 (2026-07-27)
-        ["POST"],
-        plan_mode.handle_set,
-        "切换当前会话 plan/build 模式(dashboard chip 直调,不发聊天消息)",
     ),
     (
         "/spcode/git-worktrees",
@@ -637,8 +623,6 @@ ROUTES: list[tuple[str, list[str], Callable, str]] = [
 HANDLERS: dict[str, Callable] = {
     "handle_get_project_status": project_status.handle,
     "handle_post_project_load": project_load.handle,  # 2026-07-28 静默加载
-    "handle_get_plan_mode": plan_mode.handle,
-    "handle_post_plan_mode": plan_mode.handle_set,  # v2.22.0 (2026-07-27)
     "handle_get_git_worktrees": git_worktrees.handle,
     "handle_get_git_diff": git_diff.handle,
     "handle_get_git_diff_file": git_diff.handle_file,  # v2.32.0 渐进式加载
@@ -906,7 +890,6 @@ __all__ = [
     "git_worktree_unlock",  # v2.14.0
     "git_worktrees",
     "home_directory",  # 2026-08-15
-    "plan_mode",
     "project_load",  # 2026-07-28 静默加载
     "project_status",
     "terminal",  # 2026-09-01

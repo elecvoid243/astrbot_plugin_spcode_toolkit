@@ -1,6 +1,6 @@
 """CodeCrapTool — CRAP 指标检测(Python → crap4py;C/C++ → lizard)。
 
-只读工具,plan 模式可用(不在 plan_mode_blocked_tools 中)。
+只读工具,只读(readonly)模式可用(不在 file_access_readonly_blocked_tools 中)。
 lcov 可选:缺省时按覆盖率 0% 计最坏情况分值,coverage=null 标注。
 Spec: docs/superpowers/specs/2026-08-30-code-crap-tool-design.md
 """
@@ -34,7 +34,7 @@ class CodeCrapTool(FunctionTool):
         "WORST-CASE value (coverage assumed 0%) - run tests and pass lcov "
         "for real scores. NOTE: CC counting conventions differ between the "
         "two engines; do NOT compare scores across languages. Read-only, "
-        "safe in plan mode. IMPORTANT: `filepath` MUST be an absolute path "
+        "safe in read-only mode. IMPORTANT: `filepath` MUST be an absolute path "
         "(e.g. `F:/repo/src/main.py`); relative paths resolve against the "
         "AstrBot root directory and will likely fail."
     )

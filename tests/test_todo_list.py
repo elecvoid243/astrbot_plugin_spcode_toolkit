@@ -712,7 +712,7 @@ def test_delete_batch_preserves_unrelated_attention(tmp_path: Path):
 
 
 def test_delete_no_longer_handles_zero_sentinel(tmp_path: Path):
-    """v2.2.0: delete 不再处理 item_ids=0(清空列表由 todo_clear 工具负责)。
+    """v2.2.0: delete 不再处理 item_ids=0(清空列表由 todo_manage(action='clear') 负责)。
 
     旧实现:item_id=0 → 整 list 删除 (sentinel 语义)
     新实现:item_ids=0 → ValueError,返回 ok=False,文件原封不动
@@ -1540,8 +1540,8 @@ def test_store_adopt_contract_writes_now_timestamp(tmp_path: Path):
     assert before <= parsed["updated_at"] <= after
 
 
-# ── TodoCreateTool 工具层 from_path 测试 (v2.9 新增) ────────
-# 工具类本身在 main.py 里,这里通过 mock ContextWrapper 验证 call() 的 XOR 路径。
+# ── TodoManageTool(action="create") 工具层 from_path 测试 ────────
+# 工具类本身在 main.py 里,这里通过 mock ContextWrapper 验证 create 分支的 XOR 路径。
 # mock 模板沿用 AsyncMock + MagicMock 模式。
 
 
@@ -1562,7 +1562,7 @@ def _mock_context(
     return ctx
 
 
-def test_todo_create_tool_from_path_happy_path(tmp_path: Path, monkeypatch):
+def test_todo_manage_create_from_path_happy_path(tmp_path: Path, monkeypatch):
     """from_path 正常 → 落盘文件存在,文件名前缀是 mock umo 清洗后的字符串。"""
     # 把 StarTools.get_data_dir 引导到 tmp_path,避免污染真实 data_dir
     monkeypatch.setattr(
@@ -1572,9 +1572,9 @@ def test_todo_create_tool_from_path_happy_path(tmp_path: Path, monkeypatch):
     )
     # 写 fixture
     src = _write_md(tmp_path, _SAMPLE_PLAN_MD, name="src.md")
-    tool = main_mod.TodoCreateTool()
+    tool = main_mod.TodoManageTool()
     ctx = _mock_context()
-    result = asyncio.run(tool.call(ctx, items=None, from_path=str(src)))
+    result = asyncio.run(tool.call(ctx, action="create", items=None, from_path=str(src)))
     assert '"ok": true' in result
     # 落盘文件存在,前缀是 mock umo 清洗后的字符串(`:` → `_`)
     files = list((tmp_path / "todos").glob("*.md"))
@@ -1584,7 +1584,7 @@ def test_todo_create_tool_from_path_happy_path(tmp_path: Path, monkeypatch):
     ), f"expected file not found, got {files}"
 
 
-def test_todo_create_tool_from_path_and_items_both_returns_xor_error(
+def test_todo_manage_create_from_path_and_items_both_returns_xor_error(
     tmp_path: Path, monkeypatch
 ):
     """from_path + items 同时传 → XOR error。"""
@@ -1594,15 +1594,15 @@ def test_todo_create_tool_from_path_and_items_both_returns_xor_error(
         classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
     src = _write_md(tmp_path, _SAMPLE_PLAN_MD)
-    tool = main_mod.TodoCreateTool()
+    tool = main_mod.TodoManageTool()
     ctx = _mock_context()
-    result = asyncio.run(tool.call(ctx, items=[{"title": "x"}], from_path=str(src)))
+    result = asyncio.run(tool.call(ctx, action="create", items=[{"title": "x"}], from_path=str(src)))
     assert '"ok": false' in result
     assert "必须二选一" in result
     assert "不能同时传" in result
 
 
-def test_todo_create_tool_neither_from_path_nor_items_returns_xor_error(
+def test_todo_manage_create_neither_from_path_nor_items_returns_xor_error(
     tmp_path: Path, monkeypatch
 ):
     """from_path 与 items 都缺(None) → XOR error。"""
@@ -1611,15 +1611,15 @@ def test_todo_create_tool_neither_from_path_nor_items_returns_xor_error(
         "get_data_dir",
         classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
-    tool = main_mod.TodoCreateTool()
+    tool = main_mod.TodoManageTool()
     ctx = _mock_context()
-    result = asyncio.run(tool.call(ctx, items=None, from_path=""))
+    result = asyncio.run(tool.call(ctx, action="create", items=None, from_path=""))
     assert '"ok": false' in result
     assert "必须二选一" in result
     assert "不能都不传" in result
 
 
-def test_todo_create_tool_from_path_title_override(tmp_path: Path, monkeypatch):
+def test_todo_manage_create_from_path_title_override(tmp_path: Path, monkeypatch):
     """from_path + title="X" → 落盘 title == "X" (覆盖文件中的 title)。"""
     monkeypatch.setattr(
         main_mod.StarTools,
@@ -1627,10 +1627,10 @@ def test_todo_create_tool_from_path_title_override(tmp_path: Path, monkeypatch):
         classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
     src = _write_md(tmp_path, _SAMPLE_PLAN_MD)
-    tool = main_mod.TodoCreateTool()
+    tool = main_mod.TodoManageTool()
     ctx = _mock_context()
     result = asyncio.run(
-        tool.call(ctx, items=None, from_path=str(src), title="自定义标题")
+        tool.call(ctx, action="create", items=None, from_path=str(src), title="自定义标题")
     )
     assert '"ok": true' in result
     # 读回确认
@@ -1640,7 +1640,7 @@ def test_todo_create_tool_from_path_title_override(tmp_path: Path, monkeypatch):
     assert parsed["title"] == "自定义标题"
 
 
-def test_todo_create_tool_from_path_title_passthrough(tmp_path: Path, monkeypatch):
+def test_todo_manage_create_from_path_title_passthrough(tmp_path: Path, monkeypatch):
     """from_path 无 title → 保留文件中的 title。"""
     monkeypatch.setattr(
         main_mod.StarTools,
@@ -1648,16 +1648,16 @@ def test_todo_create_tool_from_path_title_passthrough(tmp_path: Path, monkeypatc
         classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
     src = _write_md(tmp_path, _SAMPLE_PLAN_MD)
-    tool = main_mod.TodoCreateTool()
+    tool = main_mod.TodoManageTool()
     ctx = _mock_context()
-    result = asyncio.run(tool.call(ctx, items=None, from_path=str(src)))
+    result = asyncio.run(tool.call(ctx, action="create", items=None, from_path=str(src)))
     assert '"ok": true' in result
     files = list((tmp_path / "todos").glob("qq_official_*.md"))
     parsed = todo_list.parse_md(files[0].read_text(encoding="utf-8"))
     assert parsed["title"] == "测试计划"
 
 
-def test_todo_create_tool_from_path_cross_user_adopt(tmp_path: Path, monkeypatch):
+def test_todo_manage_create_from_path_cross_user_adopt(tmp_path: Path, monkeypatch):
     """跨用户: 导入 webchat fixture → 新文件前缀是 mock 用户的 qq_official。"""
     monkeypatch.setattr(
         main_mod.StarTools,
@@ -1670,32 +1670,32 @@ def test_todo_create_tool_from_path_cross_user_adopt(tmp_path: Path, monkeypatch
         FIXTURE_PATH.read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    tool = main_mod.TodoCreateTool()
+    tool = main_mod.TodoManageTool()
     ctx = _mock_context()
-    asyncio.run(tool.call(ctx, items=None, from_path=str(fixture_path)))
+    asyncio.run(tool.call(ctx, action="create", items=None, from_path=str(fixture_path)))
     # 验证没有 webchat_ 前缀的文件,只有 mock 用户的 qq_official_ 前缀
     files = list((tmp_path / "todos").glob("*.md"))
     assert not any("webchat_" in f.name for f in files)
     assert any("qq_official_" in f.name for f in files)
 
 
-def test_todo_create_tool_from_path_file_not_exists(tmp_path: Path, monkeypatch):
+def test_todo_manage_create_from_path_file_not_exists(tmp_path: Path, monkeypatch):
     """from_path 指向不存在的文件 → ok=False + error 含 '文件不存在'。"""
     monkeypatch.setattr(
         main_mod.StarTools,
         "get_data_dir",
         classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
-    tool = main_mod.TodoCreateTool()
+    tool = main_mod.TodoManageTool()
     ctx = _mock_context()
     result = asyncio.run(
-        tool.call(ctx, items=None, from_path=str(tmp_path / "no_such.md"))
+        tool.call(ctx, action="create", items=None, from_path=str(tmp_path / "no_such.md"))
     )
     assert '"ok": false' in result
     assert "文件不存在" in result
 
 
-def test_todo_create_tool_from_path_end_to_end_preserves_status(
+def test_todo_manage_create_from_path_end_to_end_preserves_status(
     tmp_path: Path, monkeypatch
 ):
     """端到端: 导入 fixture → IDs 从 1 重排,status 保留(cancelled 仍是 cancelled)。"""
@@ -1709,9 +1709,9 @@ def test_todo_create_tool_from_path_end_to_end_preserves_status(
         FIXTURE_PATH.read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    tool = main_mod.TodoCreateTool()
+    tool = main_mod.TodoManageTool()
     ctx = _mock_context()
-    asyncio.run(tool.call(ctx, items=None, from_path=str(fixture_path)))
+    asyncio.run(tool.call(ctx, action="create", items=None, from_path=str(fixture_path)))
     # 读回新落盘文件
     files = list((tmp_path / "todos").glob("qq_official_*.md"))
     assert files
@@ -1730,31 +1730,31 @@ def test_todo_create_tool_from_path_end_to_end_preserves_status(
     ]
 
 
-def test_todo_create_tool_from_path_none_returns_xor_error(tmp_path: Path, monkeypatch):
+def test_todo_manage_create_from_path_none_returns_xor_error(tmp_path: Path, monkeypatch):
     """from_path=None (LLM 传 JSON null) → XOR 防御性触发,error 含 '必须二选一'。"""
     monkeypatch.setattr(
         main_mod.StarTools,
         "get_data_dir",
         classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
-    tool = main_mod.TodoCreateTool()
+    tool = main_mod.TodoManageTool()
     ctx = _mock_context()
     result = asyncio.run(
-        tool.call(ctx, items=None, from_path=None)  # type: ignore[arg-type]
+        tool.call(ctx, action="create", items=None, from_path=None)  # type: ignore[arg-type]
     )
     assert '"ok": false' in result
     assert "必须二选一" in result
 
 
-def test_todo_create_tool_from_path_relative_path_rejected(tmp_path: Path, monkeypatch):
+def test_todo_manage_create_from_path_relative_path_rejected(tmp_path: Path, monkeypatch):
     """from_path 相对路径 → ok=False + error 含 '路径必须是绝对路径'。"""
     monkeypatch.setattr(
         main_mod.StarTools,
         "get_data_dir",
         classmethod(lambda cls, plugin_name=None: str(tmp_path)),
     )
-    tool = main_mod.TodoCreateTool()
+    tool = main_mod.TodoManageTool()
     ctx = _mock_context()
-    result = asyncio.run(tool.call(ctx, items=None, from_path="plans/sprint.md"))
+    result = asyncio.run(tool.call(ctx, action="create", items=None, from_path="plans/sprint.md"))
     assert '"ok": false' in result
     assert "路径必须是绝对路径" in result

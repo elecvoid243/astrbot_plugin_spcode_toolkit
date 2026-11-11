@@ -1,7 +1,7 @@
 """code_format — auto-format a single source file (Python / C·C++ / Java / JS·TS / C#).
 
 与 code_check 的关系:code_check 是**只读**检查,code_format 是**写**工具
-(可能修改文件)。LLM 在 plan 模式下不应调用本工具。
+(可能修改文件)。LLM 在只读(readonly)文件访问模式下不应调用本工具。
 
 设计要点(2026-06-25, v2.14 引入;2026-08-14 astyle → clang-format 迁移):
 

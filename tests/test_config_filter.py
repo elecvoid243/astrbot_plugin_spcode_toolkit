@@ -5,7 +5,7 @@
 - 组别名展开(todo_list)
 - 混合场景(组别名 + 显式工具名 + 未知名)
 - 边界场景(None / 空列表 / 重复)
-- 迁移路径:旧 config 里有 "todo_list" 条目时,新代码应自动展开为 6 个工具
+- 迁移路径:旧 config 里有 "todo_list" 条目时,新代码应自动展开为 1 个工具(todo_manage)
 
 __author__: AstrBot Agent Harness 开发专家
 __created__: 2026-06-13
@@ -81,55 +81,35 @@ def test_duplicate_tool_names_deduplicated():
 # ── 2. 组别名展开(todo_list) ────────────────────────
 
 
-def test_todo_list_group_expands_to_6_tools():
-    """勾选 todo_list → 展开为 6 个 todo 工具(本测试的核心)。
+def test_todo_list_group_expands_to_todo_manage():
+    """勾选 todo_list → 展开为单个 todo_manage。
 
-    验证需求:用户在配置页只看到一个 `todo_list` 选项,
-    勾选后系统一次性给 LLM 注入 todo_create / todo_query /
-    todo_add / todo_update / todo_delete / todo_clear 六个工具,
-    避免用户漏勾导致功能不完整。
+    验证需求:用户在配置页只看到一个 `todo_list` 选项,勾选后注入
+    todo_manage —— 它的 6 个 action(create / query / add / update /
+    delete / clear)覆盖原 6 个独立工具的全部能力。
 
-    v2.12 (PR-split-modify): 由 4 个工具扩展为 6 个
-    (拆分原 todo_modify mode='add'/'update'/'delete')。
+    v2.35 (PR-merge-todo): 由 6 个工具合并为 1 个。
     """
     enabled, unknown = filter_enabled_tools(ALL_TOOL_NAMES, ["todo_list"])
-    expected = {
-        "todo_create",
-        "todo_query",
-        "todo_add",
-        "todo_update",
-        "todo_delete",
-        "todo_clear",
-    }
-    assert set(enabled) == expected, (
-        f"todo_list 组应展开为 6 个 todo_* 工具,实际得到 {set(enabled)}"
+    assert enabled == ["todo_manage"], (
+        f"todo_list 组应展开为 todo_manage,实际得到 {enabled}"
     )
     assert "todo_list" not in enabled, "组别名本身不应出现在启用列表中"
     assert unknown == set()
 
 
-def test_todo_list_group_size_is_6():
-    """todo_list 组展开后必须恰好 6 个工具(防回归:漏掉或加多)。
-
-    v2.12 (PR-split-modify): 由 4 个扩展为 6 个。
-    """
+def test_todo_list_group_size_is_1():
+    """todo_list 组展开后必须恰好 1 个工具(防回归:误把拆分工具加回来)。"""
     enabled, _ = filter_enabled_tools(ALL_TOOL_NAMES, ["todo_list"])
-    assert len(enabled) == 6, (
-        f"todo_list 组应展开为 6 个工具,实际得到 {len(enabled)} 个: {enabled}"
+    assert len(enabled) == 1, (
+        f"todo_list 组应展开为 1 个工具,实际得到 {len(enabled)} 个: {enabled}"
     )
 
 
 def test_todo_list_group_mixed_with_explicit_tools():
     """todo_list 组别名 + 显式工具名可同时启用。"""
     enabled, unknown = filter_enabled_tools(ALL_TOOL_NAMES, ["todo_list", "code_check"])
-    assert "code_check" in enabled
-    assert "todo_create" in enabled
-    assert "todo_query" in enabled
-    assert "todo_add" in enabled
-    assert "todo_update" in enabled
-    assert "todo_delete" in enabled
-    assert "todo_clear" in enabled
-    assert len(enabled) == 7  # 6 todo + 1 code_check
+    assert enabled == ["code_check", "todo_manage"]
     assert unknown == set()
 
 
@@ -178,17 +158,11 @@ def test_legacy_todo_list_entry_expands_correctly():
     新代码应自动将其识别为组别名并展开,而不是当成"未知工具名"忽略。
     这确保了老用户升级到 v2.6.1 后无需手动改 config 即可恢复 todo 功能。
 
-    v2.12 起,该组展开为 6 个工具(create / query / add / update / delete / clear)。
+    v2.35 起,该组展开为单个 todo_manage(6 个 action 覆盖原 6 个工具)。
     """
     # 模拟老用户的 config(只有 "todo_list" 条目)
     enabled, unknown = filter_enabled_tools(ALL_TOOL_NAMES, ["todo_list"])
-    # 6 个 todo_* 工具应被启用
-    assert "todo_create" in enabled
-    assert "todo_query" in enabled
-    assert "todo_add" in enabled
-    assert "todo_update" in enabled
-    assert "todo_delete" in enabled
-    assert "todo_clear" in enabled
+    assert enabled == ["todo_manage"]
     # 不会因为 "todo_list" 而报告 unknown
     assert unknown == set(), f"组别名 todo_list 不应被当作 unknown,但报告了: {unknown}"
 

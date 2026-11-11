@@ -60,7 +60,7 @@ from .tools.codegraph import (
 from .tools.codegraph import state as _codegraph_state
 
 # re-export FunctionTool 类供 tests/test_*.py 旧用法 (main_mod.TodoCreateTool 等)
-# v2.12 (PR-split-modify): 用 todo_add / todo_update / todo_delete 取代 todo_modify
+# v2.35 (PR-merge-todo): 6 个 todo 工具合并为 todo_manage
 from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
     ALL_TOOL_CLASSES,
     CodeCheckTool,
@@ -69,12 +69,7 @@ from .tools.function_tools import (  # noqa: F401  (re-export for test compat)
     EsSearchTool,
     FileDiffTool,
     FileRemoveTool,
-    TodoAddTool,
-    TodoClearTool,
-    TodoCreateTool,
-    TodoDeleteTool,
-    TodoQueryTool,
-    TodoUpdateTool,
+    TodoManageTool,
 )
 from .tools.function_tools.todo_base import _TodoToolBase
 from .tools.llm_inject import already_injected, inject_guidance
@@ -84,7 +79,7 @@ from .tools.operation_progress import finish as _progress_finish
 from .tools.project import ProjectManager
 from .tools.project import state as _project_state
 from .tools.project.inject import inject_project_path
-from .tools.security import PlanModeController, check_is_admin
+from .tools.security import check_is_admin
 from .tools.vivado import VivadoSubsystem, check_vivado_available
 from .tools.webapi import register_webapi_routes
 from .tools.webapi.git_diff import _GIT_DIFF_ENCODING
@@ -120,9 +115,6 @@ _DEFAULT_CONFIG = {
     "break_before_braces": "attach",  # BreakBeforeBraces:花括号换行风格
     "pointer_alignment": "right",  # PointerAlignment:指针/引用贴靠方向
     "max_crap": 30,  # code_crap CRAP 告警阈值(risk 分档与 proposal 用)
-    # v2.9.x (2026-07-27): /plan /build 命令的模式切换提示文本开关。
-    # True = 保持原行为(yield 提示到消息页面);False = 静默切换。
-    "plan_mode_command_feedback": True,
 }
 
 
@@ -181,15 +173,6 @@ class SPCodeToolkit(star.Star):
         self.codegraph = CodegraphManager(self)
         self._vivado = VivadoSubsystem(plugin=self)
         self.project = ProjectManager(self)
-        self._plan = PlanModeController(
-            get_config=lambda: self._config,
-            # umo-aware: mirror enforcement's context.get_config(umo) so the
-            # default mode follows the conversation's config profile.
-            get_core_config=lambda umo: (
-                self.context.get_config(umo) if self.context else {}
-            ),
-        )
-
         # 根据 enabled_tools 配置过滤实际注册的工具
         enabled_names, unknown = filter_enabled_tools(
             ALL_TOOL_NAMES,
@@ -889,14 +872,7 @@ class SPCodeToolkit(star.Star):
         - 防重复:由 inject_guidance 的 marker 机制保证
 
         """
-        _TODO_TOOL_NAMES = (
-            "todo_create",
-            "todo_query",
-            "todo_add",
-            "todo_update",
-            "todo_delete",
-            "todo_clear",
-        )
+        _TODO_TOOL_NAMES = ("todo_manage",)
         if not any(name in self._tool_names for name in _TODO_TOOL_NAMES):
             return
         if inject_guidance(req, TODO_GUIDANCE, TODO_GUIDANCE_MARKER):
@@ -986,79 +962,5 @@ class SPCodeToolkit(star.Star):
                 req.func_tool = new_set
             except Exception as exc:
                 logger.warning(f"spcode_toolkit 鉴权失败: {exc}")
-
-    # ── /plan /build 模式(v2.8) — 业务委托 tools.security.PlanModeController ──
-
-    @filter.on_llm_request()
-    async def _plan_filter_tools(self, event, req: ProviderRequest):
-        """/plan 模式钩子入口 — 委托给 PlanModeController。"""
-        self._plan.filter_request(event, req)
-
-    @filter.command("plan")
-    async def plan(self, event):
-        """/plan — 进入 plan 模式(禁用写工具的执行,提示 LLM 调研而非动手)。
-
-        v2.9.x (2026-07-27): 常规切换提示受 plan_mode_command_feedback
-        配置门控(False = 静默切换,不 yield 任何消息)。配置异常警告
-        (blocked 为空)不受门控,始终提示。
-        """
-        umo = event.unified_msg_origin
-        was_active = self._plan.is_active(umo)
-        self._plan.activate(umo)
-        blocked = self._config.get("plan_mode_blocked_tools") or []
-        show_feedback = bool(self._config.get("plan_mode_command_feedback", True))
-        if not blocked:
-            # 配置异常警告:即使关闭了常规反馈也要提示,否则用户无从
-            # 得知 plan 模式实际没有禁用任何工具。
-            yield event.plain_result(
-                "⚠️ plan 模式已激活,但 plan_mode_blocked_tools 为空。\n"
-                "将不会禁用任何工具。请在插件配置中填写要禁用的工具名。\n"
-                "使用 /build 退出 plan 模式。"
-            )
-            return
-        if not show_feedback:
-            # 2026-07-27 fix: 静默模式也必须终止事件 — AstrBot 的
-            # ProcessStage 在命令 handler 没有任何产出(无 yield /
-            # 无 result)时,会把 "/plan" 当普通文本回落给 LLM,
-            # 导致命令看似失效。stop_event() 标记"已处理"后,
-            # ResultDecorateStage 直接 return,不发送任何消息。
-            event.stop_event()
-            return
-        if was_active:
-            yield event.plain_result(
-                f"🔄 plan 模式仍激活 (会话 {umo})\n"
-                f"已过滤 {len(blocked)} 个写工具:{', '.join(blocked)}\n"
-                f"reminder 已重置,下次 LLM 调用时重新注入。\n"
-                f"使用 /build 退出 plan 模式。"
-            )
-        else:
-            yield event.plain_result(
-                f"✅ plan 模式已激活 (会话 {umo})\n"
-                f"已过滤 {len(blocked)} 个写工具:{', '.join(blocked)}\n"
-                f"LLM 仅可使用只读工具调研。使用 /build 退出。"
-            )
-
-    @filter.command("build")
-    async def build(self, event):
-        """/build — 退出 plan 模式(回到默认 build 模式,全部工具可用)。
-
-        v2.9.x (2026-07-27): 提示文本受 plan_mode_command_feedback
-        配置门控(False = 静默切换,不 yield 任何消息)。
-        """
-        umo = event.unified_msg_origin
-        was_active = self._plan.deactivate(umo)
-        if not bool(self._config.get("plan_mode_command_feedback", True)):
-            # 2026-07-27 fix: 同 plan 命令 — 静默也要 stop_event(),
-            # 否则 "/build" 会被框架当普通文本发给 LLM。
-            event.stop_event()
-            return
-        if was_active:
-            yield event.plain_result(
-                f"✅ plan 模式已关闭 (会话 {umo})。所有工具现已可用。"
-            )
-        else:
-            yield event.plain_result(
-                f"ℹ️ 已在 build 模式 (会话 {umo})。所有工具默认可用,无需切换。"
-            )
 
     # ── file-browser 端点(v3.2) — 入口路由在 initialize() 中注册 ──

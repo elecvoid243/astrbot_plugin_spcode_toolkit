@@ -1,4 +1,4 @@
-"""function_tools 子包 — 12 个 LLM FunctionTool 类的集中注册表。
+"""function_tools 子包 — 7 个 LLM FunctionTool 类的集中注册表。
 
 PR-2 (2026-06-23) 从 main.py 提取。设计原则:
 1. 一文件一工具类(便于定位 + 单测)
@@ -14,7 +14,7 @@ from __future__ import annotations
 # 共享 helper(内部,导出供 tests 调试用)
 from ._common import record_and_run  # noqa: F401
 
-# 5 个独立工具(v2.14 加 code_format)
+# 6 个独立工具(v2.14 加 code_format,v2.25 加 code_crap)
 from .code_check import CodeCheckTool
 from .code_crap import CodeCrapTool
 from .code_format import CodeFormatTool
@@ -22,21 +22,15 @@ from .es_search import EsSearchTool
 from .file_diff import FileDiffTool
 from .file_remove import FileRemoveTool
 
-# 6 个 todo 工具(基类 _TodoToolBase 也导出,供 tests/test_*.py 验证继承)
-# v2.12 (PR-split-modify): 原 v2.6 的 todo_modify(mode='add'|'update'|'delete', ...)
-# 拆为 3 个独立工具 todo_add / todo_update / todo_delete。
-# 动机:三合一工具的 `mode` 字段是 LLM 误调用的高发点,拆开后每个工具
-# 的 schema 极简,LLM 不再需要选 mode。
-from .todo_add import TodoAddTool
+# 1 个 todo 工具(基类 _TodoToolBase 也导出,供 tests/test_*.py 验证继承)
+# v2.35 (PR-merge-todo): 6 个独立工具(todo_create / query / add / update /
+# delete / clear)合并为单一 todo_manage(6 个 action)。action→参数矩阵在
+# description 中逐行声明,call() 内做校验并返回可执行 proposal。
 from .todo_base import _TodoToolBase  # noqa: F401
-from .todo_clear import TodoClearTool
-from .todo_create import TodoCreateTool
-from .todo_delete import TodoDeleteTool
-from .todo_query import TodoQueryTool
-from .todo_update import TodoUpdateTool
+from .todo_manage import TodoManageTool
 
 # 集中注册表: main.py 直接迭代此列表传给 context.add_llm_tools(...)
-# 顺序与原 _PLUGINS_TOOLS 一致(独立工具 5 → todo 6)
+# 顺序与原 _PLUGINS_TOOLS 一致(独立工具 6 → todo 1)
 # v2.14 (2026-06-25): 加 CodeFormatTool 到独立工具首位(与 code_check 配对)。
 ALL_TOOL_CLASSES = [
     CodeCheckTool,
@@ -45,12 +39,7 @@ ALL_TOOL_CLASSES = [
     EsSearchTool,
     FileRemoveTool,
     FileDiffTool,
-    TodoCreateTool,
-    TodoQueryTool,
-    TodoAddTool,
-    TodoUpdateTool,
-    TodoDeleteTool,
-    TodoClearTool,
+    TodoManageTool,
 ]
 
 __all__ = [
@@ -61,10 +50,5 @@ __all__ = [
     "EsSearchTool",
     "FileRemoveTool",
     "FileDiffTool",
-    "TodoCreateTool",
-    "TodoQueryTool",
-    "TodoAddTool",
-    "TodoUpdateTool",
-    "TodoDeleteTool",
-    "TodoClearTool",
+    "TodoManageTool",
 ]

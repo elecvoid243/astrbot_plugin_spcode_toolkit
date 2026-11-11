@@ -12,7 +12,7 @@
       "file_compare",
       "todo_list"
     ],
-    "hint": "默认全部禁用。todo_list 勾选后自动启用六个相关工具。codegraph 和 agentsmd 由下方独立开关控制。code_format 是写入工具(会修改文件),plan 模式下默认被禁用。"
+    "hint": "默认全部禁用。todo_list 勾选后启用 todo_manage(覆盖 6 个 action)。codegraph 和 agentsmd 由下方独立开关控制。code_format 是写入工具(会修改文件),plan 模式下默认被禁用。"
   },
   "allowed_ids": {
     "description": "额外允许使用本插件的用户 ID",
@@ -183,7 +183,7 @@
   },
   "todo": {
     "description": "todo 工具",
-    "hint": "todo_* 工具的隔离与清理策略",
+    "hint": "todo_manage 工具的隔离与清理策略",
     "type": "object",
     "items": {
       "todo_subagent_isolation": {
@@ -222,56 +222,6 @@
         "default": 8,
         "min": 1,
         "max": 32
-      }
-    }
-  },
-  "plan_mode": {
-    "description": "plan / build模式配置",
-    "hint": "在 /plan 激活时，plan工具黑名单列出的工具的执行被禁用(schema 仍对 LLM 可见,调用返回 Permission denied),防止 LLM 在调研阶段意外执行写操作。/build 还原为全部工具可调(默认)。",
-    "type": "object",
-    "items": {
-      "plan_mode_blocked_tools": {
-        "description": "plan模式下的工具黑名单 — /plan 激活时禁用执行的工具名",
-        "hint": "禁用写工具的执行，让LLM 在 plan 模式下只能只读探索。默认走 strict 模式，禁用所有 spcode 写工具 + AstrBot 内建文件写编辑工具。astrbot_execute_shell 与 astrbot_shell_session 始终保留：Windows 下 shell 在只读沙盒内运行，其他平台由工具自身拒绝写入。",
-        "type": "list",
-        "item": {
-          "type": "string",
-          "hint": "例如:astrbot_file_remove"
-        },
-        "default": [
-          "astrbot_file_remove",
-          "code_format",
-          "todo_create",
-          "todo_add",
-          "todo_update",
-          "todo_delete",
-          "todo_clear",
-          "astrbot_file_write_tool",
-          "astrbot_file_edit_tool",
-          "mcp_vivado__add_files",
-          "mcp_vivado__close_project",
-          "mcp_vivado__create_project",
-          "mcp_vivado__generate_bitstream",
-          "mcp_vivado__open_project",
-          "mcp_vivado__program_device",
-          "mcp_vivado__run_implementation",
-          "mcp_vivado__run_synthesis",
-          "mcp_vivado__run_tcl",
-          "mcp_vivado__start_session",
-          "mcp_vivado__stop_session"
-        ]
-      },
-      "plan_mode_reminder": {
-        "description": "切换到plan模式时，给LLM的提醒文本，作为<system-reminder>注入",
-        "hint": "支持将 {blocked} 占位符替换为实际的黑名单列表。留空则不注入。建议放友好的简短指引,不放长篇规则。",
-        "type": "text",
-        "default": "Plan mode is active. The following tools have been removed from your tool list: {blocked}. You can only use read-only tools to explore and gather information. When done planning, present your approach to the user and wait for approval before any write operation."
-      },
-      "plan_mode_command_feedback": {
-        "description": "执行 /plan 和 /build 指令时，是否在消息页面显示模式切换提示文本",
-        "hint": "设为 false 后，/plan 和 /build 静默切换模式，不再向前端发送提示消息。注意：plan_mode_blocked_tools 为空时的配置异常警告不受此开关影响，始终显示。",
-        "type": "bool",
-        "default": true
       }
     }
   },

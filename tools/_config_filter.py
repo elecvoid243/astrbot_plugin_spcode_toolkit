@@ -20,13 +20,8 @@ ALL_TOOL_NAMES: list[str] = [
     "es_search",
     "astrbot_file_remove",
     "astrbot_file_compare",
-    # todo_list 6 个子工具(v2.12 拆出 add/update/delete;v2.6 通过 `todo_list` 组别名一键启用)
-    "todo_create",
-    "todo_query",
-    "todo_add",
-    "todo_update",
-    "todo_delete",
-    "todo_clear",
+    # todo_list 组(v2.35 起只有 1 个工具:todo_manage 的 6 个 action)
+    "todo_manage",
 ]
 
 # 快捷组名(可一键启用整组工具)
@@ -34,17 +29,9 @@ ALL_TOOL_NAMES: list[str] = [
 # 设计动机:避免用户在配置页"勾选 4 个 todo_* 工具"这种易错操作。
 # 配置 UI 只暴露组别名,filter_enabled_tools() 内部展开为全部子工具名。
 _TOOL_GROUPS: dict[str, list[str]] = {
-    # Todo list 自我管理:create / query / add / update / delete / clear
-    # v2.12 拆分: 6 个工具强相关,缺一会导致功能不完整(只能 add 不能 delete 等),
-    # 因此必须以组形式整体启用。
-    "todo_list": [
-        "todo_create",
-        "todo_query",
-        "todo_add",
-        "todo_update",
-        "todo_delete",
-        "todo_clear",
-    ],
+    # Todo list 自我管理:单个 todo_manage 覆盖 create / query / add /
+    # update / delete / clear 六个 action。组别名保留以兼容老配置。
+    "todo_list": ["todo_manage"],
     "file_compare": ["astrbot_file_compare"],
     "file_remove": ["astrbot_file_remove"],
 }
