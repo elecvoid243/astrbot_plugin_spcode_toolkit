@@ -11,12 +11,23 @@ import hashlib
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from astrbot.api.web import JSONResponse  # _JSONResponseCompat 父类
+
+# ── preflight git-repo 探测缓存 ──
+# WHY: 一次会话切换会并发打 6 个 git-* 端点, 每个都先跑一次
+# ``rev-parse --is-inside-work-tree``。Windows 上每次 git 子进程
+# ~200-250ms, 6 次就是 1.2-1.5s 的纯重复开销。目录是否是 git 仓库
+# 只会在 ``git init`` 时由否变是, 所以只缓存正结果; 负结果永不缓存,
+# ``git init`` 之后立刻可见。
+_PREFLIGHT_REPO_TTL: float = 5.0
+_PREFLIGHT_REPO_CACHE_MAX = 128
+_PREFLIGHT_REPO_CACHE: dict[str, float] = {}
 
 
 @dataclass
@@ -629,7 +640,14 @@ async def _git_endpoint_preflight(
             directory=directory,
         ), None
 
-    # 5. git repo probe
+    # 5. git repo probe(正结果 5s 缓存; 负结果不缓存)
+    if _PREFLIGHT_REPO_CACHE.get(directory, 0.0) > time.monotonic():
+        return None, {
+            "directory": directory,
+            "umo": umo,
+            "worktree": directory,
+        }
+
     probe = await _run_git_async(
         [plugin._git_binary(), "-C", directory, "rev-parse", "--is-inside-work-tree"],  # type: ignore[attr-defined]
         encoding="utf-8",
@@ -651,6 +669,14 @@ async def _git_endpoint_preflight(
             directory=directory,
             stderr=probe.get("stderr", "") or probe.get("error", ""),
         ), None
+
+    now = time.monotonic()
+    _PREFLIGHT_REPO_CACHE[directory] = now + _PREFLIGHT_REPO_TTL
+    if len(_PREFLIGHT_REPO_CACHE) > _PREFLIGHT_REPO_CACHE_MAX:
+        # 容量保护: 顺手清掉已过期项(过期项在命中判断里本就不生效)
+        for key, expiry in list(_PREFLIGHT_REPO_CACHE.items()):
+            if expiry <= now:
+                _PREFLIGHT_REPO_CACHE.pop(key, None)
 
     return None, {
         "directory": directory,
@@ -983,6 +1009,51 @@ async def _compute_git_etag(
     porcelain_sha = hashlib.sha1(porcelain_src.encode("utf-8")).hexdigest()[:16]
 
     return f'W/"{head_sha}-{wt_mtime}-{porcelain_sha}"'
+
+
+async def _compute_ref_etag(
+    git_bin: str,
+    directory: str,
+    *,
+    extra_inputs: tuple[str, ...] = (),
+) -> str:
+    """Weak ETag for payloads that depend on refs/config, not worktree files.
+
+    ``git-branches`` renders branches / tags / remotes / upstream track. None
+    of those change when a tracked file is edited, so the 3-way porcelain
+    probes of ``_compute_git_etag`` only made the ETag flip on unrelated
+    edits (200 + full body for an unchanged list) and cost three extra git
+    subprocesses per request. This variant hashes HEAD plus the caller's
+    ref/config blobs instead.
+
+    Args:
+        git_bin: Git binary path.
+        directory: Repository directory (already worktree-validated).
+        extra_inputs: Caller-supplied ref/config blobs (upstream track,
+            remote names, tag refs). Any change flips the ETag.
+
+    Returns:
+        Weak ETag ``W/"<head_sha>-<digest>"``.
+    """
+    head_sha = "no-head"
+    try:
+        head_result = await _run_git_async(
+            [git_bin, "-C", directory, "rev-parse", "HEAD"],
+            timeout=5.0,
+            encoding="utf-8",
+        )
+        if head_result.get("ok") and head_result.get("stdout"):
+            head_sha = head_result["stdout"].strip()
+    except Exception:
+        pass
+
+    payload = "\x00".join(extra_inputs)
+    digest = (
+        hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+        if payload
+        else "no-refs"
+    )
+    return f'W/"{head_sha}-{digest}"'
 
 
 # ── git for-each-ref 解析与 mutation 后分支状态读取(共享) ───────

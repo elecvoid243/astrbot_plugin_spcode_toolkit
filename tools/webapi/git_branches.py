@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 from ._helpers import (
     ReasonCode,
-    _compute_git_etag,
+    _compute_ref_etag,
     _JSONResponseCompat,
     _make_envelope,
     _parse_for_each_ref,
@@ -53,7 +53,10 @@ async def handle(
     git_bin = plugin._git_binary()  # type: ignore[attr-defined]
 
     # ── ETag ───────────────────────────────────────────────
-    # 与 git_status 一致:取 HEAD SHA + porcelain 作为 ETag 输入。
+    # 只取 HEAD SHA + 分支/标签/远端/upstream_track 作为 ETag 输入。
+    # v3.9 (2026-11-13): 不再复用 _compute_git_etag 的 3 路 porcelain
+    # 探测 —— 分支列表不随工作区文件内容变化, 那 3 个 git 子进程只会让
+    # 无关的文件编辑也翻转 ETag(200 + 全量 body), 每次请求白跑 ~3 次。
     # v3.6 (2026-07-24): 额外把 ``%(upstream:track)`` 拼入 ETag,
     # 修复 ``git fetch / pull / push`` 后上游跟踪计数(↑N / ↓N)
     # 缓存命中的 staleness bug —— 这些操作不动工作树, porcelain
@@ -128,7 +131,7 @@ async def handle(
         # 标签失败不阻塞分支列表:返回空 tags + ETag 回退。
         pass
 
-    etag = await _compute_git_etag(git_bin, repo_dir, extra_inputs=extra_etag_inputs)
+    etag = await _compute_ref_etag(git_bin, repo_dir, extra_inputs=extra_etag_inputs)
     if etag and if_none_match and etag == if_none_match:
         content = _make_envelope(
             success=True,
