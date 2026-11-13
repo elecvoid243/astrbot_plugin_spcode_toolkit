@@ -12,6 +12,10 @@ import pytest
 
 @pytest.fixture
 def mock_plugin():
+    # v3.10: 安装探测有 10s 缓存,逐用例清空避免上一条用例的结果泄漏
+    from tools.webapi import vivado_status
+
+    vivado_status._reset_probe_cache()
     p = MagicMock()
     p._config = {"vivado_enabled": True, "vivado_executable": ""}
     return p

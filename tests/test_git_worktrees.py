@@ -103,10 +103,10 @@ async def test_git_worktrees_response_includes_locked_field(locked_worktree_repo
     # Put project into state for handler fallback path
     _proj_state.reset()
     _proj_state.put("test-umo:1", {"directory": str(primary), "loaded_at": 100.0})
-    # 使用项目标准的 run_cmd(参考现有 test_git_worktrees.py 用法)
+    # 使用项目标准的 _run_git_async(v3.10 起 worktrees 走真异步)
     from unittest.mock import patch
 
-    with patch("tools.webapi.git_worktrees.run_cmd") as mock_run:
+    with patch("tools.webapi.git_worktrees._run_git_async") as mock_run:
         # 模拟 git worktree list --porcelain 输出(2 个 worktree,linked 已 lock)
         mock_run.return_value = {
             "ok": True,
@@ -159,7 +159,7 @@ async def test_git_worktrees_response_includes_locked_reason(locked_worktree_rep
     _proj_state.put("test-umo:2", {"directory": str(primary), "loaded_at": 100.0})
     from unittest.mock import patch
 
-    with patch("tools.webapi.git_worktrees.run_cmd") as mock_run:
+    with patch("tools.webapi.git_worktrees._run_git_async") as mock_run:
         mock_run.return_value = {
             "ok": True,
             "stdout": (
@@ -194,7 +194,7 @@ async def test_git_worktrees_unlocked_default_false(locked_worktree_repo):
     _proj_state.put("test-umo:3", {"directory": str(primary), "loaded_at": 100.0})
     from unittest.mock import patch
 
-    with patch("tools.webapi.git_worktrees.run_cmd") as mock_run:
+    with patch("tools.webapi.git_worktrees._run_git_async") as mock_run:
         mock_run.return_value = {
             "ok": True,
             "stdout": (f"worktree {primary}\nHEAD abc1234\nbranch refs/heads/main\n"),

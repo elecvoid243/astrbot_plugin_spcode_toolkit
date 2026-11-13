@@ -14,9 +14,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .. import worktree_activation as _wt_activation
-from .._helpers import _parse_git_worktree_porcelain, run_cmd
+from .._helpers import _parse_git_worktree_porcelain
 from ..project import state as _proj_state
-from ._helpers import _JSONResponseCompat
+from ._helpers import _JSONResponseCompat, _run_git_async
 from .file_browser import (
     _common_cache_headers,
     _get_if_none_match,
@@ -148,7 +148,10 @@ async def handle(
     else:
         # 6. Git 仓库探测
         git_bin = plugin._git_binary()
-        probe = run_cmd(
+        # v3.10: 用真异步版本。run_cmd 是同步 subprocess.run，在 Hypercorn
+        # 单事件循环里会阻塞整个进程（本机每次 git ~250ms，两次 ~500ms），
+        # 期间所有响应体（/chat/configs、selection 等）都发不出去。
+        probe = await _run_git_async(
             [git_bin, "-C", directory, "rev-parse", "--is-inside-work-tree"],
             encoding="utf-8",
         )
@@ -177,7 +180,7 @@ async def handle(
             )
 
         # 7. 列出 worktrees
-        list_result = run_cmd(
+        list_result = await _run_git_async(
             [git_bin, "-C", directory, "worktree", "list", "--porcelain"],
             encoding="utf-8",
         )
